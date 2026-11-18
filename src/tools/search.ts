@@ -238,15 +238,17 @@ async function searchTavily(
       max_results: Math.min(DEFAULT_LIMIT, 20),
     };
     if (searchDepth && searchDepth !== "basic") body.search_depth = searchDepth;
+    const timeoutSignal = AbortSignal.timeout(20_000);
+    const fetchSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
     const res = await fetch(TAVILY_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       body: JSON.stringify(body),
-      signal,
+      signal: fetchSignal,
     });
     throwIfAborted(signal);
     if (!res.ok) {
-      const text = await res.text();
+      const text = (await res.text()).slice(0, 4096);
       if (res.status === 403 && /<!doctype html|<html[\s>]|403 Forbidden/i.test(text)) {
         return {
           ok: false,
@@ -257,11 +259,19 @@ async function searchTavily(
       }
       return { ok: false, error: `Tavily: ${res.status} ${text.slice(0, 200)}`, provider: "tavily" };
     }
-    const data = (await res.json()) as {
+    // Cap the response body: a hostile/broken provider must not inflate memory.
+    const raw = await res.text();
+    const data = JSON.parse(raw.slice(0, 1_048_576)) as {
       results?: Array<{ title?: string; url?: string; content?: string }>;
     };
     const results = Array.isArray(data?.results) ? data.results : [];
-    const hits = results.map((r) => ({ title: r.title, url: r.url, description: r.content }));
+    const hits = results
+      .slice(0, DEFAULT_LIMIT)
+      .map((r) => ({
+        title: r.title?.slice(0, 500),
+        url: r.url,
+        description: r.content?.slice(0, 2000),
+      }));
     return { ok: true, content: formatSearchResults(hits), hits, provider: "tavily" };
   } catch (e) {
     throwIfAborted(signal);
@@ -310,14 +320,15 @@ async function searchSearxngCompatible(
         provider,
       };
     }
-    const data = (await res.json()) as {
+    const raw = await res.text();
+    const data = JSON.parse(raw.slice(0, 1_048_576)) as {
       results?: Array<{ title?: string; url?: string; content?: string }>;
     };
     const results = Array.isArray(data?.results) ? data.results : [];
     const hits = results.slice(0, DEFAULT_LIMIT).map((r) => ({
-      title: r.title,
+      title: r.title?.slice(0, 500),
       url: r.url,
-      description: r.content,
+      description: r.content?.slice(0, 2000),
     }));
     return { ok: true, content: formatSearchResults(hits), hits, provider };
   } catch (e) {

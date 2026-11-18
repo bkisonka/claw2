@@ -36,7 +36,7 @@
     "dotenv": "^17.2.4",
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
-    "mathjs": "^13.2.3",
+    "mathjs": "^15.2.0",
     "openai": "^4.77.0",
     "pg": "^8.18.0",
     "sqlite-vec": "^0.1.9",
@@ -52,5 +52,8 @@
     "concurrently": "^9.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "@huggingface/transformers": "$@huggingface/transformers"
   }
 }

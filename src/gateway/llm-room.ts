@@ -5,13 +5,14 @@ import {
   bridgePostMessage,
   resolveLlmBridgeConfig,
 } from "../llm-bridge/client.js";
+import { resolveCorsAllowOrigin } from "./cors.js";
 
 const JSON_TYPE = "application/json; charset=utf-8";
 
-function json(res: ServerResponse, status: number, body: unknown): void {
+function json(res: ServerResponse, status: number, body: unknown, allowOrigin = "*"): void {
   res.writeHead(status, {
     "Content-Type": JSON_TYPE,
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin": allowOrigin,
   });
   res.end(JSON.stringify(body));
 }
@@ -50,13 +51,17 @@ export async function handleLlmRoomRoute(
 ): Promise<boolean> {
   if (!pathname.startsWith("/api/llm-room")) return false;
 
+  // Same CORS policy as the main router (desktop mode restricts to loopback).
+  const reply = (res2: ServerResponse, status: number, body: unknown): void =>
+    json(res2, status, body, resolveCorsAllowOrigin(req));
+
   if (req.method === "GET" && pathname === "/api/llm-room/info") {
     const publicInfo = getLlmRoomPublicInfo(config);
     if (!publicInfo) {
-      json(res, 200, { enabled: false });
+      reply(res, 200, { enabled: false });
       return true;
     }
-    json(res, 200, {
+    reply(res, 200, {
       ...publicInfo,
       humanAuthorId: `user:${userId}`,
       humanLabel: login || userId,
@@ -66,7 +71,7 @@ export async function handleLlmRoomRoute(
 
   const resolved = resolveLlmBridgeConfig(config);
   if (!resolved) {
-    json(res, 503, { error: "LLM room not configured" });
+    reply(res, 503, { error: "LLM room not configured" });
     return true;
   }
 
@@ -76,10 +81,10 @@ export async function handleLlmRoomRoute(
     const all = url.searchParams.get("all") === "1";
     const result = await bridgeFetchMessages(resolved, after, { all, limit: 500 });
     if (!result.ok) {
-      json(res, 502, { error: result.error });
+      reply(res, 502, { error: result.error });
       return true;
     }
-    json(res, 200, { ok: true, messages: result.messages });
+    reply(res, 200, { ok: true, messages: result.messages });
     return true;
   }
 
@@ -89,7 +94,7 @@ export async function handleLlmRoomRoute(
       const data = body ? (JSON.parse(body) as { text?: string }) : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       if (!text) {
-        json(res, 400, { error: "text required" });
+        reply(res, 400, { error: "text required" });
         return true;
       }
       const authorId = `user:${userId}`;
@@ -102,17 +107,17 @@ export async function handleLlmRoomRoute(
         text
       );
       if (!post.ok) {
-        json(res, 502, { error: post.error });
+        reply(res, 502, { error: post.error });
         return true;
       }
-      json(res, 201, { ok: true, message: post.message });
+      reply(res, 201, { ok: true, message: post.message });
       return true;
     } catch (e) {
-      json(res, 500, { error: String(e) });
+      reply(res, 500, { error: String(e) });
       return true;
     }
   }
 
-  json(res, 404, { error: "Not found" });
+  reply(res, 404, { error: "Not found" });
   return true;
 }

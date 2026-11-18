@@ -274,15 +274,33 @@ export function runAgentHost(
   }
 
   return new Promise((resolvePromise, rejectPromise) => {
-    const proc = spawn(nodeBin, [...perm, script, ...args], {
+    // --no-addons closes the permission-model bypass via native modules: without
+    // it a skill could require(".node") addons and escape the fs/network regime.
+    const proc = spawn(nodeBin, [...perm, "--no-addons", script, ...args], {
       cwd: agentsReal,
       stdio: ["pipe", "pipe", "pipe"],
       env,
     });
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
-    proc.stdout?.on("data", (c: Buffer) => chunks.push(c));
-    proc.stderr?.on("data", (c: Buffer) => errChunks.push(c));
+    // Cap captured output: a looping skill must not inflate memory or the prompt.
+    const MAX_CAPTURE_BYTES = 256 * 1024;
+    let captured = 0;
+    let errCaptured = 0;
+    let truncated = false;
+    proc.stdout?.on("data", (c: Buffer) => {
+      if (captured >= MAX_CAPTURE_BYTES) return;
+      const room = MAX_CAPTURE_BYTES - captured;
+      captured += c.length;
+      chunks.push(c.length > room ? c.subarray(0, room) : c);
+      if (captured >= MAX_CAPTURE_BYTES) truncated = true;
+    });
+    proc.stderr?.on("data", (c: Buffer) => {
+      if (errCaptured >= MAX_CAPTURE_BYTES) return;
+      const room = MAX_CAPTURE_BYTES - errCaptured;
+      errCaptured += c.length;
+      errChunks.push(c.length > room ? c.subarray(0, room) : c);
+    });
     let settled = false;
     const settle = (result: RunAgentResult) => {
       if (settled) return;
@@ -292,7 +310,7 @@ export function runAgentHost(
     const timeout = setTimeout(() => {
       proc.kill("SIGKILL");
       settle({
-        stdout: Buffer.concat(chunks).toString("utf-8"),
+        stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
         stderr: Buffer.concat(errChunks).toString("utf-8") + "\n[timeout]\n",
         exitCode: -1,
       });
@@ -310,7 +328,7 @@ export function runAgentHost(
       clearTimeout(timeout);
       if (settled) return;
       settle({
-        stdout: Buffer.concat(chunks).toString("utf-8"),
+        stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
         stderr: Buffer.concat(errChunks).toString("utf-8"),
         exitCode: code ?? (signal ? -1 : 0),
       });

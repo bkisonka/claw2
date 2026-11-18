@@ -72,12 +72,12 @@ Building from source without Docker requires Node.js 20 or newer.
 git clone <repository-url> claw2
 cd claw2
 
-# 1. Environment: put your model API key here (or leave empty and use a local model).
+# 1. Environment: the model API key and the gateway access key.
 cp .env.example .env
+openssl rand -hex 24   # → CLAW2_GATEWAY_API_KEY
 nano .env
 
 # 2. Configuration: create the agent config from the example.
-mkdir -p .claw2
 cp .claw2/claw2.gateway.yaml.example .claw2/claw2.yaml
 nano .claw2/claw2.yaml
 
@@ -85,13 +85,13 @@ nano .claw2/claw2.yaml
 docker compose up -d --build
 ```
 
-Open **http://localhost:8080** — the web interface of the agent. Health
-state is reported at `GET /health`.
+Open **http://localhost:8080** — the web interface of the agent; it asks
+for the gateway key on entry. Health state is reported at `GET /health`.
 
 By default the port is published on the loopback interface only. To reach
 the agent from other devices, change `127.0.0.1:8080:3000` in `compose.yml`
-to `8080:3000` — and enable gateway authentication (see *Security* below)
-before you do.
+to `8080:3000` — gateway authentication (on in the example config) is what
+protects the service once the port is reachable.
 
 If you use a local model server on the host (for example Ollama on port
 11434), the container reaches it at `http://host.docker.internal:11434/v1`
@@ -135,7 +135,7 @@ Environment variables (`cp .env.example .env`):
 | Variable | Purpose |
 |----------|---------|
 | `OPENAI_API_KEY` | The model provider key, referenced from the config as `env:OPENAI_API_KEY`. |
-| `CLAW2_GATEWAY_API_KEY` | Key for the HTTP API and web interface, when gateway auth is on. |
+| `CLAW2_GATEWAY_API_KEY` | The key for the HTTP API and the web interface (required by the example config). |
 | `TZ` | Time zone; the agent keeps track of the current date and time, reminders and schedules follow it. |
 
 ## Running it as a system service
@@ -176,10 +176,12 @@ takes precedence.
   filesystem beyond the workspace.
 - **Allow-lists.** File access, outgoing webhooks and loadable skills are
   enumerated in the config; everything else is denied.
-- **Gateway authentication.** With `gateway.auth.enabled: true` the API and
-  the web interface require a key (`X-API-Key` header or
-  `Authorization: Bearer`). Enable it whenever the port is reachable beyond
-  your own machine.
+- **Gateway authentication.** The example config ships with
+  `gateway.auth.enabled: true`: the API and the web interface require a key
+  (`X-API-Key` header or `Authorization: Bearer`). Keep it on whenever the
+  port is reachable beyond your own machine — and do not turn it off on a
+  shared network: the gateway also answers requests made by other websites
+  open in your browser, and the key is what keeps them out.
 - **Audit log.** Chat turns, tool calls, file operations and security
   refusals are appended to the log; format and location are set in the
   config.

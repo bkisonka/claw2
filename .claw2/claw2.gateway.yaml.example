@@ -16,9 +16,12 @@ gateway:
   port: 3000
   # Chats: local SQLite. Postgres (databaseUrl) is only needed for hosted multi-user + registration.
   # chatsDbPath: ./.claw2/data/claw2_chats.sqlite
+  # API key auth is on by default — generate a key (openssl rand -hex 24) and
+  # put it into .env as CLAW2_GATEWAY_API_KEY. The web UI and the API both ask
+  # for it. Turn off only if the gateway is unreachable from other machines.
   auth:
-    enabled: false
-    # apiKey: env:CLAW2_GATEWAY_API_KEY
+    enabled: true
+    apiKey: env:CLAW2_GATEWAY_API_KEY
     # Individual client: do not set registrationEnabled / databaseUrl / sessionSecret.
 # Camera recognition (biometric identification): client sends recognizedUser with each request
 # vision:

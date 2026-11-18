@@ -1785,6 +1785,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
             continue;
           }
           const result = toolReadSecret(config, id);
+          // Register the secret value in the exfil guard: without this the raw
+          // secret could leave via message/webhook or a fetch URL unchallenged.
+          if (result.ok && result.value && sensitiveContents.length < MAX_SENSITIVE_CHUNKS) {
+            const chunk = result.value.slice(0, MAX_SENSITIVE_CHUNK_BYTES);
+            if (chunk.length > 0) sensitiveContents.push(chunk);
+          }
           toolResults.push({
             id: tc.id!,
             content: result.ok ? (result.value ?? "") : `Error: ${result.error}`,

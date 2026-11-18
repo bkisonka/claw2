@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from "node:fs";
+import { resolveCorsAllowOrigin } from "./cors.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { dirname, join, relative, resolve, extname } from "node:path";
+import { dirname, join, relative, resolve, extname, isAbsolute } from "node:path";
 import { saveUploadedDocuments, type IncomingDocument } from "./documents.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Claw2Config } from "../config/types.js";
@@ -130,6 +131,7 @@ function maskSecrets(obj: unknown): unknown {
       k === "botToken" ||
       k === "sessionSecret" ||
       k === "accessToken" ||
+      k === "databaseUrl" ||
       k === "embeddingApiKey" ||
       k === "sdApiKey" ||
       k === "sttApiKey" ||
@@ -261,6 +263,12 @@ function mergeConfigKeepingSecrets(
       const outAuth = (out.gateway as Record<string, unknown>).auth;
       const base = outAuth && typeof outAuth === "object" ? (outAuth as Record<string, unknown>) : {};
       (out.gateway as Record<string, unknown>).auth = { ...base, sessionSecret: exAuth.sessionSecret };
+    }
+    // databaseUrl typically embeds the Postgres password — round-trip like a secret.
+    const exDbUrl = (existing.gateway as Record<string, unknown>).databaseUrl;
+    const inDbUrl = (out.gateway as Record<string, unknown>).databaseUrl;
+    if (typeof exDbUrl === "string" && exDbUrl && (inDbUrl === MASK || inDbUrl === undefined)) {
+      (out.gateway as Record<string, unknown>).databaseUrl = exDbUrl;
     }
   }
   const exCh = existing.channels as Record<string, unknown> | undefined;
@@ -397,9 +405,12 @@ function parseRawBody(req: IncomingMessage): Promise<Buffer> {
 
 function checkAuth(config: Claw2Config, req: IncomingMessage): boolean {
   const auth = config.gateway?.auth;
-  if (!auth?.enabled || !auth.apiKey) return true;
+  // Fail closed: enabled auth without a key must never open the gateway.
+  if (!auth?.enabled) return true;
+  const apiKey = auth.apiKey?.trim();
+  if (!apiKey) return false;
   const key = req.headers["x-api-key"] ?? req.headers["authorization"]?.toString().replace(/^Bearer\s+/i, "");
-  return key === auth.apiKey;
+  return typeof key === "string" && safeTokenEqual(key.trim(), apiKey);
 }
 
 function isRemoteHttpsRequest(req: IncomingMessage): boolean {
@@ -432,6 +443,12 @@ function safeTokenEqual(a: string, b: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** True when `file` resolves strictly inside `root` (path-separator aware). */
+function isInsideRoot(root: string, file: string): boolean {
+  const rel = relative(root, file);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
 
 function isCompanionPublicPath(path: string): boolean {
@@ -540,6 +557,37 @@ function isAuthPublicPath(path: string): boolean {
   return false;
 }
 
+/**
+ * Paths that stay GET-public when gateway.auth (single API key) is on: the
+ * health probe and the UI shell — SPA pages and static assets. The browser
+ * cannot ask the user for the API key until the interface HTML/JS has loaded;
+ * the UI then attaches the key to every data request. Data routes (/api/*,
+ * /chat/*, /files/*, /project/*) always require the key.
+ */
+function isUiShellPath(path: string): boolean {
+  if (path === "/health") return true;
+  if (
+    path === "/" ||
+    path === "/index.html" ||
+    path === "/chat" ||
+    path === "/login" ||
+    path === "/register" ||
+    path === "/cabinet" ||
+    path === "/gallery" ||
+    path === "/documents" ||
+    path === "/calls" ||
+    path.startsWith("/cabinet/") ||
+    path.startsWith("/gallery/") ||
+    path.startsWith("/documents/") ||
+    path.startsWith("/calls/")
+  ) {
+    return true;
+  }
+  if (path.startsWith("/assets/") || path.startsWith("/pwa")) return true;
+  if (/^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
+  return false;
+}
+
 function getAuthUserId(config: Claw2Config, req: IncomingMessage): { userId: string; login: string } | null {
   const token = getBearerToken(req);
   if (!token) return null;
@@ -607,39 +655,6 @@ function getChatPageHtml(): string {
   </script>
 </body>
 </html>`;
-}
-
-/**
- * CORS Allow-Origin for a request.
- * Hosted/multi-user: `*` (current behaviour).
- * Desktop (`CLAW2_DESKTOP=1`): only loopback http(s) (Electron UI / Vite hot).
- * Do not echo `null` / file: / app: — that would let a local HTML page call the
- * unauthenticated gateway. Opening chat links uses shell.openExternal and is unaffected.
- */
-function resolveCorsAllowOrigin(req: IncomingMessage): string {
-  if (process.env.CLAW2_DESKTOP !== "1") return "*";
-  const raw = req.headers.origin;
-  if (typeof raw !== "string" || !raw.trim()) {
-    // Same-origin / Electron without Origin header — CORS not applied by browsers.
-    return "http://127.0.0.1";
-  }
-  if (raw === "null") {
-    // Opaque / file contexts: deny (literal ACAO "null" would allow them).
-    return "https://claw2.invalid";
-  }
-  try {
-    const u = new URL(raw);
-    if (
-      (u.protocol === "http:" || u.protocol === "https:") &&
-      (u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "[::1]")
-    ) {
-      return raw;
-    }
-  } catch {
-    /* ignore */
-  }
-  // Non-loopback / non-http(s): do not reflect; sentinel never matches a real Origin.
-  return "https://claw2.invalid";
 }
 
 export function createGatewayServer(configRef: { current: Claw2Config }) {
@@ -711,7 +726,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       );
       return;
     }
-    if (!checkAuth(config, req)) {
+    // The health probe and the UI shell stay GET-public (see isUiShellPath);
+    // every data route requires the key.
+    if (!checkAuth(config, req) && !(req.method === "GET" && isUiShellPath(p))) {
       res.writeHead(401, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
       res.end("Unauthorized");
       return;
@@ -3661,7 +3678,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     if (req.method === "GET" && pwaPath && p.startsWith("/pwa")) {
       const sub = p.slice(4).replace(/^\/+/, "") || "index.html";
       const file = resolve(join(pwaPath, sub === "" ? "index.html" : sub));
-      if (file.startsWith(pwaPath) && existsSync(file)) {
+      if (isInsideRoot(pwaPath, file) && existsSync(file)) {
         try {
           const st = statSync(file);
           if (st.isFile()) {
@@ -3715,7 +3732,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       }
       if (p.startsWith("/assets/")) {
         const file = resolve(join(staticPath, p.slice(1)));
-        if (file.startsWith(staticPath) && existsSync(file)) {
+        if (isInsideRoot(staticPath, file) && existsSync(file)) {
           const ext = p.split(".").pop() ?? "";
           const ct =
             ext === "js" ? "application/javascript" : ext === "css" ? "text/css" : "application/octet-stream";
@@ -3723,9 +3740,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           res.end(readFileSync(file));
           return;
         }
-      } else if (p.startsWith("/") && !p.includes("..")) {
+      } else if (p.startsWith("/")) {
         const file = resolve(join(staticPath, p.slice(1)));
-        if (file.startsWith(staticPath) && existsSync(file)) {
+        if (isInsideRoot(staticPath, file) && existsSync(file)) {
           const stat = statSync(file);
           if (stat.isFile()) {
             const ext = p.split(".").pop() ?? "";
