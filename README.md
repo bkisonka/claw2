@@ -228,5 +228,6 @@ claw2 is proprietary software, available free of charge for personal,
 non-commercial use and modification for one's own needs. Redistribution and
 commercial use are not permitted without a separate written agreement with
 the copyright holder. See [LICENSE](LICENSE) (English, canonical) and
-[LICENSE.ru.md](LICENSE.ru.md) (Russian translation). Third-party open-source
+[LICENSE.ru.md](LICENSE.ru.md) (Russian translation), applied together with
+the end-user agreement [EULA.txt](EULA.txt). Third-party open-source
 components keep their own licenses — see [NOTICE](NOTICE).

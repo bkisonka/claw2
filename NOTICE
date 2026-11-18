@@ -24,3 +24,6 @@ Other dependencies bundled at build time retain their own licenses; consult
 
 - `LICENSE` — the claw2 proprietary license (English, canonical).
 - `LICENSE.ru.md` — Russian translation, for convenience only.
+- `EULA.txt` — the end-user license agreement: terms of use and risk
+  allocation, applied together with the license (Russian text is
+  authoritative).
