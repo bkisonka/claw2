@@ -2,6 +2,7 @@ import { writeFileSync, unlinkSync, readFileSync, existsSync } from "node:fs";
 import { resolve, basename, relative, isAbsolute } from "node:path";
 import type OpenAI from "openai";
 import { isAgentEnabled } from "../agents/manage.js";
+import { isSkillRunAllowed } from "../security/skills-allowed.js";
 import { resolveAgentsDir, resolveAgentsUploadsDir } from "../agents/paths.js";
 import { writeAgent } from "../agents/write-agent.js";
 import {
@@ -2059,6 +2060,13 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           toolResults.push({
             id: tc.id!,
             content: `Error: agent «${script}» is disabled. Enable it in Skills (cabinet) or choose another agent.`,
+          });
+          continue;
+        }
+        if (!isSkillRunAllowed(config, script)) {
+          toolResults.push({
+            id: tc.id!,
+            content: `Error: skill «${script}» is not in skills.allowlist. The run is refused until the user adds it to the allowlist in the config.`,
           });
           continue;
         }

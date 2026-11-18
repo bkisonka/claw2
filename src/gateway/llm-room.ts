@@ -51,9 +51,11 @@ export async function handleLlmRoomRoute(
 ): Promise<boolean> {
   if (!pathname.startsWith("/api/llm-room")) return false;
 
-  // Same CORS policy as the main router (desktop mode restricts to loopback).
+  // Same CORS policy as the main router (desktop mode restricts to loopback;
+  // no cross-origin grant while gateway auth is off).
+  const authEffective = !!(config.gateway?.auth?.enabled && config.gateway?.auth?.apiKey?.trim());
   const reply = (res2: ServerResponse, status: number, body: unknown): void =>
-    json(res2, status, body, resolveCorsAllowOrigin(req));
+    json(res2, status, body, resolveCorsAllowOrigin(req, authEffective));
 
   if (req.method === "GET" && pathname === "/api/llm-room/info") {
     const publicInfo = getLlmRoomPublicInfo(config);

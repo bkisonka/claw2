@@ -188,6 +188,15 @@ takes precedence.
 - **Prompt-injection containment.** Content fetched from the web is marked
   as data, never as instructions; combinations of access that make an
   injection dangerous are detected and blocked.
+- **Outbound fetch guard.** `web_fetch` refuses destinations that resolve to
+  loopback, private or link-local addresses (cloud metadata included), and
+  re-checks every redirect hop. To let the agent reach your own LAN services,
+  set `tools.webFetch.allowPrivateHosts: true`.
+- **Cross-site guard.** With gateway auth off, requests whose `Host` header
+  is not an IP, `localhost`, `*.local` or a name listed in
+  `gateway.trustedHosts` are refused — a page from a foreign site (or a
+  DNS-rebinding domain) cannot drive the agent or read responses. With auth
+  on, the key gates everything.
 
 ## Optional: an extended stack
 

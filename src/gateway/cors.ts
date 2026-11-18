@@ -6,9 +6,17 @@ import type { IncomingMessage } from "node:http";
  * Desktop (`CLAW2_DESKTOP=1`): only loopback http(s) (Electron UI / Vite hot).
  * Do not echo `null` / file: / app: — that would let a local HTML page call the
  * unauthenticated gateway. Opening chat links uses shell.openExternal and is unaffected.
+ *
+ * `authEnabled` = gateway.auth enabled with a non-empty key. When auth is off,
+ * no cross-origin grant is issued at all: any website in the user's browser
+ * could otherwise read chats and rewrite the config cross-origin. Same-origin
+ * clients (the web UI and PWA served by this gateway) do not need CORS.
  */
-export function resolveCorsAllowOrigin(req: IncomingMessage): string {
-  if (process.env.CLAW2_DESKTOP !== "1") return "*";
+export function resolveCorsAllowOrigin(req: IncomingMessage, authEnabled = true): string {
+  if (process.env.CLAW2_DESKTOP !== "1") {
+    if (!authEnabled) return "https://claw2.invalid";
+    return "*";
+  }
   const raw = req.headers.origin;
   if (typeof raw !== "string" || !raw.trim()) {
     // Same-origin / Electron without Origin header — CORS not applied by browsers.

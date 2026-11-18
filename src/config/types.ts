@@ -248,6 +248,12 @@ export interface Claw2Config {
     chatsDbPath?: string;
     /** Tools transcript_search / transcript_read (chat transcript). Defaults to true for chatsDbPath.*/
     transcriptTools?: boolean;
+    /**
+     * Extra Host header values accepted when gateway.auth is off (the anti
+     * cross-site / DNS-rebinding guard: IP literals, localhost and *.local are
+     * always trusted). Example: [claw2.example.com].
+     */
+    trustedHosts?: string[];
   };
   /**
    * SIP client for virtual PBX (REGISTER + calls).
@@ -407,6 +413,11 @@ export interface Claw2Config {
   uploads?: { hostPath?: string; sandboxPath?: string };
   workspace?: string;
   allowlist?: { paths?: string[] };
+  /**
+   * Non-empty allowlist fences run_agent to exactly these files: the model can
+   * still draft new skills, but they will not execute until listed here.
+   * Empty/unset — self-extension is open (default).
+   */
   skills?: { allowlist?: string[] };
   tools?: {
     /**
@@ -461,7 +472,17 @@ export interface Claw2Config {
      * Defaults to auto: openai if sdModel is given or URL is similar to Ollama/v1.
      */
     sdApi?: "auto" | "txt2img" | "openai";
-    webFetch?: { timeoutMs?: number; maxBodyBytes?: number; maxContextChars?: number };
+    /**
+     * webFetch: by default destinations that resolve to loopback/private/
+     * link-local addresses are refused (SSRF guard). Set allowPrivateHosts
+     * to fetch your LAN services (Home Assistant, router UI, and the like).
+     */
+    webFetch?: {
+      timeoutMs?: number;
+      maxBodyBytes?: number;
+      maxContextChars?: number;
+      allowPrivateHosts?: boolean;
+    };
     message?: { allowedWebhooks?: string[]; policy?: "allow_one" | "require_confirmation" | "deny_bulk" };
   };
   audit?: { logPath?: string; logFormat?: "text" | "json" };

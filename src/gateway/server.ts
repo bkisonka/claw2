@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from "node:fs";
+import { isIP } from "node:net";
 import { resolveCorsAllowOrigin } from "./cors.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { dirname, join, relative, resolve, extname, isAbsolute } from "node:path";
@@ -549,6 +550,28 @@ const AUTH_PUBLIC_PATHS = new Set([
   "/calls",
 ]);
 
+/**
+ * Trusted Host-header check for the auth-off cross-site guard: IP literals,
+ * localhost and mDNS .local names are always accepted; anything else must be
+ * listed in gateway.trustedHosts. (With auth on, the key gates everything and
+ * this check does not run.)
+ */
+function isTrustedHostHeader(hostHeader: unknown, config: Claw2Config): boolean {
+  if (typeof hostHeader !== "string" || !hostHeader.trim()) return false;
+  const hostname = hostHeader
+    .toLowerCase()
+    .replace(/:\d+$/, "")
+    .replace(/^\[/, "")
+    .replace(/\]$/, "");
+  if (!hostname) return false;
+  if (isIP(hostname) >= 4) return true;
+  if (hostname === "localhost" || hostname.endsWith(".localhost") || hostname.endsWith(".local")) return true;
+  const trusted = (config.gateway?.trustedHosts ?? [])
+    .map((t) => t.trim().toLowerCase())
+    .filter(Boolean);
+  return trusted.includes(hostname);
+}
+
 function isAuthPublicPath(path: string): boolean {
   if (AUTH_PUBLIC_PATHS.has(path)) return true;
   if (path.startsWith("/assets/") || path.startsWith("/files/") || path.startsWith("/pwa")) return true;
@@ -664,8 +687,29 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     const outputDir = resolveAgentsOutputDir(config);
     const uploadsDir = resolveAgentsUploadsDir(config);
     const p = pathname(req);
+    /**
+     * Effective auth: enabled AND a key present (fail-closed in checkAuth).
+     * Drives both CORS grants and the cross-site host guard below.
+     */
+    const authEffective = !!(
+      config.gateway?.auth?.enabled &&
+      config.gateway?.auth?.apiKey?.trim()
+    );
     /** Desktop: echo only localhost / file / app origins; hosted keeps *. */
-    const corsOrigin = resolveCorsAllowOrigin(req);
+    const corsOrigin = resolveCorsAllowOrigin(req, authEffective);
+    /**
+     * Auth-off guard against cross-site requests and DNS rebinding: a browser
+     * sent here by a malicious page carries that page's host (or a rebound
+     * domain) in the Host header. Real deployments use IPs, localhost, *.local
+     * or hosts listed in gateway.trustedHosts.
+     */
+    if (!authEffective && req.headers.host !== undefined && !isTrustedHostHeader(req.headers.host, config)) {
+      res.writeHead(403, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+      res.end(
+        "Forbidden: host not trusted. Enable gateway.auth or add this hostname to gateway.trustedHosts."
+      );
+      return;
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": corsOrigin,
