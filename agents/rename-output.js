@@ -4,8 +4,9 @@
 // Out: stdout: path to file in agents/output
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 
-// Agent: rename-output.js — copies output.docx to agents/output/[target-name]
+// Agent: rename-output.js — copies output.docx to the output dir under the given name.
 const [scriptPath, , targetName] = process.argv;
 
 if (!targetName) {
@@ -13,8 +14,16 @@ if (!targetName) {
   process.exit(1);
 }
 
-const sourcePath = 'agents/output/output.docx';
-const outputPath = `agents/output/${targetName}`;
+// Strip any path structure: the target stays inside the output dir, no ../
+const safeName = String(targetName).replace(/[/\\]/g, '').replace(/^\.+/, '').trim();
+if (!safeName) {
+  console.error('Error: target filename must contain a usable name');
+  process.exit(1);
+}
+
+const outputDir = process.env.OUTPUT_DIR || 'agents/output';
+const sourcePath = join(outputDir, 'output.docx');
+const outputPath = join(outputDir, safeName);
 
 try {
   if (!existsSync(sourcePath)) {

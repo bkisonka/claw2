@@ -27,7 +27,9 @@ if (!existsSync(filePath)) {
   process.exit(1);
 }
 
-const outDir = join(__dirname, "output");
+const outDir = process.env.OUTPUT_DIR
+  ? join(process.env.OUTPUT_DIR)
+  : join(__dirname, "output");
 let baseName = `extract-${Date.now()}`;
 if (outputNameArg) {
   const trimmed = String(outputNameArg).trim();

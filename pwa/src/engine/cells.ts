@@ -122,7 +122,7 @@ const ALLOWED_TAGS = new Set([
   "ul", "ol", "li", "h1", "h2", "h3", "h4", "strong", "em", "b", "i",
   "svg", "path", "circle", "rect", "line", "ellipse", "polygon", "polyline",
   "g", "text", "tspan", "title", "defs", "use", "lineargradient", "radialgradient", "stop", "clippath",
-  "a", "img", "style",
+  "a", "img",
 ]);
 const SVG_ATTRS = new Set([
   "class", "style", "id", "transform", "fill", "stroke", "stroke-width", "stroke-linecap",
@@ -157,7 +157,6 @@ const ALLOWED_ATTRS: Record<string, Set<string>> = {
   td: new Set(["class", "style", "colspan", "rowspan", "align", "valign"]),
   th: new Set(["class", "style", "colspan", "rowspan", "align", "valign", "scope"]),
   tr: new Set(["class", "style"]),
-  style: new Set(["type"]),
 };
 const DEFAULT_ATTRS = new Set(["class", "style", "id"]);
 
@@ -244,12 +243,31 @@ function isSafeUrlTarget(val: string, attr: "href" | "src"): boolean {
   return (attr === "href" ? SAFE_HREF_SCHEMES : SAFE_SRC_SCHEMES).has(scheme);
 }
 
+/**
+ * CSS value filter for style attributes: drop declarations carrying exfil or
+ * execution vectors (remote loads via url()/image-set, @import, script-ish
+ * properties). Benign styling (colors, borders, alignment, fonts) survives.
+ */
+const CSS_DANGER = /url\s*\(|image-set\s*\(|expression\s*\(|@import|javascript:|behavior\s*:|binding\s*:|element\s*\(/i;
+
+function sanitizeCssValue(val: string): string {
+  return val
+    .split(";")
+    .filter((decl) => !CSS_DANGER.test(decl))
+    .join(";");
+}
+
 function sanitizeHtml(html: string): string {
   if (!html) return "";
   let out = html
     .replace(/<script\b[\s\S]*?<\/script>/gi, "")
     .replace(/<script\b[^>]*>/gi, "")
     .replace(/<\/script>/gi, "")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, "")
+    .replace(/<style\b[^>]*>/gi, "")
+    .replace(/<\/style>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<!--/g, "")
     .replace(/<iframe\b[\s\S]*?(?:<\/iframe>|$)/gi, "")
     .replace(/<object\b[\s\S]*?(?:<\/object>|$)/gi, "")
     .replace(/\s+on\w+\s*=\s*["'][^"']*["']/gi, "")
@@ -275,7 +293,12 @@ function sanitizeHtml(html: string): string {
       const attr = attrName.toLowerCase();
       if (attr.startsWith("on")) continue;
       if (!attrs.has(attr)) continue;
-      const val = m[2].replace(/"/g, "&quot;");
+      let val = m[2];
+      if (attr === "style") {
+        val = sanitizeCssValue(val);
+        if (!val.trim()) continue;
+      }
+      val = val.replace(/"/g, "&quot;");
       if ((attr === "href" || attr === "src") && !isSafeUrlTarget(val, attr)) continue;
       kept.push(`${attrName}="${val}"`);
     }

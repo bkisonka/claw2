@@ -321,3 +321,33 @@ describe("stripCellPlaceholders", () => {
     expect(stripCellPlaceholders('a [CELL type="html"]x[/CELL')).toBe("a");
   });
 });
+
+// --- security hardening additions (style blocks, CSS exfil, comments) ---
+
+describe("sanitizeCellHtml: CSS and comment hardening", () => {
+  it("strips <style> blocks entirely", () => {
+    const out = sanitizeCellHtml('<div>ok</div><style>.x{color:red}</style>');
+    expect(out).toContain("<div>ok</div>");
+    expect(out).not.toContain("color:red");
+    expect(out).not.toContain("<style");
+  });
+
+  it("drops HTML comments (mXSS channel)", () => {
+    const out = sanitizeCellHtml('<p>a</p><!--<img src=x onerror=alert(1)>--><p>b</p>');
+    expect(out).not.toContain("<!--");
+    expect(out).toContain("<p>a</p>");
+    expect(out).toContain("<p>b</p>");
+  });
+
+  it("filters url()/import declarations from style attributes", () => {
+    const out = sanitizeCellHtml('<td style="color:red;background:url(https://evil.example/x)">t</td>');
+    expect(out).toContain("color:red");
+    expect(out).not.toContain("url(");
+    expect(out).not.toContain("evil.example");
+  });
+
+  it("keeps benign inline styles", () => {
+    const out = sanitizeCellHtml('<td style="text-align:center;border:1px solid #ccc">t</td>');
+    expect(out).toContain("text-align:center");
+  });
+});

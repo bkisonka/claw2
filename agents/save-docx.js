@@ -56,7 +56,9 @@ function processText(text) {
     ],
   });
 
-  const outputDir = join(__dirname, "output");
+  const outputDir = process.env.OUTPUT_DIR
+    ? join(process.env.OUTPUT_DIR)
+    : join(__dirname, "output");
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
   const fileName = `output_${timestamp}.docx`;
   const outputPath = join(outputDir, fileName);

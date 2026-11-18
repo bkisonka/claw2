@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { PromptContext } from "./prompt-history.js";
 
 export interface SessionMessage {
@@ -51,5 +52,7 @@ export function releaseGatewaySession(sessionId: string): void {
 }
 
 export function generateSessionId(): string {
-  return `sess_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  // Crypto-random: session ids surface in /files/ names, so they must not be
+  // guessable (Math.random + timestamp was enumerable).
+  return `sess_${Date.now().toString(36)}_${randomBytes(12).toString("hex")}`;
 }

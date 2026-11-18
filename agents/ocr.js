@@ -24,7 +24,14 @@ if (!existsSync(imagePath)) {
 
 let worker;
 try {
-  worker = await createWorker(lang);
+  // Pin the runtime assets to exact versions: floating CDN paths are a
+  // supply-chain channel into the sandbox (wasm + lang data load at runtime).
+  const pinned = {
+    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js",
+    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1",
+    langPath: "https://tessdata.projectnaptha.com/4.0.0",
+  };
+  worker = await createWorker(lang, 1, pinned);
   const { data } = await worker.recognize(imagePath);
   await worker.terminate();
   const text = data.text?.trim() ?? "";

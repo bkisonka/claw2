@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, lstatSync, readdirSync, unlinkSync } from "node:fs";
 import { isIP } from "node:net";
 import { resolveCorsAllowOrigin } from "./cors.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -42,7 +42,7 @@ import {
 import { updateRunRating } from "../agent-selection/store.js";
 import { getSessionHistory, appendToSession, generateSessionId, getSessionPromptContext, setSessionPromptContext } from "./sessions.js";
 import { releaseSessionRuntime } from "./session-runtime-cleanup.js";
-import { abortActiveChatRun, beginActiveChatRun } from "./active-chat-runs.js";
+import { abortActiveChatRun, beginActiveChatRun, MAX_CONCURRENT_CHAT_RUNS } from "./active-chat-runs.js";
 import { applyPromptContext, limitHistoryForPrompt, nextPromptCoveredCount } from "./prompt-history.js";
 import { initDb, getChatRepository } from "./db/index.js";
 import { createTranscriptSessionAccess, isTranscriptToolsEnabled } from "../transcript/index.js";
@@ -386,22 +386,36 @@ function mergeConfigKeepingSecrets(
   return out;
 }
 
-function parseBody(req: IncomingMessage): Promise<string> {
+/**
+ * Request-body caps: an oversized upload must be dropped mid-stream, not
+ * buffered whole into memory. /chat is allowed the most (attachments travel
+ * base64-encoded in JSON); voice STT gets an audio-sized cap; everything
+ * else — a small default.
+ */
+const DEFAULT_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
+const CHAT_BODY_LIMIT_BYTES = 512 * 1024 * 1024;
+const STT_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
+
+function parseRawBody(req: IncomingMessage, maxBytes = DEFAULT_BODY_LIMIT_BYTES): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    let total = 0;
+    req.on("data", (c: Buffer) => {
+      total += c.length;
+      if (total > maxBytes) {
+        req.destroy();
+        reject(new Error("request body too large"));
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
 
-function parseRawBody(req: IncomingMessage): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
+function parseBody(req: IncomingMessage, maxBytes = DEFAULT_BODY_LIMIT_BYTES): Promise<string> {
+  return parseRawBody(req, maxBytes).then((b) => b.toString("utf-8"));
 }
 
 function checkAuth(config: Claw2Config, req: IncomingMessage): boolean {
@@ -574,7 +588,8 @@ function isTrustedHostHeader(hostHeader: unknown, config: Claw2Config): boolean 
 
 function isAuthPublicPath(path: string): boolean {
   if (AUTH_PUBLIC_PATHS.has(path)) return true;
-  if (path.startsWith("/assets/") || path.startsWith("/files/") || path.startsWith("/pwa")) return true;
+  // /files/ is deliberately NOT public: uploads and outputs are private user data.
+  if (path.startsWith("/assets/") || path.startsWith("/pwa")) return true;
   // Static files (pictures, favicon) - without authorization, so that the login form loads
   if (/^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
   return false;
@@ -975,10 +990,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         userLogin = authPayload.login;
       }
     }
-    if (userId === "default" && typeof req.headers["x-user-id"] === "string") {
-      const h = req.headers["x-user-id"].trim();
-      if (h) userId = h;
-    }
+    // Identity comes only from a verified JWT (registration mode). The legacy
+    // X-User-Id header fallback is gone: any caller could otherwise read and
+    // rewrite another user namespace in the shared chats DB. The UIs send
+    // "default", which is the single-owner namespace anyway.
     // Desktop single-user: PWA + Electron share one chat namespace in SQLite.
     // Auth/JWT still gates access; only the chats.user_id key is unified.
     if (process.env.CLAW2_DESKTOP?.trim() === "1") {
@@ -997,7 +1012,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       let auditConfig = config;
       const requestStartMs = Date.now();
       try {
-        const body = await parseBody(req);
+        const body = await parseBody(req, CHAT_BODY_LIMIT_BYTES);
         const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
         const message = typeof data.message === "string" ? data.message.trim() : "";
         const sessionId = typeof data.sessionId === "string" ? data.sessionId.trim() : generateSessionId();
@@ -1044,6 +1059,15 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
         activeSessionId = sessionId;
         activeRun = beginActiveChatRun(sessionId);
+        if (!activeRun) {
+          res.writeHead(429, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(
+            JSON.stringify({
+              error: `Too many concurrent chats (limit ${MAX_CONCURRENT_CHAT_RUNS}). Wait for a running one to finish.`,
+            })
+          );
+          return;
+        }
         onRequestAborted = () => activeRun?.controller.abort("HTTP request aborted");
         onResponseClose = () => {
           if (!res.writableEnded) activeRun?.controller.abort("HTTP response disconnected");
@@ -3297,7 +3321,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
       }
       try {
-        const body = await parseRawBody(req);
+        const body = await parseRawBody(req, STT_BODY_LIMIT_BYTES);
         const contentType = req.headers["content-type"] ?? "application/octet-stream";
         console.error(`[voice/stt] local=${sttLocal} bytes=${body.length} ct=${contentType.slice(0, 60)}`);
         if (sttLocal) {
@@ -3677,8 +3701,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         return;
       }
       try {
-        const st = statSync(fullPath);
-        if (!st.isFile()) {
+        // Symlinks are refused: an agent-writable output dir must not become a
+        // bridge to arbitrary host files via /files/.
+        const lst = lstatSync(fullPath);
+        if (lst.isSymbolicLink() || !lst.isFile()) {
           res.writeHead(404, { "Content-Type": TEXT_TYPE });
           res.end("Not Found");
           return;
@@ -3699,7 +3725,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               ? "application/pdf"
               : imageTypes[ext] ?? "application/octet-stream";
         const name = segments[segments.length - 1] ?? "download";
-        const isImage = ext in imageTypes;
+        // SVG can carry scripts: it always downloads instead of rendering on
+        // the gateway origin (stored-XSS closure); nosniff + sandbox CSP for
+        // the whole /files/ surface.
+        const isImage = ext in imageTypes && ext !== "svg";
         const forceDownload =
           typeof req.url === "string" &&
           new URL(req.url, "http://localhost").searchParams.get("download") === "1";
@@ -3709,6 +3738,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             isImage && !forceDownload
               ? "inline"
               : `attachment; filename="${name.replace(/"/g, "%22")}"`,
+          "X-Content-Type-Options": "nosniff",
+          "Content-Security-Policy": "sandbox",
           "Access-Control-Allow-Origin": corsOrigin,
         });
         res.end(readFileSync(fullPath));

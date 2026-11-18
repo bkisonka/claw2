@@ -6,6 +6,7 @@ import { evaluate } from "mathjs";
 import { CapacitorHttp } from "@capacitor/core";
 import { isNative } from "../native";
 import { getSettings } from "./settings";
+import { wrapExternalContent } from "./external-content";
 import { allMemory, remember, type MemoryChunk } from "./db";
 import { embedTexts } from "./llm";
 import { getFile, listFiles, saveFile, utf8ToBase64 } from "./files";
@@ -160,11 +161,11 @@ export async function toolFetchUrl(url: string): Promise<ToolOutcome> {
   const res = await fetchTargetText(target);
   if (!res.ok) return { content: `Не удалось загрузить ${target}: ${res.body || `HTTP ${res.status}`}` };
   if (/application\/json/i.test(res.body.slice(0, 200)) || res.body.trimStart().startsWith("{")) {
-    return { content: res.body.slice(0, 15000) };
+    return { content: wrapExternalContent(res.body.slice(0, 15000), target) };
   }
   const { title, text } = htmlToReadableText(res.body);
   if (!text.trim()) return { content: `Страница ${target} загружена, но текста нет.` };
-  return { content: `${title ? `${title}\n` : ""}${text}` };
+  return { content: wrapExternalContent(`${title ? `${title}\n` : ""}${text}`, target) };
 }
 
 /**
@@ -182,7 +183,7 @@ async function searchViaDdg(query: string): Promise<ToolOutcome> {
   }
   if (!/<html|<!doctype|class="result/i.test(res.body.slice(0, 2000))) {
     // relay returned extracted text/markdown (reader-style) — hand it over
-    return { content: res.body.slice(0, 8000) };
+    return { content: wrapExternalContent(res.body.slice(0, 8000), serp) };
   }
   try {
     const doc = new DOMParser().parseFromString(res.body, "text/html");
@@ -194,10 +195,10 @@ async function searchViaDdg(query: string): Promise<ToolOutcome> {
       return `- ${a?.textContent?.trim() ?? ""}: ${snip?.textContent?.trim() ?? ""}\n  ${decoded}`;
     });
     return items.length
-      ? { content: items.join("\n\n") }
+      ? { content: wrapExternalContent(items.join("\n\n"), serp) }
       : { content: "Fallback-поиск ничего не нашёл." };
   } catch {
-    return { content: res.body.slice(0, 8000) };
+    return { content: wrapExternalContent(res.body.slice(0, 8000), serp) };
   }
 }
 
@@ -220,9 +221,13 @@ export async function toolWebSearch(query: string): Promise<ToolOutcome> {
       if (!res.ok) return { content: `Tavily: HTTP ${res.status}` };
       const data = tryJson<{ results?: { title?: string; url?: string; content?: string }[] }>(res.body);
       const lines = (data?.results ?? []).map(
-        (r) => `- ${r.title ?? ""}: ${r.content ?? ""}\n  ${r.url ?? ""}`
+        (r) => `- ${r.title ?? ""}: ${(r.content ?? "").slice(0, 2000)}\n  ${r.url ?? ""}`
       );
-      return { content: lines.join("\n\n") || "Ничего не найдено." };
+      return {
+        content: lines.length
+          ? wrapExternalContent(lines.join("\n\n"), "tavily search")
+          : "Ничего не найдено.",
+      };
     }
     const base = search.provider === "searxng" ? norm(search.searxngUrl) : norm(search.otherUrl);
     if (!base) return { content: "Поисковый эндпоинт не задан." };
@@ -234,9 +239,13 @@ export async function toolWebSearch(query: string): Promise<ToolOutcome> {
     if (!res.ok) return { content: `Поиск: HTTP ${res.status}` };
     const data = tryJson<{ results?: { title?: string; url?: string; content?: string }[] }>(res.body);
     const lines = (data?.results ?? []).slice(0, 6).map(
-      (r) => `- ${r.title ?? ""}: ${r.content ?? ""}\n  ${r.url ?? ""}`
+      (r) => `- ${r.title ?? ""}: ${(r.content ?? "").slice(0, 2000)}\n  ${r.url ?? ""}`
     );
-    return { content: lines.join("\n\n") || "Ничего не найдено." };
+    return {
+      content: lines.length
+        ? wrapExternalContent(lines.join("\n\n"), "search")
+        : "Ничего не найдено.",
+    };
   } catch (e) {
     return { content: `Ошибка поиска: ${e instanceof Error ? e.message : String(e)}` };
   }
@@ -246,8 +255,13 @@ export async function toolWebSearch(query: string): Promise<ToolOutcome> {
 
 export function toolCalculate(expr: string): ToolOutcome {
   try {
-    const value = evaluate(expr);
-    return { content: `${expr} = ${typeof value === "number" ? String(value) : value?.toString?.() ?? String(value)}` };
+    // mathjs is not a hard sandbox; a giant expression is a CPU burn. Cap it.
+    const trimmed = expr.trim();
+    if (trimmed.length > 500) {
+      return { content: "Слишком длинное выражение (максимум 500 символов)." };
+    }
+    const value = evaluate(trimmed);
+    return { content: `${trimmed} = ${typeof value === "number" ? String(value) : value?.toString?.() ?? String(value)}` };
   } catch (e) {
     return { content: `Ошибка вычисления: ${e instanceof Error ? e.message : String(e)}` };
   }
