@@ -2066,7 +2066,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         if (!isSkillRunAllowed(config, script)) {
           toolResults.push({
             id: tc.id!,
-            content: `Error: skill «${script}» is not in skills.allowlist. The run is refused until the user adds it to the allowlist in the config.`,
+            content: `Error: skill «${script}» is not in skills.allowlist, so it will not run. Tell the user to confirm it: they should send /allow ${script} in the chat (or add the skill to skills.allowlist in the config). Do not claim the skill has already run.`,
           });
           continue;
         }

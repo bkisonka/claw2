@@ -6,6 +6,7 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { resolve, relative, basename } from "node:path";
 import type { Claw2Config } from "../config/types.js";
 import { assertPublicUrl } from "../security/url-guard.js";
+import { fetchPublic } from "../security/public-fetch.js";
 import { resolveAgentsDir } from "../agents/paths.js";
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -251,7 +252,7 @@ async function generateViaOpenAI(
     // The URL comes from the provider's answer — guard it like a tool fetch.
     const guard = await assertPublicUrl(first.url);
     if (!guard.ok) return { ok: false, error: guard.error };
-    const imgRes = await fetch(first.url, { signal });
+    const imgRes = await fetchPublic(first.url, { signal: signal as never });
     if (!imgRes.ok) {
       return { ok: false, error: `Failed to download image URL: HTTP ${imgRes.status}` };
     }
@@ -327,7 +328,7 @@ async function generateViaOpenAIEdits(
     // The URL comes from the provider's answer — guard it like a tool fetch.
     const guard = await assertPublicUrl(first.url);
     if (!guard.ok) return { ok: false, error: guard.error };
-    const imgRes = await fetch(first.url, { signal });
+    const imgRes = await fetchPublic(first.url, { signal: signal as never });
     if (!imgRes.ok) {
       return { ok: false, error: `Failed to download edited image URL: HTTP ${imgRes.status}` };
     }

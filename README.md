@@ -161,14 +161,19 @@ Skills live in `agents/` as ordinary JavaScript files. The container mounts
 this directory, so you can add or edit skills on the host with any editor —
 the agent sees the changes on the next turn. Inside the container skills
 run in a hardened sandbox: a plain Node.js process with the
-`--permission` flag, restricted environment and no network access to your
-private subnets.
+`--permission` and `--no-addons` flags, restricted environment and no
+network access to your private subnets.
 
-The list of permitted file paths, webhooks and skills is also in the
-config; anything outside the lists is refused. Libraries used by the
-bundled skills are preinstalled in the image; if you replace the mounted
-`agents/` directory with your own, its local `node_modules` (if present)
-takes precedence.
+When the agent needs something no skill covers, it can write a new one —
+but a skill that is not on the allowlist (shipped in the example config)
+will not run until you confirm it: send `/allow <name>.js` in the chat and
+the skill is added to `skills.allowlist` in the config at once. To let the
+agent run anything it writes, remove the `skills.allowlist` section.
+
+The lists of permitted file paths and webhooks are in the config too;
+anything outside them is refused. Libraries used by the bundled skills are
+preinstalled in the image; if you replace the mounted `agents/` directory
+with your own, its local `node_modules` (if present) takes precedence.
 
 ## Security
 

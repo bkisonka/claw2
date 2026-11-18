@@ -49,12 +49,27 @@ gateway:
 #   enabled: true
 
 agentsDir: ./agents
-# Skill allowlist: a non-empty list fences run_agent to exactly these files —
-# the model can draft new skills, but they run only after you list them here.
-# skills:
-#   allowlist:
-#     - time.js
-#     - weather.js
+# Skill allowlist: only these files are executable by the agent. The model can
+# draft a new skill, but running it needs your one-time confirmation — send
+# `/allow <name>.js` in the chat and it lands in this list. Remove the section
+# entirely to let the agent run anything in agents/ without confirmation.
+skills:
+  allowlist:
+    - time.js
+    - system-stats.js
+    - fetch-json.js
+    - download-file.js
+    - surf.js
+    - save-article.js
+    - ya-search.js
+    - weather.js
+    - extract-pdf.js
+    - docx.js
+    - excel-reader.js
+    - ocr.js
+    - save-docx.js
+    - rename-output.js
+    - chart.js
 sandbox:
   image: node:20-alpine
   timeoutMs: 60000

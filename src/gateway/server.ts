@@ -1057,6 +1057,61 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           res.end(JSON.stringify({ error: "message required" }));
           return;
         }
+
+        // --- /allow <skill.js>: one-time user confirmation for a skill
+        // outside skills.allowlist. Only the real user can send it — it
+        // arrives as a chat message from the client, not as anything the
+        // model can produce. Persisted to the config file, applied at once.
+        const allowMatch = /^\/allow\s+([a-zA-Z0-9._-]+\.js)\s*$/i.exec(message);
+        if (allowMatch) {
+          const scriptName = allowMatch[1];
+          const skillPath = join(agentsDir, scriptName);
+          if (!existsSync(skillPath) || !statSync(skillPath).isFile()) {
+            res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+            res.end(JSON.stringify({ content: `Нет такого навыка: ${scriptName}`, sessionId }));
+            return;
+          }
+          const configPath = getConfigPath();
+          let fileConfig: Record<string, unknown> = {};
+          if (existsSync(configPath)) {
+            try {
+              fileConfig = parseYaml(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+            } catch {
+              fileConfig = {};
+            }
+          }
+          const skillsSection = (fileConfig.skills as { allowlist?: string[] } | undefined) ?? {};
+          const list = new Set(skillsSection.allowlist ?? []);
+          const changed = !list.has(scriptName);
+          if (changed) list.add(scriptName);
+          fileConfig.skills = { ...skillsSection, allowlist: [...list] };
+          mkdirSync(dirname(configPath), { recursive: true });
+          writeFileSync(configPath, stringifyYaml(fileConfig), "utf-8");
+          const reloaded = loadConfig(configPath);
+          configRef.current = reloaded;
+          auditLog(reloaded, { type: "config_saved", details: { configPath, allowSkill: scriptName } });
+          console.error(`[gateway] Skill allowed via /allow: ${scriptName}`);
+          const content = changed
+            ? `✅ Навык «${scriptName}» разрешён и добавлен в skills.allowlist. Теперь его можно запустить.`
+            : `Навык «${scriptName}» уже есть в skills.allowlist.`;
+          if (useStream) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+              "Access-Control-Allow-Origin": corsOrigin,
+              "X-Session-Id": sessionId,
+            });
+            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+            res.write(`data: ${JSON.stringify({ done: true, content, sessionId })}\n\n`);
+            res.end();
+            return;
+          }
+          res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ content, sessionId }));
+          return;
+        }
+
         activeSessionId = sessionId;
         activeRun = beginActiveChatRun(sessionId);
         if (!activeRun) {

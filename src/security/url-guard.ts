@@ -5,16 +5,29 @@
  * Checked in two layers: literal IP forms directly, and — for hostnames —
  * every address the name resolves to (a public-looking name that answers
  * with 127.0.0.1 or 169.254.169.254 is still denied). Redirect targets are
- * re-checked by the caller (manual redirect loop in web-fetch).
- *
- * Known limit (documented): the check runs before fetch(), so a hostile DNS
- * server answering differently per query (classic rebinding TOCTOU) can slip
- * through. A connect-time check inside the HTTP client would close that.
+ * re-checked by the caller (manual redirect loop in web-fetch). The connect
+ * layer is guarded too: security/public-fetch.ts installs a DNS lookup that
+ * refuses private addresses at socket-open time, closing the pre-check TOCTOU.
  */
 import { isIP } from "node:net";
 import { lookup } from "node:dns/promises";
 
 export type UrlGuardResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * True when `address` is a public IPv4/IPv6 destination (not loopback/private/
+ * link-local/CGNAT/multicast/reserved, not an unparseable form). Used by the
+ * pre-fetch checks and by the connect-time DNS lookup in public-fetch.
+ */
+export function isPublicAddress(address: string): boolean {
+  const kind = isIP(address);
+  if (kind === 4) {
+    const n = v4ToNum(address);
+    return n !== null && !isPrivateV4(n);
+  }
+  if (kind === 6) return !privateV6(address.toLowerCase());
+  return false;
+}
 
 /** Numeric form of a dotted-quad IPv4, or null when `ip` is not one. */
 function v4ToNum(ip: string): number | null {

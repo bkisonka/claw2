@@ -7,6 +7,7 @@ import type { Claw2Config } from "../config/types.js";
 import { wrapExternalContent } from "../security/content-boundary.js";
 import { filterExternalResponse } from "../security/external-content-filters.js";
 import { assertPublicUrl } from "../security/url-guard.js";
+import { fetchPublic } from "../security/public-fetch.js";
 import { htmlToText, looksLikeHtml, truncateText } from "./html-to-text.js";
 import { throwIfAborted } from "../core/abort.js";
 
@@ -40,14 +41,15 @@ export async function toolWebFetch(
   try {
     // Manual redirect loop: the guard runs on the initial URL and on every
     // hop, so a public page cannot bounce fetches into internal addresses.
+    // fetchPublic additionally guards at connect time (anti-TOCTOU).
     let currentUrl = trimmed;
-    let res: Response | null = null;
+    let res: Awaited<ReturnType<typeof fetchPublic>> | null = null;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       const guard = await assertPublicUrl(currentUrl, allowPrivate);
       if (!guard.ok) return { ok: false, error: guard.error };
-      const resp = await fetch(currentUrl, {
+      const resp = await fetchPublic(currentUrl, {
         method: "GET",
-        signal: fetchSignal,
+        signal: fetchSignal as never,
         redirect: "manual",
         headers: { Accept: "text/html, text/plain, application/json;q=0.9, */*;q=0.8" },
       });
