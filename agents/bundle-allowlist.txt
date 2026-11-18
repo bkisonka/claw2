@@ -1,0 +1,20 @@
+# Skills for the **public** client tree only (not private monorepo pack).
+# Source of truth for statuses: docs/agents-bundle-candidates.md (keep).
+# Applied by scripts/sync-public-client.sh → ../claw2-public/agents/
+# Build public packs from that directory: scripts/build-public-client.sh
+
+time.js
+system-stats.js
+fetch-json.js
+download-file.js
+surf.js
+save-article.js
+ya-search.js
+weather.js
+extract-pdf.js
+docx.js
+excel-reader.js
+ocr.js
+save-docx.js
+rename-output.js
+chart.js

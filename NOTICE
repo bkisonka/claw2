@@ -1,0 +1,26 @@
+# Third-party notices (claw2)
+
+claw2 is proprietary software — see the `LICENSE` file for the terms of use.
+It builds on third-party open-source components; the authors and licenses of
+those components are listed below. Nothing in this file changes the terms of
+the respective third-party licenses.
+
+## Notable components
+
+| Component | License | Notes |
+|-----------|---------|-------|
+| ONNX Runtime (`onnxruntime-node`, `onnxruntime-common`) | MIT | Microsoft Corporation. Full third-party list: `third_party/onnxruntime-ThirdPartyNotices.txt` |
+| Transformers.js (`@huggingface/transformers`) | Apache-2.0 | Hugging Face |
+| Local embedding weights `Xenova/bge-small-en-v1.5` (from `BAAI/bge-small-en-v1.5`) | MIT | Downloaded at first use into `~/.claw2/models` (not shipped with the source tree) |
+| `mathjs` | Apache-2.0 | |
+| `acme-client` (+ `@peculiar/x509`, `asn1js`, `axios`, `node-forge`, …) | MIT / BSD-3-Clause / (BSD-3-Clause OR GPL-2.0) | Let's Encrypt / remote HTTPS |
+| `better-sqlite3`, `sqlite-vec` | MIT | Local storage |
+| `react`, `react-dom`, `vite` and other frontend libraries | MIT | Web and mobile web client |
+
+Other dependencies bundled at build time retain their own licenses; consult
+`node_modules/*/package.json` after installing dependencies.
+
+## License files
+
+- `LICENSE` — the claw2 proprietary license (English, canonical).
+- `LICENSE.ru.md` — Russian translation, for convenience only.

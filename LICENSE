@@ -1,0 +1,74 @@
+CLAW2 PROPRIETARY LICENSE
+Version 1.0, November 2026
+
+Copyright (c) 2026 Vitaliy Bondar. All rights reserved.
+
+This license governs the claw2 software: its source code, build scripts,
+configuration examples, documentation and associated files distributed
+together with this text (collectively, the "Software"). By using any part of
+the Software you accept these terms. If you do not accept them, remove the
+Software from your systems.
+
+1. The grant
+
+   Subject to the terms below, the copyright holder grants you — free of
+   charge — a personal, non-exclusive, non-transferable, perpetual worldwide
+   license to:
+
+   a) use the Software for personal, non-commercial purposes;
+   b) reproduce, study and modify the Software, and create derivative works,
+      solely for your own personal, non-commercial use;
+   c) install and run the Software on equipment you own or control — including
+      private servers, containers and virtual machines — for personal,
+      non-commercial purposes.
+
+   No fee is due for the uses above.
+
+2. Restrictions
+
+   Unless you hold a separate written agreement with the copyright holder,
+   you may not:
+
+   a) distribute, publish, sublicense, sell, lease, rent or otherwise transfer
+      the Software, or any modified version or derivative work of it, in
+      source or compiled form;
+   b) use the Software, or anything derived from it, for commercial purposes —
+      including offering products or services built on it to third parties;
+   c) operate the Software as a service for third parties, or make it
+      available to anyone other than yourself over a network;
+   d) remove, obscure or alter any copyright, license or attribution notices
+      contained in the Software;
+   e) use the name "claw2" or the name of the copyright holder to promote or
+      endorse products derived from the Software.
+
+3. Third-party components
+
+   The Software builds on third-party components distributed under their own
+   open-source licenses. Nothing in this license restricts the rights those
+   licenses grant directly. The NOTICE file lists the notable components and
+   their licenses.
+
+4. No warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT. The entire risk as
+   to the quality and performance of the Software rests with you.
+
+5. Limitation of liability
+
+   IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE OR
+   OTHER DEALINGS IN THE SOFTWARE.
+
+6. Termination
+
+   Your rights under this license terminate automatically if you breach any
+   of its terms. Upon termination you must stop using the Software and delete
+   your copies. Sections 2, 4, 5 and 7 survive termination.
+
+7. Other uses
+
+   Any use of the Software beyond the grant in section 1 requires prior
+   written permission from the copyright holder.

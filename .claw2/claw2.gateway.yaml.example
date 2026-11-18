@@ -1,0 +1,54 @@
+# Example config with Gateway and optional memory (stage 2)
+# Run: CLAW2_CONFIG_PATH=.claw2/claw2.gateway.yaml.example npm run gateway
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  apiKey: env:OPENAI_API_KEY
+
+memory:
+  enabled: false
+  embeddingModel: text-embedding-3-small
+  maxChunks: 500
+  maxRecallChunks: 5
+
+gateway:
+  port: 3000
+  # Chats: local SQLite. Postgres (databaseUrl) is only needed for hosted multi-user + registration.
+  # chatsDbPath: ./.claw2/data/claw2_chats.sqlite
+  auth:
+    enabled: false
+    # apiKey: env:CLAW2_GATEWAY_API_KEY
+    # Individual client: do not set registrationEnabled / databaseUrl / sessionSecret.
+# Camera recognition (biometric identification): client sends recognizedUser with each request
+# vision:
+#   enabled: true
+#   superuserIds: []   # IDs with full access (including all users' memory)
+#   recognizeUrl: http://localhost:9000/recognize   # voice service: POST frame → JSON { userId }
+
+# Channels: Telegram and/or VK (private community, DMs to the bot)
+# channels:
+#   telegram:
+#     enabled: true
+#     botToken: env:TELEGRAM_BOT_TOKEN
+#   vk:
+#     enabled: true
+#     accessToken: env:VK_ACCESS_TOKEN
+#     groupId: 123456789   # community ID (positive number)
+#     voice:               # same as Telegram: STT/TTS via voice service
+#       sttUrl: http://localhost:8765/stt
+#       ttsUrl: http://localhost:8765/tts
+#       replyWithVoice: true
+#       ttsMaxChars: 1000
+
+# Scheduler: run agents on cron (see docs/scheduler-test.md)
+# scheduler:
+#   enabled: true
+
+agentsDir: ./agents
+sandbox:
+  image: node:20-alpine
+  timeoutMs: 60000
+  # Inside a claw2 container there is no Docker daemon: skills run in the
+  # same container via node --permission. Uncomment when running in Docker.
+  # useDocker: false

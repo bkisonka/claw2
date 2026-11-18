@@ -1,0 +1,56 @@
+{
+  "name": "claw2",
+  "version": "0.1.0",
+  "description": "Personal chat-driven AI agent",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "main": "dist/cli.js",
+  "bin": {
+    "claw2": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc && node scripts/copy-gateway-sql.cjs",
+    "build:web": "cd web && npm run build",
+    "build:pwa": "cd pwa && npm run build",
+    "start": "node dist/cli.js",
+    "chat": "npm run build && node dist/cli.js",
+    "gateway": "node dist/gateway/cli.js",
+    "dev": "npm run build && concurrently -n gw,web \"npm run dev:gateway\" \"npm run dev:web\"",
+    "dev:only": "concurrently -n gw,web \"npm run dev:gateway\" \"npm run dev:web\"",
+    "dev:gateway": "node dist/gateway/cli.js",
+    "dev:web": "cd web && npm run dev",
+    "dev:cli": "tsx src/cli.ts",
+    "embed-daemon": "tsx src/memory/embed-daemon.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@chroma-core/default-embed": "^0.1.9",
+    "@huggingface/transformers": "^4.2.0",
+    "@vexyl.ai/sip": "^1.0.4",
+    "acme-client": "^5.4.0",
+    "bcrypt": "^6.0.0",
+    "better-sqlite3": "^12.6.2",
+    "chromadb": "^3.2.2",
+    "dotenv": "^17.2.4",
+    "jsonwebtoken": "^9.0.3",
+    "jszip": "^3.10.1",
+    "mathjs": "^13.2.3",
+    "openai": "^4.77.0",
+    "pg": "^8.18.0",
+    "sqlite-vec": "^0.1.9",
+    "undici": "^7.2.0",
+    "yaml": "^2.4.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.16.0",
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

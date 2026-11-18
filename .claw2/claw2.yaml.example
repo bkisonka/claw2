@@ -1,0 +1,145 @@
+# Example claw2 config (copy to claw2.yaml and supply secrets via env)
+# Path: CLAW2_CONFIG_PATH or .claw2/claw2.yaml
+
+llm:
+  provider: openai
+  model: gpt-4o-mini
+  apiKey: env:OPENAI_API_KEY
+
+agentsDir: ./agents
+
+# Assistant persona: see prompts/assistant.md (## full / ## compact).
+# assistant:
+#   mdPath: ./prompts/assistant.md
+# or CLAW2_ASSISTANT_MD=/path/to/assistant.md
+
+sandbox:
+  image: node:20-alpine
+  timeoutMs: 60000
+
+# Dialogue Insights (links to past chats; ask-first)
+# insights:
+#   enabled: true
+#   mode: ask   # off | ask | auto
+#   minScore: 0.72
+#   cooldownSec: 300
+#   unresolvedMinAgeSec: 86400
+#   budgetMs: 350
+#   useMemory: true
+#   useProjectDigests: true
+#   useUnresolvedThreads: true
+#   cheapPass:
+#     enabled: true
+#     maxTokens: 180
+
+# Tools (optional)
+# tools:
+#   search:
+#     provider: auto          # auto | tavily | searxng | other
+#     useLlmInWeb: false      # address bar: LLM+search (true) or direct toolSearch (false); DDG fallback
+#     # Desktop headless SERP engines (defaults: yandex, google, ddg). Custom: urlTemplate with {query}.
+#     # browserEngines:
+#     #   - { id: yandex, name: Yandex, urlTemplate: "https://yandex.ru/search/touch/?text={query}", enabled: true }
+#     #   - { id: google, name: Google, urlTemplate: "https://www.google.com/search?q={query}&gbv=1", enabled: true }
+#     #   - { id: ddg, name: DuckDuckGo, urlTemplate: "https://html.duckduckgo.com/html/?q={query}", enabled: true }
+#     #   - { id: bing, name: Bing, urlTemplate: "https://www.bing.com/search?q={query}", enabled: true }
+#   tavily:
+#     apiKey: env:TAVILY_API_KEY
+#     enabled: true
+#   searxng:
+#     url: http://127.0.0.1:8080
+#     apiKey: env:SEARXNG_API_KEY        # optional (Bearer / X-Api-Key)
+#     enabled: true
+#   other:
+#     url: https://search.example.com    # SearXNG-compatible GET /search?q=&format=json
+#     apiKey: env:SEARCH_OTHER_API_KEY   # optional (Bearer / X-Api-Key)
+#     enabled: true
+#   sdUrl: http://localhost:7860   # Stable Diffusion (sd/): image generation via model
+#   sdEnabled: true                # enable/disable generate_image tool (default true when sdUrl is set)
+
+# Shared LLM + user room (llm-bridge, UI "LLM Room")
+# llmBridge:
+#   enabled: true
+#   url: http://127.0.0.1:3100
+#   conversationId: team-room
+#   agentId: alpha
+#   displayName: "Альфа"
+#   participantLabels:
+#     alpha: "Альфа"
+#     beta: "Бета"
+#   token: env:LLM_BRIDGE_TOKEN
+#   autoReply: true
+#   autoReplyMode: mention   # all — any message; mention — only @Альфа / @alpha
+
+# Voice service for the web: local (/stt,/tts) or OpenAI-compatible.
+# voice:
+#   sttLocal: true
+#   ttsLocal: true
+#   ttsEngine: silero   # Mac / local (with ttsLocal)
+#   # ttsEngine: moss   # production with GPU
+#   sttUrl: http://127.0.0.1:9000/stt
+#   ttsUrl: http://127.0.0.1:9000/tts
+#   # Remote:
+#   # sttLocal: false
+#   # ttsLocal: false
+#   # sttUrl: https://api.openai.com/v1
+#   # sttModel: whisper-1
+#   # sttApiKey: env:OPENAI_API_KEY
+#   # ttsUrl: https://api.openai.com/v1
+#   # ttsModel: tts-1
+#   # ttsApiKey: env:OPENAI_API_KEY
+
+# SIP / virtual PBX — phone_call tool
+# sip:
+#   enabled: true
+#   server: sip.ats.example.ru
+#   port: 5060
+#   domain: ats.example.ru
+#   user: claw2-bot
+#   password: secret
+#   localPort: 5061
+#   # Realtime speech-to-speech (separate from llm.apiKey; default provider: off → batch STT/TTS)
+#   # --- Yandex (RU) ---
+#   realtime:
+#     provider: yandex
+#     apiKey: env:YANDEX_API_KEY
+#     folderId: env:YANDEX_FOLDER_ID
+#     # iamToken: env:YANDEX_IAM_TOKEN   # alternative to apiKey
+#     model: speech-realtime-260528
+#     voice: marina
+#     sampleRate: 24000
+#   # --- OpenAI Realtime ---
+#   # realtime:
+#   #   provider: openai
+#   #   apiKey: env:OPENAI_REALTIME_API_KEY
+#   #   # useLlmApiKey: true   # explicitly allow llm.apiKey / OPENAI_API_KEY
+#   #   model: gpt-realtime
+#   #   voice: alloy
+#   #   sampleRate: 24000
+#   # --- xAI Grok Voice ---
+#   # realtime:
+#   #   provider: xai
+#   #   apiKey: env:XAI_API_KEY
+#   #   model: grok-voice
+#   #   voice: Ara
+#   #   baseURL: wss://api.x.ai/v1/realtime
+#   # Rollback to three-stage pipeline: provider: off  (or pipeline)
+#   # RTP media: Node (default) or optional native sidecar
+#   # mediaBackend: auto   # auto|node|sidecar — missing binary in ~/.claw2 → node, no error
+#   # sidecarPath: ~/.claw2/sip-media-sidecar/run-sidecar.sh
+# Channels (optional)
+channels:
+  telegram:
+    enabled: true
+    botToken: env:TELEGRAM_BOT_TOKEN
+    # Bot API only via proxy (deploy/v2raya — v2rayA in Docker). Rest of claw2 — direct.
+    # Gateway in Docker:
+    # proxyUrl: socks5h://host.docker.internal:20170
+    # Gateway on host:
+    # proxyUrl: socks5h://127.0.0.1:20170
+    # Voice: STT/TTS via voice service (see voice/README.md)
+    voice:
+      sttUrl: http://localhost:9000/stt
+      ttsUrl: http://localhost:9000/tts
+      replyWithVoice: true
+      ttsMaxChars: 1000

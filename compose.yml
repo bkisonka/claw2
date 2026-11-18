@@ -1,0 +1,45 @@
+# claw2 — single-container deployment: gateway, web interface and mobile web client.
+# Configuration lives in .claw2/claw2.yaml, secrets in .env (see README).
+# Один контейнер: шлюз, веб-интерфейс и мобильный веб-клиент.
+# Конфигурация — в .claw2/claw2.yaml, секреты — в .env (см. README).
+
+services:
+  claw2:
+    build: .
+    image: claw2:latest
+    container_name: claw2
+    ports:
+      # Loopback only. To serve other devices: "8080:3000" — and enable
+      # gateway.auth first (see README, "Security").
+      # Только петлевой интерфейс. Для доступа с других устройств: "8080:3000"
+      # — и предварительно включите gateway.auth (см. README, «Безопасность»).
+      - "127.0.0.1:8080:3000"
+    env_file: .env
+    environment:
+      - NODE_ENV=production
+    volumes:
+      - ./.claw2:/app/.claw2
+      # data/ keeps chat databases when gateway.chatsDbPath points here;
+      # by default chats live under .claw2/. Same directory on the host —
+      # nothing is lost across rebuilds.
+      # data/ хранит базы чатов, если gateway.chatsDbPath указывает сюда;
+      # по умолчанию чаты живут внутри .claw2/. Каталог на хосте —
+      # при пересборке ничего не теряется.
+      - ./data:/app/data
+      # Skills are plain files: edit on the host, the agent sees changes
+      # on the next turn.
+      # Навыки — обычные файлы: правьте на хосте, агент видит изменения
+      # на следующем ходе.
+      - ./agents:/app/agents
+      # Container time = host time (reminders and schedules).
+      # Время в контейнере = время на хосте (напоминания и расписания).
+      - /etc/localtime:/etc/localtime:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

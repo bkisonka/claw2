@@ -1,0 +1,19 @@
+{
+  "name": "claw2-agents",
+  "version": "0.1.0",
+  "description": "Bundled claw2 skills (allowlist)",
+  "type": "module",
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "rss-parser": "^3.13.0",
+    "mammoth": "^1.8.0",
+    "pdf-parse": "^1.1.1",
+    "tesseract.js": "^5.1.0",
+    "xlsx": "^0.18.5",
+    "docx": "^9.5.0"
+  },
+  "optionalDependencies": {
+    "chart.js": "^3.9.1",
+    "chartjs-node-canvas": "^4.1.2"
+  }
+}

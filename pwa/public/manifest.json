@@ -1,0 +1,32 @@
+{
+  "name": "Claw2",
+  "short_name": "Claw2",
+  "description": "Claw2 — автономный ассистент: чат, документы, память",
+  "id": "/pwa/",
+  "start_url": "/pwa/",
+  "scope": "/pwa/",
+  "display": "standalone",
+  "background_color": "#202022",
+  "theme_color": "#202022",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

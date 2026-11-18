@@ -1,0 +1,39 @@
+# Dependencies and build output
+node_modules/
+dist/
+web/dist/
+pwa/dist/
+web/node_modules/
+pwa/node_modules/
+agents/node_modules/
+*.tsbuildinfo
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+.claw2/*.yaml
+!.claw2/*.yaml.example
+
+# Runtime state (chats, logs, caches)
+.claw2/*.db
+.claw2/logs/
+.claw2/data/
+.claw2/backups/
+data/
+puppeteer-cache/
+*.claw-cache
+
+# Android: build outputs, cap-sync assets, signing material
+pwa/android/.gradle/
+pwa/android/build/
+pwa/android/app/build/
+pwa/android/capacitor-cordova-android-plugins/
+pwa/android/local.properties
+pwa/android/keystore.properties
+pwa/android/*.keystore
+pwa/android/app/src/main/assets/public/
+
+# OS noise
+.DS_Store
+Thumbs.db
