@@ -610,8 +610,13 @@ class TopologicalNode {
     }
 
     const variation = baseStrength * 0.1;
+    // Deterministic jitter: seeded like the rest of the module (mulberry32 over
+    // the intention seed) — Math.random() here broke reproducibility of runs.
+    const rng = mulberry32(
+      (this.intention ? this.intention.seed_val : 42) + Math.round(baseStrength * 1e6) * 104729
+    );
     for (let i = 0; i < this.dim; i++) {
-      xi_inner.re[i][i] += (Math.random() - 0.5) * variation;
+      xi_inner.re[i][i] += (rng() - 0.5) * variation;
     }
 
     return herm(xi_inner);

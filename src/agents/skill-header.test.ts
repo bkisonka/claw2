@@ -49,7 +49,7 @@ console.log("FILE_URL=/files/output/a.png");
 // In: stdin
 // Out: FILE_URL
 `);
-  assert.equal(parsed.description, "сохранить текст в DOCX");
+  assert.equal(parsed.description, "save text to DOCX");
   assert.match(parsed.help, /FILE_URL/);
 }
 

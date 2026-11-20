@@ -17,6 +17,14 @@ sandbox:
   image: node:20-alpine
   timeoutMs: 60000
 
+# Prompt-injection containment ("lethal trifecta"): when a turn combines data
+# access with untrusted content and a way to send it out, the turn is audited
+# and stopped (block) or only logged with a warning (warn).
+security:
+  lethalTrifecta:
+    enabled: true
+    action: block
+
 # Dialogue Insights (links to past chats; ask-first)
 # insights:
 #   enabled: true

@@ -5,6 +5,7 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, relative } from "node:path";
@@ -380,10 +381,31 @@ export async function runAgent(
     volumeMounts.push(`${options.uploadsDir}:/app/uploads:ro`);
   }
 
+  // Unique name: on timeout the container is killed by name — the CLI dying
+  // alone would leave an infinite skill running (--rm only cleans up on a
+  // normal exit).
+  const containerName = `claw2-agent-${randomUUID()}`;
+  const memory = config.sandbox?.dockerMemory?.trim() || "512m";
+  const pidsLimit = Math.max(1, Math.floor(config.sandbox?.dockerPidsLimit ?? 64));
+
   const dockerArgs = [
     "run",
     "--rm",
     "-i",
+    "--name",
+    containerName,
+    // Hardening: no capabilities, no privilege escalation, bounded resources,
+    // read-only rootfs (skill writes go to the /app/output mount; /tmp is a
+    // noexec tmpfs so a skill cannot drop and run a binary).
+    "--cap-drop=ALL",
+    "--security-opt=no-new-privileges",
+    "--memory",
+    memory,
+    "--pids-limit",
+    String(pidsLimit),
+    "--read-only",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,size=64m",
     ...volumeMounts.flatMap((v) => ["-v", v]),
     "-w",
     "/app/agents",
@@ -401,8 +423,25 @@ export async function runAgent(
 
     const chunks: Buffer[] = [];
     const errChunks: Buffer[] = [];
-    proc.stdout?.on("data", (c: Buffer) => chunks.push(c));
-    proc.stderr?.on("data", (c: Buffer) => errChunks.push(c));
+    // Cap captured output (mirrors the host sandbox): a looping skill must not
+    // inflate gateway memory or the prompt.
+    const MAX_CAPTURE_BYTES = 256 * 1024;
+    let captured = 0;
+    let errCaptured = 0;
+    let truncated = false;
+    proc.stdout?.on("data", (c: Buffer) => {
+      if (captured >= MAX_CAPTURE_BYTES) return;
+      const room = MAX_CAPTURE_BYTES - captured;
+      captured += c.length;
+      chunks.push(c.length > room ? c.subarray(0, room) : c);
+      if (captured >= MAX_CAPTURE_BYTES) truncated = true;
+    });
+    proc.stderr?.on("data", (c: Buffer) => {
+      if (errCaptured >= MAX_CAPTURE_BYTES) return;
+      const room = MAX_CAPTURE_BYTES - errCaptured;
+      errCaptured += c.length;
+      errChunks.push(c.length > room ? c.subarray(0, room) : c);
+    });
 
     let settled = false;
     const settle = (result: RunAgentResult) => {
@@ -412,9 +451,18 @@ export async function runAgent(
     };
 
     const timeout = setTimeout(() => {
+      // Kill by name first: `docker run --rm -i` keeps the container running
+      // when only the CLI client dies, so SIGKILL to the CLI is not enough
+      // for an infinite skill.
+      try {
+        spawnSync("docker", ["kill", containerName], { timeout: 10_000 });
+      } catch {
+        /* best effort; fall through to killing the CLI */
+      }
       proc.kill("SIGKILL");
       settle({
-        stdout: Buffer.concat(chunks).toString("utf-8"),
+        stdout:
+          Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
         stderr: Buffer.concat(errChunks).toString("utf-8") + "\n[timeout]\n",
         exitCode: -1,
       });

@@ -14,6 +14,7 @@ import {
   type HssState,
 } from "./hss-stabilizer.js";
 import type { Claw2Config } from "../config/types.js";
+import type OpenAI from "openai";
 
 const config = {
   orchestrator: {
@@ -82,7 +83,10 @@ async function main() {
   });
 
   const SESSION = "unit-test-session";
-  const runTurn = (text: string) => evolveHssAndGetState(SESSION, "default", text, config, {});
+  const runTurn = (
+    text: string,
+    o: { config?: Claw2Config; evolveOpts?: Record<string, unknown> } = {}
+  ) => evolveHssAndGetState(SESSION, "default", text, o.config ?? config, o.evolveOpts ?? {});
 
   await test("evolve: first turn is calibration with zero effectiveDelta", async () => {
     releaseHssSession(SESSION);
@@ -119,20 +123,49 @@ async function main() {
       const s = await evolveHssAndGetState(SESSION, "default", t, config, {});
       run2.push(s!.effectiveDelta ?? 0);
     }
-    // Ядро HSS подмешивает Math.random в диагональ ξ (hss.cjs:614), поэтому
-    // бит-в-бит детерминизма нет — допускаем микроджиттер порядка 1e-4.
+    // Ядро HSS полностью детерминировано: шум сидирован (mulberry32), джиттер
+    // диагонали ξ больше не Math.random (hss.cjs, generateInnerXi) — сравнение
+    // бит-в-бит.
     for (let i = 0; i < run1.length; i++) {
-      assert.ok(Math.abs(run1[i] - run2[i]) < 1e-4, `turn ${i}: ${run1[i]} vs ${run2[i]}`);
+      assert.equal(run1[i], run2[i], `turn ${i}: ${run1[i]} vs ${run2[i]}`);
     }
   });
 
   await test("evolve: state reacts to text, not only to turn count", async () => {
+    // Реактивность на текст входит через contextEmbedding: при включённой
+    // field-онтологии эмбеддинг строит стабилизатор из LLM-клиента. Здесь это
+    // детерминированный stub — разный текст → разный эмбеддинг → другой
+    // гамильтониан (buildHamiltonianFromEmbedding) → другие метрики.
+    const configField = {
+      orchestrator: {
+        hssEntropyDeltaStabilizeMin: 0.0015,
+        hssContextChunkSize: 400,
+        hssContextChunkMinLen: 600,
+        hssFieldOntology: { enabled: true },
+      },
+      memory: { embeddingProvider: "http", embeddingModel: "test-embed" },
+    } as unknown as Claw2Config;
+    const fakeLlm = {
+      embeddings: {
+        async create({ input }: { input?: string }) {
+          const len = input?.length ?? 0;
+          const v = new Array(8).fill(0).map((_, i) => ((len + i * 7) % 13) / 13);
+          return { data: [{ embedding: v }] };
+        },
+      },
+    } as unknown as OpenAI;
     releaseHssSession(SESSION);
-    await runTurn("Калибровка.");
-    const s1 = await runTurn("Ответ про квантовую физику и запутанность частиц.");
+    await runTurn("Калибровка.", { config: configField });
+    const s1 = await runTurn("Ответ про квантовую физику и запутанность частиц.", {
+      config: configField,
+      evolveOpts: { llmClient: fakeLlm },
+    });
     releaseHssSession(SESSION);
-    await runTurn("Калибровка.");
-    const s2 = await runTurn("Ответ про приготовление борща и молодую свёклу.");
+    await runTurn("Калибровка.", { config: configField });
+    const s2 = await runTurn("Ответ про приготовление борща и молодую свёклу.", {
+      config: configField,
+      evolveOpts: { llmClient: fakeLlm },
+    });
     assert.ok(s1 && s2);
     const identical =
       s1.entropy === s2.entropy &&

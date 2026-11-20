@@ -69,7 +69,7 @@ claw2 — персональный ИИ-агент, управляемый в д
 ## Быстрый старт
 
 ```bash
-git clone <repository-url> claw2
+git clone https://github.com/bkisonka/claw2 claw2
 cd claw2
 
 # 1. Окружение: ключ модели и ключ доступа к шлюзу.

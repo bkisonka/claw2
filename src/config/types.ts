@@ -167,6 +167,10 @@ export interface Claw2Config {
     /** Running agents on the host (node ​​with permissions) instead of Docker. Default is false. When deploying claw2 to Docker, set it to true, otherwise run_agent will give spawn docker ENOENT.*/
     useDocker?: boolean;
     elevatedAllowed?: boolean;
+    /** Docker-sandbox hardening: memory cap per skill run (default "512m"). */
+    dockerMemory?: string;
+    /** Docker-sandbox hardening: process count cap per skill run (default 64). */
+    dockerPidsLimit?: number;
     /**
      * Optional expansion of host FS for agents when useDocker is false.
      * Default (omit / mode default): read agents/ (+ uploads), write agents/output only.

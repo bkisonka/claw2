@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 
 import x from "y";
 `);
-  assert.equal(parsed.description, "сохранить текст в DOCX");
+  assert.equal(parsed.description, "save text to DOCX");
   assert.match(parsed.help, /stdin/);
   assert.match(parsed.help, /FILE_URL/);
 }

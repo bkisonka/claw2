@@ -20,6 +20,7 @@
     "dev:gateway": "node dist/gateway/cli.js",
     "dev:web": "cd web && npm run dev",
     "dev:cli": "tsx src/cli.ts",
+    "test": "node scripts/run-tests.cjs",
     "embed-daemon": "tsx src/memory/embed-daemon.ts"
   },
   "engines": {
@@ -51,7 +52,8 @@
     "@types/pg": "^8.16.0",
     "concurrently": "^9.1.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^5.1.1"
   },
   "overrides": {
     "@huggingface/transformers": "$@huggingface/transformers"

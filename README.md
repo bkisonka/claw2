@@ -69,7 +69,7 @@ Building from source without Docker requires Node.js 20 or newer.
 ## Quick start
 
 ```bash
-git clone <repository-url> claw2
+git clone https://github.com/bkisonka/claw2 claw2
 cd claw2
 
 # 1. Environment: the model API key and the gateway access key.
