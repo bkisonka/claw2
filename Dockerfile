@@ -26,15 +26,35 @@ COPY pwa ./pwa
 RUN cd pwa && npm run build
 
 # ---- runtime ----
-FROM node:20-alpine AS runtime
+# Debian (glibc), not alpine/musl: the sqlite-vec extension ships glibc-only
+# prebuilt binaries (vec0.so links against ld-linux-aarch64.so.1); on musl
+# dlopen fails and the error surfaces as a confusing "vec0.so.so" in the UI.
+# All native modules in the tree (better-sqlite3, onnxruntime) have glibc
+# prebuilts; alpine only breaks this class.
+FROM node:20-slim AS dockercli-extract
+ARG TARGETARCH
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && case "$TARGETARCH" in \
+         arm64) DOCKER_ARCH=aarch64 ;; \
+         amd64) DOCKER_ARCH=x86_64 ;; \
+         *) echo "unsupported TARGETARCH=$TARGETARCH"; exit 1 ;; \
+       esac \
+    && curl -fsSL "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-27.3.1.tgz" \
+       -o /tmp/docker.tgz \
+    && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
+    && mv /tmp/docker/docker /usr/local/bin/docker && rm -rf /tmp/docker.tgz /var/lib/apt/lists/*
+
+FROM node:20-slim AS runtime
 WORKDIR /app
 
-# docker CLI: the gateway launches every skill as a sibling container on the
-# host docker through a restricted API proxy (compose ships docker-socket-
-# proxy; DOCKER_HOST points at it). The gateway itself never sees the socket.
+# docker CLI (static binary from the official distribution): the gateway
+# launches every skill as a sibling container on the host docker through a
+# restricted API proxy (compose ships docker-socket-proxy; DOCKER_HOST points
+# at it). The gateway itself never sees the socket.
 COPY package.json package-lock.json ./
-RUN apk add --no-cache docker-cli && \
-    npm ci --omit=dev && \
+COPY --from=dockercli-extract /usr/local/bin/docker /usr/local/bin/docker
+RUN npm ci --omit=dev && \
     npm install --no-save --omit=dev --no-audit --no-fund \
       "cheerio@^1.2.0" "rss-parser@^3.13.0" "mammoth@^1.8.0" "pdf-parse@^1.1.1" \
       "tesseract.js@^5.1.0" "xlsx@^0.18.5" "docx@^9.5.0"
