@@ -56,6 +56,25 @@ function getStore(config: Claw2Config): IMemoryStore {
 }
 
 /** Reset singleton (after config save / backend change). */
+/**
+ * Test-injection hooks (underscore-prefixed, exported for tests only):
+ * the fallback mapping branch of memoryRecallScored is only reachable with
+ * a store that lacks recallScored — the production stores all have it, so
+ * the seam test swaps the active default for a recall-only view.
+ */
+export function __setMemoryStoreForTest(store: IMemoryStore | null): void {
+  if (store === null) {
+    resetMemoryStore();
+    return;
+  }
+  defaultStore = store;
+  defaultStoreBackend = "memory";
+}
+
+export function __getMemoryStoreForTest(): IMemoryStore | null {
+  return defaultStore;
+}
+
 export function resetMemoryStore(): void {
   defaultStore = null;
   defaultStoreBackend = null;
@@ -160,6 +179,7 @@ export async function memoryRecallScored(
         // Provenance must survive the store→consumer seam (the anti-laundering
         // check in the orchestrator reads exactly this field).
         ...(x.chunk.untrustedOrigin ? { untrustedOrigin: true } : {}),
+
 
       })),
     };

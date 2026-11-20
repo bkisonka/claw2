@@ -13,9 +13,15 @@
  * recallScored) is exercised through a wrapper store that hides the method.
  */
 import assert from "node:assert/strict";
-import { memoryRecall, memoryRecallScored, resetMemoryStore, memoryWrite } from "./index.js";
+import {
+  memoryRecall,
+  memoryRecallScored,
+  resetMemoryStore,
+  memoryWrite,
+  __getMemoryStoreForTest,
+  __setMemoryStoreForTest,
+} from "./index.js";
 import { InMemoryStore } from "./store.js";
-import type { IMemoryStore } from "./store.js";
 import type OpenAI from "openai";
 import type { Claw2Config } from "../config/types.js";
 
@@ -28,17 +34,6 @@ const fakeClient = {
 const config = {
   memory: { enabled: true, backend: "memory" as const, maxChunks: 20, maxRecallChunks: 10 },
 } as unknown as Claw2Config;
-
-/** Store wrapper that hides recallScored — forces the fallback mapping. */
-class NoScoredStore implements IMemoryStore {
-  constructor(private inner: InMemoryStore) {}
-  async add(chunk: Parameters<InMemoryStore["add"]>[0]): Promise<string> {
-    return this.inner.add(chunk);
-  }
-  async recall(...args: Parameters<InMemoryStore["recall"]>) {
-    return this.inner.recall(...args);
-  }
-}
 
 async function main() {
   // 1. Real API, scored branch (InMemoryStore has recallScored).
@@ -70,28 +65,41 @@ async function main() {
     );
   }
 
-  // 2. Fallback branch: store without recallScored (wrapper hides it).
-  // Inject the wrapper as the active store by backend reset + direct use:
-  // getStore() builds InMemoryStore, so we exercise the fallback through a
-  // sub-API contract — a store that only implements recall().
-  const inner = new InMemoryStore({ maxChunks: 20, maxRecallChunks: 10 });
-  await inner.add({
-    text: "fallback tainted note",
-    embedding: [1, 0, 0],
-    source: "internal",
-    untrustedOrigin: true,
+  // 2. Fallback branch through the REAL memoryRecallScored: swap the
+  // active default store for a recall-only view (test-injection hook —
+  // see __setMemoryStoreForTest in index.ts), so the real function takes
+  // the fallback mapping (store.recall + score-by-index).
+  resetMemoryStore();
+  const w3 = await memoryWrite(fakeClient, config, "fallback tainted note", "internal", undefined, undefined, true);
+  assert.equal(w3.ok, true, `fallback write failed: ${w3.ok ? "" : w3.reason}`);
+  // Wrap the SAME store instance hiding only recallScored; recall() would
+  // still delegate internally, so the wrapper serves both the branch
+  // condition and the plain recall the fallback mapping calls.
+  const activeInner = __getMemoryStoreForTest();
+  assert.ok(activeInner, "test hook must expose the active store");
+  __setMemoryStoreForTest({
+    add: (c) => activeInner.add(c),
+    recall: (q, l, o) => activeInner.recall(q, l, o),
   });
-  const noScored = new NoScoredStore(inner);
-  assert.equal(noScored.recallScored, undefined, "wrapper must hide recallScored for the fallback branch");
-  // Drive the exact fallback mapping memoryRecallScored uses when
-  // store.recallScored is absent (that branch is branch-and-mapping in the
-  // real function; here we assert the store contract that feeds it).
-  const hits = await noScored.recall([1, 0, 0], 10);
-  assert.equal(
-    hits.some((c) => c.untrustedOrigin),
-    true,
-    "fallback store contract must surface the flag for the fallback mapping"
-  );
+  try {
+    const fbScored = await memoryRecallScored(fakeClient, config, "fallback tainted note");
+    const fb = fbScored.chunks.find((c) => c.text.includes("fallback tainted note"));
+    assert.ok(fb, "fallback branch: tainted chunk must be recalled");
+    assert.equal(fb.untrustedOrigin, true, "fallback branch: flag lost at the seam");
+    assert.equal(
+      fbScored.chunks.some((c) => c.untrustedOrigin),
+      true,
+      "fallback branch: orchestrator predicate must fire"
+    );
+    const fbRecall = await memoryRecall(fakeClient, config, "fallback tainted note");
+    assert.equal(
+      fbRecall.chunks.some((c) => c.untrustedOrigin),
+      true,
+      "fallback branch through memoryRecall: predicate must fire"
+    );
+  } finally {
+    __setMemoryStoreForTest(null);
+  }
 
   console.log("index-recall-seam.test.ts: ok");
 }
