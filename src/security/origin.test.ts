@@ -40,6 +40,15 @@ resetProvenanceForTest();
   assert.equal(hasUntrustedOrigin(""), false);
 }
 
+// 3b. A trusted-origin tag must NOT taint (ledger records untrusted only).
+{
+  markUntrustedOrigin("s-trusted", { source: "user", untrusted: false });
+  assert.equal(hasUntrustedOrigin("s-trusted"), false, "trusted tag must not taint");
+  markUntrustedOrigin("s-trusted2", { source: "web", untrusted: true });
+  assert.equal(hasUntrustedOrigin("s-trusted2"), true, "untrusted tag taints");
+  releaseProvenance("s-trusted2");
+}
+
 // 4. initTrifectaState: ledger OR marker scan — either arms the trifecta.
 {
   resetProvenanceForTest();

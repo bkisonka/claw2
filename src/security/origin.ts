@@ -44,8 +44,11 @@ const taintedSessions = new Set<string>();
 /** Mark a session's context as containing untrusted-origin content. */
 export function markUntrustedOrigin(sessionId: string, tag?: OriginTag): void {
   if (!sessionId) return;
+  // An explicit trusted-origin tag does not taint — the ledger records
+  // *untrusted* provenance only. No tag means the call site already knows
+  // the content is untrusted (all current call sites are wrap sites).
+  if (tag && !tag.untrusted) return;
   taintedSessions.add(sessionId);
-  if (tag && !tag.untrusted) return; // only untrusted tags taint; kept for call-site clarity
 }
 
 /** Whether the session context currently includes untrusted-origin content. */
