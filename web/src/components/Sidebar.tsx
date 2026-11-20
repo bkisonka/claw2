@@ -31,6 +31,7 @@ import {
   IconPhone,
   IconSpinner,
   IconAlertDot,
+  IconCheck,
   SidebarGlyphIcon,
 } from "./icons";
 
@@ -746,7 +747,7 @@ export function Sidebar({
                     <span className="shell-dynamic-label">{item.label}</span>
                     {status !== "open" && (
                       <span className="shell-dynamic-status" aria-hidden>
-                        {status === "active" ? "…" : "✓"}
+                        {status === "active" ? <IconSpinner size={12} /> : <IconCheck size={12} />}
                       </span>
                     )}
                   </button>

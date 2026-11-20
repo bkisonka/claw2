@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * HSS field ontology (hss.txt): topologically stable node.
  * P = N×E/D, C = ρ^d×Φ, ∇S ≈ Φμ − Γμ + ξμ, 11D projection, chronicle resonance.
  */

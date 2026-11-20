@@ -20,7 +20,7 @@ import { resolveAssistantDisplay, type DisplayCell } from "../lib/messageCells";
 import { renderCellSegments, resolveMediaSrc } from "../lib/cellRender";
 import { IMAGE_DELETED_CELL_TYPE } from "../lib/galleryActions";
 import { apiBase } from "../config";
-import { IconBrightness } from "./icons";
+import { IconBrightness, IconArrowUp, IconArrowDown, IconExternalLink } from "./icons";
 import { ChatWorkingIndicator } from "./ChatWorkingIndicator";
 import {
   ContextMenu,
@@ -1258,7 +1258,7 @@ export function BrowserSurface({
                 <span className="browser-bookmark-url">{displayUrl(b.url)}</span>
               </button>
               <button type="button" className="browser-bookmark-open-tab" onClick={() => void browserApi?.createTab(b.url)} title={t("browser.openInNewTab")}>
-                ↗
+                <IconExternalLink size={14} />
               </button>
             </li>
           ))}
@@ -1287,10 +1287,10 @@ export function BrowserSurface({
             placeholder={t("browser.findPlaceholder")}
           />
           <button type="button" onClick={() => void browserApi?.findInPage(findQuery, { findNext: true, forward: false })}>
-            ↑
+            <IconArrowUp size={14} />
           </button>
           <button type="button" onClick={() => void browserApi?.findInPage(findQuery, { findNext: true, forward: true })}>
-            ↓
+            <IconArrowDown size={14} />
           </button>
           <button
             type="button"

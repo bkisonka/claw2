@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Lightweight input "chaos" heuristic: contradictions, instruction flips, language mixing.
  * Complements ΔS from HSS — does not replace ρ, but correlates better with contradictory text.
  */

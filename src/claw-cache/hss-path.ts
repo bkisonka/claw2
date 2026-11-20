@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Resolve path to hss.cjs (repo root in dev, claw2-runtime root when packaged).
  */
 import { createRequire } from "node:module";

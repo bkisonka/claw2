@@ -67,9 +67,10 @@ services:
     image: tecnativa/docker-socket-proxy
     container_name: claw2-docker-proxy
     environment:
-      # Deny by default; allow only what the skill sandbox needs.
+      # Deny by default; allow only what the skill sandbox needs. No exec:
+      # sidecar readiness is the container's own HEALTHCHECK, inspected via
+      # `docker inspect`.
       - CONTAINERS=1
-      - EXEC=1
       - IMAGES=1
       - INFO=1
       - NETWORKS=1

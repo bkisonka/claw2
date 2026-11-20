@@ -46,8 +46,12 @@ Reports are most useful in these areas:
 Known limitations that are **not** vulnerabilities (documented behavior):
 
 - Skills executed on the host (sandbox.useDocker: false) are restricted by
-  Node's permission model, which limits filesystem and child-process access
-  but does not restrict network access. Run skills in the Docker sandbox when
-  network isolation matters, and keep gateway authentication on.
+  Node's permission model (filesystem, child processes), and their standard
+  HTTP stacks are routed through the egress guard proxy. This soft tier is
+  best-effort: the guard patches live in the same process as the skill, so
+  a deliberately hostile skill can bypass them (raw TLS over `node:net`,
+  reassigning patched globals). Kernel-level isolation — a sandbox network
+  with no external route — is the Docker sandbox tier, which the compose
+  delivery enables by default. Keep gateway authentication on.
 - Threats that require the operator to run attacker-chosen configuration are
   out of scope: the operator owns the config file.

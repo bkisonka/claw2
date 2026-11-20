@@ -142,6 +142,15 @@ export function persistVisitMarkersFromMessages(
   writeStore(store);
 }
 
+/** Drop visit markers for a deleted chat. */
+export function clearVisitMarkers(sessionId: string): void {
+  if (!sessionId) return;
+  const store = readStore();
+  if (!store[sessionId]) return;
+  delete store[sessionId];
+  writeStore(store);
+}
+
 type Msg = { role: string; content?: string; at?: string };
 
 /**

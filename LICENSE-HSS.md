@@ -1,47 +1,44 @@
 # HSS core — LGPL-3.0-or-later
 
-The entire **HSS core** (Hyper-Semantic Structure / Гиперсемантическая Структура) is licensed under the **GNU Lesser General Public License version 3 or later**.
+The file [`hss.cjs`](hss.cjs) — the HSS core, the dialog-stability state
+model (density-matrix coherence node, intention vector, chronicle) — is
+licensed under the **GNU Lesser General Public License version 3 or
+later**.
 
 SPDX-License-Identifier: `LGPL-3.0-or-later`
 
-Full text: https://www.gnu.org/licenses/lgpl-3.0.html  
-(Also references GPL v3: https://www.gnu.org/licenses/gpl-3.0.html)
+## License texts
+
+- LGPL-3.0: [`COPYING.LESSER`](COPYING.LESSER) (also
+  https://www.gnu.org/licenses/lgpl-3.0.html)
+- GPL-3.0, which LGPL-3.0 references:
+  [`COPYING`](COPYING) (also https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## Scope
 
-| Path | Role |
-|------|------|
-| [`hss.cjs`](hss.cjs) | Math core (ρ, evolve, ContextEncoder) |
-| [`src/core/hss-middleware.ts`](src/core/hss-middleware.ts) | Orchestrator middleware |
-| [`src/claw-cache/hss-*.ts`](src/claw-cache/) | Stabilizer, field ontology, LCP, chaos, prompts, hints, encoder, path, log, tests |
+LGPL-3.0 applies to **exactly one file**: `hss.cjs`. It may be studied,
+modified and redistributed on LGPL-3.0 terms; modified versions of it must
+in turn remain under LGPL-3.0-or-later.
 
-Files under `src/claw-cache/`:
+Everything else in the repository is part of the proprietary Software under
+[`LICENSE`](LICENSE), including the TypeScript layer that uses the core
+(`src/claw-cache/hss-*.ts`, `src/core/hss-middleware.ts` and the rest of
+`src/`). Those files are not derivatives of the LGPL library: they exercise
+it through its public API, which LGPL-3.0 section 4 (Combined Works)
+explicitly permits for a proprietary combined work. They carry no LGPL
+obligations and impose none.
 
-- `hss-stabilizer.ts`
-- `hss-field-ontology.ts`
-- `hss-context-encoder.ts`
-- `hss-path.ts`
-- `hss-chaos.ts`
-- `hss-lcp.ts`
-- `hss-log.ts`
-- `hss-rho-dimension.ts`
-- `hss-response-strategy.ts`
-- `hss-orchestrator-prompt.ts`
-- `hss-epistemic-hint.ts`
-- `hss-pending-hint.ts`
-- `hss-expm.test.ts`
-- `hss-response-strategy.test.ts`
+## Interaction with claw2
 
-Related formula/ontology docs: `docs/hss-*.md`.
-
-## Out of scope
-
-Not HSS core (may use the product license): the rest of `src/`, `web/`, `pwa/`, `desktop/`, `agents/`, pack/cache UI (`CachePacker`, warmup catalog, etc.), except the `hss-*` files listed above.
-
-## Packaging / interaction with claw2
-
-The rest of claw2 is **GPL-2.0** (see [`LICENSE`](LICENSE) and [`LICENSING.md`](LICENSING.md)). HSS remains a **separate LGPL module**: keep `hss.cjs` replaceable under `claw2-runtime/`; do not strip LGPL notices.
-
-- Ship `LICENSE` + `LICENSE-HSS.md` with binaries.
-- Do not relicense HSS under GPL-2.0 without a separate grant.
-- Modifications to HSS core must stay under LGPL-3.0-or-later (or GPL as allowed by LGPL).
+- `hss.cjs` is loaded through its public API only (`module.exports`);
+  nothing in the product reaches into its internals. It stays a
+  replaceable component: swapping the file for a compatible LGPL-3.0
+  implementation keeps the rest of claw2 working.
+- Keep the LGPL notice inside `hss.cjs` and this file with any
+  redistribution of the core.
+- Modifications to `hss.cjs` must stay under LGPL-3.0-or-later (or GPL-3.0,
+  as LGPL-3.0 permits). Contributions to this file are accepted under
+  LGPL-3.0 so improvements to the core come back to the project.
+- The rest of claw2 — including its own configuration files, build scripts
+  and documentation — is governed solely by the proprietary license; see
+  LICENSE section 3, which grants the same carve-out for this file.

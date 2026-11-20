@@ -52,6 +52,12 @@ ENV CLAW2_STATIC_PATH=/app/web/dist
 ENV CLAW2_PWA_PATH=/app/pwa/dist
 ENV CLAW2_CONFIG_PATH=/app/.claw2/claw2.yaml
 
+# Non-root: the gateway (and sibling skill containers built from this image)
+# run as node (uid 1000). Mounted host dirs (.claw2, data, agents) must be
+# writable by uid 1000 — true for Docker Desktop and the typical first user
+# on Linux hosts; chown them once if your host layout differs.
+USER node
+
 EXPOSE 3000
 
 CMD ["node", "dist/gateway/cli.js"]

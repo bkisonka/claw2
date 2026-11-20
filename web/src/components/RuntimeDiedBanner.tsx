@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useT } from "../i18n";
 import type { RuntimeDiedInfo } from "../desktop";
 import { isSingleUserClient } from "../lib/singleUser";
+import { IconClose } from "./icons";
 
 export function RuntimeDiedBanner() {
   const t = useT();
@@ -88,7 +89,7 @@ export function RuntimeDiedBanner() {
           onClick={() => setInfo(null)}
           aria-label={t("common.close")}
         >
-          ×
+          <IconClose size={14} />
         </button>
       </div>
     </div>

@@ -289,11 +289,26 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
     }
   }
 
-  // Sidecar: reuse the running one, (re)start when missing.
+  // Sidecar: reuse a running one with the same egress settings, (re)start
+  // otherwise. Readiness is the container's own HEALTHCHECK — the restricted
+  // API proxy does not need (and does not grant) exec.
+  const allowPrivate = config.sandbox?.egress?.allowPrivateHosts === true ? "1" : "0";
   const sidecarStatus = dockerSpawnSync(["container", "inspect", "-f", "{{.State.Running}}", EGRESS_SIDECAR]);
-  if (sidecarStatus.status !== 0 || sidecarStatus.stdout.trim() !== "true") {
+  const sidecarRunning = sidecarStatus.status === 0 && sidecarStatus.stdout.trim() === "true";
+  let sidecarEnvMatches = false;
+  if (sidecarRunning) {
+    const label = dockerSpawnSync([
+      "container",
+      "inspect",
+      "-f",
+      "{{index .Config.Labels \"claw2.egress.allow-private\"}}",
+      EGRESS_SIDECAR,
+    ]);
+    // Older sidecars have no label at all — treat as stale and recreate.
+    sidecarEnvMatches = label.status === 0 && label.stdout.trim() === allowPrivate;
+  }
+  if (!sidecarRunning || !sidecarEnvMatches) {
     dockerSpawnSync(["rm", "-f", EGRESS_SIDECAR]);
-    const allowPrivate = config.sandbox?.egress?.allowPrivateHosts === true ? "1" : "0";
     const sidecarCmd = [
       "run",
       "-d",
@@ -314,6 +329,18 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
       "/tmp:rw,noexec,nosuid,size=16m",
       "-e",
       `CLAW2_EGRESS_ALLOW_PRIVATE=${allowPrivate}`,
+      // Readiness lives in the container itself; the gateway only inspects
+      // health state — no exec into containers through the API proxy.
+      "--health-cmd",
+      `node -e "fetch('http://127.0.0.1:${EGRESS_SIDECAR_PORT}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"`,
+      "--health-interval",
+      "2s",
+      "--health-retries",
+      "20",
+      "--health-start-period",
+      "1s",
+      "--label",
+      `claw2.egress.allow-private=${allowPrivate}`,
     ];
     if (hostRoot) {
       // Sibling mode: the claw2 image carries dist/egress-sidecar.cjs.
@@ -332,22 +359,16 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
         return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
       }
     }
-    // Wait for readiness (sidecar prints a ready line; poll its /health).
+    // Wait for readiness: container HEALTHCHECK → healthy.
     let ready = false;
-    for (let i = 0; i < 30 && !ready; i++) {
-      const ping = dockerSpawnSync([
-        "exec",
-        EGRESS_SIDECAR,
-        "node",
-        "-e",
-        `fetch('http://127.0.0.1:${EGRESS_SIDECAR_PORT}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`,
-      ]);
-      ready = ping.status === 0;
+    for (let i = 0; i < 40 && !ready; i++) {
+      const st = dockerSpawnSync(["container", "inspect", "-f", "{{.State.Health.Status}}", EGRESS_SIDECAR]);
+      ready = st.status === 0 && st.stdout.trim() === "healthy";
       if (!ready) await new Promise((r) => setTimeout(r, 300));
     }
     if (!ready) {
       const logs = dockerSpawnSync(["logs", EGRESS_SIDECAR]);
-      return { ok: false, error: `egress sidecar did not become ready: ${logs.stdout.trim().slice(0, 200)}` };
+      return { ok: false, error: `egress sidecar did not become healthy: ${logs.stdout.trim().slice(0, 200)}` };
     }
   }
 

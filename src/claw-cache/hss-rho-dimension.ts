@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Dynamic ρ matrix dimension: 4 → 8 → 11 as capacity C grows.
  */
 

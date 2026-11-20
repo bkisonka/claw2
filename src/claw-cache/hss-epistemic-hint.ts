@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Note appended to the user-facing reply when FRAGMENTED/CRITICAL by ΔS:
  * content may be contested or unverified (no retry).
  */

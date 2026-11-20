@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Wrapper over HSS (hss.js) for personality stabilization and orchestration.
  * Chronicle is persisted in Chroma (when configured); semantic-search entropy stays within bounds.
  */

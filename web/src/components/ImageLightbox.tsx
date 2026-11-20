@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useT } from "../i18n";
+import { IconArrowLeft, IconArrowRight, IconClose } from "./icons";
 
 interface ImageLightboxProps {
   src: string;
@@ -70,7 +71,7 @@ export function ImageLightbox({ src, alt = "", onClose, onPrev, onNext }: ImageL
         onClick={onClose}
         aria-label={t("gallery.closeFullscreen")}
       >
-        ×
+        <IconClose size={18} />
       </button>
       {onPrev && (
         <button
@@ -79,7 +80,7 @@ export function ImageLightbox({ src, alt = "", onClose, onPrev, onNext }: ImageL
           onClick={handlePrev}
           aria-label={t("gallery.prev")}
         >
-          ‹
+          <IconArrowLeft size={22} />
         </button>
       )}
       {onNext && (
@@ -89,7 +90,7 @@ export function ImageLightbox({ src, alt = "", onClose, onPrev, onNext }: ImageL
           onClick={handleNext}
           aria-label={t("gallery.next")}
         >
-          ›
+          <IconArrowRight size={22} />
         </button>
       )}
       <img

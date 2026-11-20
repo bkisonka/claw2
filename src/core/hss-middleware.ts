@@ -1,6 +1,6 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
- * HSS core — see LICENSE-HSS.md
+ * Uses the LGPL-licensed HSS core (hss.cjs, see LICENSE-HSS.md) via its API;
+ * this file itself is part of the proprietary Software (see LICENSE).
  */
 
 import {

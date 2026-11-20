@@ -89,6 +89,8 @@ export interface DesktopBrowserApi {
   setWorkspace?: (
     chatId: string
   ) => Promise<{ ok: boolean; chatId?: string; reused?: boolean; tabCount?: number; error?: string }>;
+  /** Drop parked BrowserView workspace snapshot when a chat is deleted. */
+  forgetWorkspace?: (chatId: string) => Promise<{ ok: boolean; error?: string }>;
   onOpenHistoryOverlay?: (handler: () => void) => () => void;
   navigate: (
     url: string,

@@ -12,6 +12,15 @@ import { rateRun } from "../api/agentSelection";
 import { FileIcon, getFileTypeLabel, isImageFile } from "./FileIcon";
 import { ChartCell } from "./ChartCell";
 import { ModelPicker } from "./ModelPicker";
+import {
+  IconArrowUp,
+  IconClose,
+  IconPlus,
+  IconProject,
+  IconStop,
+  IconThumbDown,
+  IconThumbUp,
+} from "./icons";
 import { markdownToPlainText } from "../utils/markdown-to-plain";
 import { normalizeAssistantMarkdown } from "../utils/normalize-assistant-markdown";
 import { resolveAssistantDisplay } from "../lib/messageCells";
@@ -1900,10 +1909,10 @@ export function Chat({
         <div className="chat-rate">
           <span className="chat-rate-label">{t("chat.rateLabel")}</span>
           <button type="button" className="chat-rate-btn" onClick={() => handleRate(1)} aria-label={t("chat.like")}>
-            👍
+            <IconThumbUp size={16} />
           </button>
           <button type="button" className="chat-rate-btn" onClick={() => handleRate(0)} aria-label={t("chat.dislike")}>
-            👎
+            <IconThumbDown size={16} />
           </button>
         </div>
       )}
@@ -1993,7 +2002,7 @@ export function Chat({
         <div className="chat-composer-top">
           <div className="chat-composer-ctx" role="status">
             <span className="chat-composer-ctx-ico" aria-hidden>
-              ▤
+              <IconProject size={14} />
             </span>
             <span className="chat-composer-ctx-name">
               {projectName?.trim() || t("common.noProject")}
@@ -2043,15 +2052,7 @@ export function Chat({
               title={t("chat.sendTitle")}
               aria-label={t("chat.sendAria")}
             >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path
-                  d="M5 12h12M13 6l6 6-6 6"
-                  stroke="currentColor"
-                  strokeWidth="1.75"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+              <IconArrowUp size={18} />
             </button>
             {busy && (
               <button
@@ -2066,9 +2067,7 @@ export function Chat({
                 title={t("chat.stopTitle")}
                 aria-label={t("chat.stopAria")}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                  <rect x="6" y="6" width="12" height="12" rx="1.5" />
-                </svg>
+                <IconStop size={14} />
               </button>
             )}
           </div>
@@ -2084,7 +2083,7 @@ export function Chat({
               disabled={loading}
               onClick={openFilePicker}
             >
-              +
+              <IconPlus size={18} />
             </button>
             <input
               ref={fileInputRef}
@@ -2127,7 +2126,7 @@ export function Chat({
                       onClick={() => removeFile(i)}
                       aria-label={t("chat.removeFile")}
                     >
-                      ×
+                      <IconClose size={12} />
                     </button>
                   </li>
                 );
@@ -2162,7 +2161,7 @@ export function Chat({
               title={t("chat.sendTitle")}
               aria-label={t("chat.sendAria")}
             >
-              ↑
+              <IconArrowUp size={18} />
             </button>
             {busy && (
               <button
@@ -2177,7 +2176,7 @@ export function Chat({
                 title={t("chat.stopTitle")}
                 aria-label={t("chat.stopAria")}
               >
-                ■
+                <IconStop size={14} />
               </button>
             )}
           </div>

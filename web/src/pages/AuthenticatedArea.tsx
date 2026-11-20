@@ -49,6 +49,7 @@ import {
 import {
   mergeHistoryWithVisitMarkers,
   persistVisitMarkersFromMessages,
+  clearVisitMarkers,
 } from "../browser/visitMarkers";
 import { releaseChatTranscriptBlobPreviewUrls } from "../lib/transcriptBlobUrls";
 
@@ -860,6 +861,8 @@ export function AuthenticatedArea() {
     try {
       await deleteChat(chatId);
       releaseChatTranscriptBlobPreviewUrls(chatId);
+      clearVisitMarkers(chatId);
+      void window.claw2Desktop?.browser?.forgetWorkspace?.(chatId);
       for (const [tabId, b] of [...tabBindingsRef.current.entries()]) {
         if (b.sessionId === chatId) tabBindingsRef.current.delete(tabId);
       }

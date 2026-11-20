@@ -255,6 +255,102 @@ export function IconBrightness(p: IconProps) {
   );
 }
 
+export function IconClose(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+export function IconArrowUp(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  );
+}
+
+export function IconArrowDown(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M12 5v14M19 12l-7 7-7-7" />
+    </svg>
+  );
+}
+
+export function IconArrowLeft(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </svg>
+  );
+}
+
+export function IconArrowRight(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M5 12h14M12 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+export function IconExternalLink(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M14 4h6v6" />
+      <path d="M10 14L20 4" />
+      <path d="M20 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+export function IconStop(p: IconProps) {
+  const s = p.size ?? SIZE;
+  return (
+    <svg width={s} height={s} viewBox="0 0 24 24" fill="currentColor" aria-hidden className={p.className ? `ui-icon ${p.className}` : "ui-icon"}>
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
+  );
+}
+
+export function IconCheck(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M5 12l5 5L20 7" />
+    </svg>
+  );
+}
+
+export function IconProject(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <rect x="14" y="14" width="7" height="7" rx="1" />
+    </svg>
+  );
+}
+
+export function IconThumbUp(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M7 11v10H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3z" />
+      <path d="M7 11l4-7a2 2 0 0 1 2-1h0a2.5 2.5 0 0 1 2.5 2.5V8h4.2a2 2 0 0 1 1.95 2.45l-1.4 6A2 2 0 0 1 18 19H7" />
+    </svg>
+  );
+}
+
+export function IconThumbDown(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <path d="M7 13V3H4a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h3z" />
+      <path d="M7 13l4 7a2 2 0 0 0 2 1h0a2.5 2.5 0 0 0 2.5-2.5V16h4.2a2 2 0 0 0 1.95-2.45l-1.4-6A2 2 0 0 0 18 5H7" />
+    </svg>
+  );
+}
+
 export type SidebarGlyph =
   | "bolt"
   | "file"

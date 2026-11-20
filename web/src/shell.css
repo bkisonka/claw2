@@ -3,6 +3,9 @@
  * Block content and meaning come from the claw2 web app.
  */
 :root {
+  /* Native <select> popup on Windows/Electron inherits system colors otherwise
+     (white list + light text from our select { color } → invisible options). */
+  color-scheme: dark;
   --bg: #161618;
   --bg-sidebar: #121214;
   --bg-panel: #161618;
@@ -47,6 +50,7 @@ body,
   color: var(--text);
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
+  color-scheme: dark;
 }
 
 /* Thin dark scrollbar — no system light track */
@@ -1662,7 +1666,7 @@ body.layout-sidebar-resizing-body {
   width: 100% !important;
   margin: 0 auto !important;
   /* Bottom gap ≈ 15px from the chat edge when scrolled to end */
-  padding: 8px clamp(12px, 2vw, 28px) 15px !important;
+  padding: 8px 20px 15px !important;
   background: transparent !important;
   overflow: visible !important;
   flex: none !important;
@@ -1811,9 +1815,9 @@ body.layout-sidebar-resizing-body {
 .chat-log {
   flex: 1 !important;
   overflow: auto !important;
-  /* Grow with the window; keep readable side gutters */
+  /* Fixed gutters — window zoom keeps density across resolutions */
   /* bottom: composer height + ~10px gap above the input (mode C absolute dock) */
-  padding: 28px clamp(16px, 3vw, 40px) 180px !important;
+  padding: 28px 24px 180px !important;
   max-width: min(1400px, 100%) !important;
   width: 100% !important;
   margin: 0 auto !important;
@@ -1834,7 +1838,7 @@ body.layout-sidebar-resizing-body {
 }
 
 .chat-welcome-text {
-  font-size: clamp(1.45rem, 2.5vw, 1.9rem) !important;
+  font-size: 1.65rem !important;
   font-weight: 500 !important;
   letter-spacing: -0.02em !important;
   color: var(--text) !important;
@@ -3142,6 +3146,16 @@ body.layout-sidebar-resizing-body {
   color: var(--text) !important;
   font-size: 0.875rem !important;
   box-sizing: border-box;
+  color-scheme: dark;
+}
+
+/* Dropdown popup items (Chromium/Electron); without this Windows shows white-on-white. */
+.settings-section select option,
+.layout-main select option,
+.privacy-field select option,
+.privacy-rule select option {
+  background-color: var(--bg-elevated);
+  color: var(--text);
 }
 
 /* Numbers can be more compact; long URIs/keys — full column width */

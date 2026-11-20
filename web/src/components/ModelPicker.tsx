@@ -3,6 +3,7 @@ import { fetchLlmModels } from "../api/llmModels";
 import { getConfig } from "../api/config";
 import { updateChatModel } from "../api/chat";
 import { useT } from "../i18n";
+import { IconCheck } from "./icons";
 
 export type ModelPickerProps = {
   /** When set, selection is stored on this chat (settings default stays unchanged). */
@@ -219,7 +220,7 @@ export function ModelPicker({ sessionId, chatModel = null, onChatModelChange }: 
                 disabled
               >
                 <span className="chat-model-menu-item-check" aria-hidden>
-                  ✓
+                  <IconCheck size={14} />
                 </span>
                 <span className="chat-model-menu-item-id">{effective}</span>
               </button>
@@ -241,7 +242,7 @@ export function ModelPicker({ sessionId, chatModel = null, onChatModelChange }: 
                   className={`chat-model-menu-item-check${!usingOverride ? "" : " chat-model-menu-item-check--empty"}`}
                   aria-hidden
                 >
-                  {!usingOverride ? "✓" : ""}
+                  {!usingOverride ? <IconCheck size={14} /> : null}
                 </span>
                 <span className="chat-model-menu-item-id">{defaultLabel}</span>
               </button>

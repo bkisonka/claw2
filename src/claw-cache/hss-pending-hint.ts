@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * HSS hint from the previous turn (HssMiddleware result) — injected into the next request's system prompt.
  */
 

@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Wrapper over ContextEncoder from hss.cjs (64-dim hash vector for a topological node).
  */
 

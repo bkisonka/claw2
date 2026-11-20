@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Model response strategy in the HSS stabilize context:
  * clarification — in-bounds clarification (normal for contradictory input),
  * answer — substantive answer,

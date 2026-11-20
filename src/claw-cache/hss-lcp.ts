@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * LCP-1 — Luck Control Protocol (verifiable module, hss.txt).
  * P(1) = 0.5 + α·(ξ − 0.5); honest statistics, no "from chat" forgery.
  *

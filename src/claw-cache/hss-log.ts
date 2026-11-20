@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * HSS logging for debugging and comparing behavior before/after changes.
  * CLAW2_HSS_LOG=0 — off; 1 or unset — brief events; verbose — with context preview.
  * orchestrator.hssLogPath — also write to file (JSON by default).

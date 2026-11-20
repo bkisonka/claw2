@@ -1,5 +1,4 @@
 /**
- * SPDX-License-Identifier: LGPL-3.0-or-later
  * Run: npx tsx src/claw-cache/hss-expm.test.ts
  * Guarantees unitary evolve uses block expm at rhoDim=11 (no identity fallback from short ξ).
  */

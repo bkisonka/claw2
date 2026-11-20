@@ -20,6 +20,7 @@ import {
 import { useI18n } from "../i18n";
 import { isSingleUserClient } from "../lib/singleUser";
 import type { DesktopPaths } from "../desktop";
+import { IconClose } from "./icons";
 
 const MASK = "***";
 
@@ -2320,7 +2321,7 @@ export function Settings() {
             onClick={() => setToast(null)}
             aria-label={t("common.close")}
           >
-            ×
+            <IconClose size={14} />
           </button>
         </div>
       )}
