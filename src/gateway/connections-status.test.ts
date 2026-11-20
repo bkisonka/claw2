@@ -11,7 +11,7 @@
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { collectConnectionsStatus, parseConnectionErrorCode } from "./connections-status.js";
+import { collectConnectionsStatus, llmNetworkCode, parseConnectionErrorCode } from "./connections-status.js";
 import type { Claw2Config } from "../config/types.js";
 
 function llmConfig(baseURL: string): Claw2Config {
@@ -93,6 +93,33 @@ async function main() {
     const r = await llmConnection("http://127.0.0.1:9/v1"); // discard port — refused fast
     assert.equal(r.status, "error");
     assert.match(r.error ?? "", /^conn:llm:no_listener:127\.0\.0\.1:9$/, `got: ${r.error}`);
+  }
+
+  // 6. Classification: local vs remote API hosts.
+  {
+    // Local generic failure → actionable "start the server" hint.
+    assert.equal(
+      llmNetworkCode("http://127.0.0.1:7330/v1/models", { status: 0, body: "fetch failed" }),
+      "conn:llm:no_connection:127.0.0.1:7330"
+    );
+    assert.equal(
+      llmNetworkCode("http://host.docker.internal:7330/v1/models", { status: 0, body: "fetch failed" }),
+      "conn:llm:no_connection:host.docker.internal:7330"
+    );
+    // Remote API generic failure → neutral base (не "запустите сервер модели").
+    assert.equal(
+      llmNetworkCode("https://api.openai.com/v1/models", { status: 0, body: "fetch failed" }),
+      "conn:llm:not_connected"
+    );
+    // Specific causes are host-agnostic.
+    assert.equal(
+      llmNetworkCode("https://api.openai.com/v1/models", { status: 0, body: "getaddrinfo ENOTFOUND api.openai.com" }),
+      "conn:llm:unknown_host:api.openai.com"
+    );
+    assert.equal(
+      llmNetworkCode("https://api.openai.com/v1/models", { status: 0, body: "abort timeout" }),
+      "conn:llm:timeout:6"
+    );
   }
 
   console.log("connections-status.test.ts: ok");

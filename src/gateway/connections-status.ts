@@ -113,6 +113,37 @@ function errText(probe: { status: number; body: string }, fallback: string): str
   return fallback;
 }
 
+const LOCAL_HOSTS = /^(127\.0\.0\.1|localhost|::1|0\.0\.0\.0|host\.docker\.internal)$/;
+
+/**
+ * Classifies a network-layer LLM probe failure into a structured code.
+ * Local targets (the operator's own machine) get actionable "start the
+ * server" hints; remote API hosts fall back to the neutral base message —
+ * "start the server" makes no sense for api.openai.com.
+ */
+export function llmNetworkCode(
+  modelsUrl: string,
+  probe: { status: number; body: string }
+): string {
+  const raw = probe.body.toLowerCase();
+  const t = urlTarget(modelsUrl);
+  const isLocal = !!t && LOCAL_HOSTS.test(t.host);
+  if (raw.includes("econnrefused") || raw.includes("bad port")) {
+    return connError("llm", "no_listener", t?.target);
+  }
+  if (raw.includes("enotfound") || raw.includes("getaddrinfo")) {
+    return connError("llm", "unknown_host", t?.host);
+  }
+  if (raw.includes("timeout") || raw.includes("abort")) {
+    return connError("llm", "timeout", String(TIMEOUT_MS / 1000));
+  }
+  if (isLocal) {
+    return connError("llm", "no_connection", t?.target);
+  }
+  // Remote API: no more specific cause available — the neutral base wording.
+  return connError("llm", "not_connected");
+}
+
 async function checkLlm(config: Claw2Config): Promise<ConnectionCheck> {
   const id = "llm";
   const assessed = assessLlmConfigured(config);
@@ -138,18 +169,7 @@ async function checkLlm(config: Claw2Config): Promise<ConnectionCheck> {
       }
       return { id, status: "error", error: connError(id, "server_error", String(probe.status)) };
     }
-    const raw = probe.body.toLowerCase();
-    const t = urlTarget(modelsUrl);
-    if (raw.includes("econnrefused") || raw.includes("bad port")) {
-      return { id, status: "error", error: connError(id, "no_listener", t?.target) };
-    }
-    if (raw.includes("enotfound") || raw.includes("getaddrinfo")) {
-      return { id, status: "error", error: connError(id, "unknown_host", t?.host) };
-    }
-    if (raw.includes("timeout") || raw.includes("abort")) {
-      return { id, status: "error", error: connError(id, "timeout", String(TIMEOUT_MS / 1000)) };
-    }
-    return { id, status: "error", error: connError(id, "no_connection", t?.target) };
+    return { id, status: "error", error: llmNetworkCode(modelsUrl, probe) };
   }
   return { id, status: "ok", detail: config.llm?.model?.trim() || undefined };
 }
