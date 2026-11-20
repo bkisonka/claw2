@@ -46,6 +46,7 @@ import {
   sidebarMigrate,
 } from "../sidebar/store.js";
 import { hasUntrustedInText, checkLethalTrifecta } from "../security/lethal-trifecta.js";
+import { initTrifectaState, markUntrustedOrigin } from "../security/origin.js";
 import { isPathUploadsOrOutput } from "../security/path-allowed.js";
 import { wrapExternalContent } from "../security/content-boundary.js";
 import { urlContainsSensitive, filterExternalResponse } from "../security/external-content-filters.js";
@@ -1019,7 +1020,9 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   let lastContent: string | null = null;
   /** The full text of the assistant's response for all iterations (for retrieving [CELL] even if the model was outputting them before calling the tools).*/
   let fullAssistantContent = "";
-  const trifectaState = { dataAccess: false, untrustedContent: hasUntrustedInText(fullUserMessage) };
+  // Provenance init: per-session taint ledger (out-of-band, survives
+  // summarization) OR the in-band marker scan of this user message.
+  const trifectaState = initTrifectaState(sessionId, fullUserMessage, hasUntrustedInText);
   /** Contents from read(uploads/output) cannot be passed to message(). Can be saved to memory upon request.*/
   const sensitiveContents: string[] = [];
   /** Contents from memory_search are only for replying to the user in chat, cannot be passed to message().*/
@@ -1587,6 +1590,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
             if (chosen && page) {
               trifectaState.untrustedContent = true;
               const text = (page.text ?? "").trim();
+              markUntrustedOrigin(sessionId ?? "");
               const body = [
                 `Search engine results for: ${query}`,
                 "",
@@ -1616,6 +1620,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           if (result.ok && result.content) {
             trifectaState.untrustedContent = true;
             const filtered = filterExternalResponse(result.content);
+            markUntrustedOrigin(sessionId ?? "");
             const wrapped = wrapExternalContent(filtered, { source: "search" });
             toolResults.push({ id: tc.id!, content: wrapped });
           } else {
@@ -1642,7 +1647,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
             continue;
           }
           const result = await toolWebFetch(config, url, signal);
-          if (result.ok && result.content) trifectaState.untrustedContent = true;
+          if (result.ok && result.content) {
+            trifectaState.untrustedContent = true;
+            markUntrustedOrigin(sessionId ?? "");
+          }
           toolResults.push({
             id: tc.id!,
             content: result.ok ? (result.content ?? "") : `Error: ${result.error}`,
@@ -1722,6 +1730,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           ].filter(Boolean);
           const body = metaBits.length ? `${metaBits.join("\n")}\n\n${text}` : text;
           const filtered = filterExternalResponse(body);
+          trifectaState.untrustedContent = true;
+          markUntrustedOrigin(sessionId ?? "");
           const wrapped = wrapExternalContent(filtered, {
             source: "browser",
             sender: payload?.url?.trim() || undefined,
@@ -1816,6 +1826,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           if (result.ok && result.content) {
             trifectaState.untrustedContent = true;
             const wrapped = wrapExternalContent(result.content, { source: "llm-room" });
+            markUntrustedOrigin(sessionId ?? "");
             toolResults.push({ id: tc.id!, content: wrapped });
           } else {
             toolResults.push({
@@ -2186,6 +2197,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         onRunAgent?.(script, runResult.exitCode);
         const rawContent = `stdout:\n${runResult.stdout}\n\nstderr:\n${runResult.stderr}\n\nexitCode: ${runResult.exitCode}`;
         const filteredContent = filterExternalResponse(rawContent);
+        // Skill output is untrusted-origin content: the skill may have fetched
+        // arbitrary web data. It feeds the context and must arm the trifecta.
+        trifectaState.untrustedContent = true;
+        markUntrustedOrigin(sessionId ?? "");
         const toolContent = wrapExternalContent(filteredContent, { source: "run_agent" });
         toolResults.push({ id: tc.id!, content: toolContent });
       }

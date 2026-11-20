@@ -7,6 +7,13 @@ import { auditLog } from "../audit/log.js";
 
 const EXT_MARKER = "<<<EXT>>>";
 
+/**
+ * In-band marker scan — the BACKSTOP of the untrusted-content signal.
+ * The primary signal is the out-of-band session ledger (security/origin.ts),
+ * which survives summarization and cannot be forged by model-visible text;
+ * the two are OR-ed in initTrifectaState (a false positive is the safe
+ * direction).
+ */
 export function hasUntrustedInText(text: string): boolean {
   return text.includes(EXT_MARKER);
 }

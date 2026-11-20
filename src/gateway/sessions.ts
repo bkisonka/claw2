@@ -1,9 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { PromptContext } from "./prompt-history.js";
+import { releaseProvenance, type OriginTag } from "../security/origin.js";
 
 export interface SessionMessage {
   role: "user" | "assistant";
   content: string;
+  /** Out-of-band provenance (security/origin.ts); absent = trusted user text. */
+  origin?: OriginTag;
 }
 
 const sessions = new Map<string, SessionMessage[]>();
@@ -13,13 +16,18 @@ export function getSessionHistory(sessionId: string): SessionMessage[] {
   return sessions.get(sessionId) ?? [];
 }
 
-export function appendToSession(sessionId: string, role: "user" | "assistant", content: string): void {
+export function appendToSession(
+  sessionId: string,
+  role: "user" | "assistant",
+  content: string,
+  origin?: OriginTag
+): void {
   let history = sessions.get(sessionId);
   if (!history) {
     history = [];
     sessions.set(sessionId, history);
   }
-  history.push({ role, content });
+  history.push({ role, content, origin });
 }
 
 /** @deprecated UI/feed is no longer overwritten by resume; left for scrub and occasional resets.*/
@@ -49,6 +57,9 @@ export function clearSessionPromptContext(sessionId: string): void {
 export function releaseGatewaySession(sessionId: string): void {
   sessions.delete(sessionId);
   promptContexts.delete(sessionId);
+  // Context gone → provenance resets (strictest-label inheritance no longer
+  // has anything to inherit from).
+  releaseProvenance(sessionId);
 }
 
 export function generateSessionId(): string {

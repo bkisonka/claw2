@@ -43,6 +43,12 @@ Reports are most useful in these areas:
   `src/security/lethal-trifecta.ts`);
 - The skill allowlist and `/allow` confirmation flow.
 
+Provenance note: untrusted-content detection for the trifecta is
+out-of-band — a per-session ledger (security/origin.ts) records that web /
+search / skill-output content entered the context, so the signal survives
+history summarization and cannot be forged by text. The in-band
+`<<<EXT>>>` markers remain as a backstop.
+
 Known limitations that are **not** vulnerabilities (documented behavior):
 
 - Skills executed on the host (sandbox.useDocker: false) are restricted by

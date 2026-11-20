@@ -13,6 +13,7 @@ import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
 import { composeWebchatUserPayload, formatBrowserSelectionForHistory, type BrowserPageContext } from "../security/content-boundary.js";
 import { verifyVisionClaim } from "../security/vision-claim.js";
+import { markUntrustedOrigin, hasUntrustedOrigin } from "../security/origin.js";
 import { auditLog } from "../audit/log.js";
 import { runOrchestrator } from "../core/orchestrator.js";
 import { isAbortError, throwIfAborted } from "../core/abort.js";
@@ -1257,6 +1258,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const storedUserMessage = pageContext
           ? formatBrowserSelectionForHistory(message, pageContext)
           : message;
+        // Browser page text is web content riding in the user message: mark
+        // provenance so later turns (and the trifecta) know it is there.
+        const userOrigin = pageContext ? { source: "browser-page" as const, untrusted: true } : undefined;
+        if (pageContext) markUntrustedOrigin(sessionId);
         let effectiveConfig: Claw2Config = config;
         if (isRegistrationMode(config) && userId !== "default") {
           const repo = getAuthRepo(config);
@@ -1493,8 +1498,13 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
               }
             } else {
-              appendToSession(sessionId, "user", storedUserMessage);
-              appendToSession(sessionId, "assistant", result.content);
+              appendToSession(sessionId, "user", storedUserMessage, userOrigin);
+              appendToSession(
+                sessionId,
+                "assistant",
+                result.content,
+                hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
+              );
               if (result.summaryForHistory != null && result.summaryDropCount != null) {
                 persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
               }
@@ -1594,8 +1604,13 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
             }
           } else {
-            appendToSession(sessionId, "user", storedUserMessage);
-            appendToSession(sessionId, "assistant", result.content);
+            appendToSession(sessionId, "user", storedUserMessage, userOrigin);
+            appendToSession(
+              sessionId,
+              "assistant",
+              result.content,
+              hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
+            );
             if (result.summaryForHistory != null && result.summaryDropCount != null) {
               persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
             }
