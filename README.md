@@ -260,10 +260,11 @@ reference deployment in the author's repository runs exactly this way.
 
 ## Documentation
 
-The `docs/wiki/` directory carries the extended user guide in English and
-Russian — per-feature pages (activation cache, HSS dialog stabilizer,
-projects, dynamic sidebar) and how-tos: [docs/wiki/en](docs/wiki/en),
-[docs/wiki/ru](docs/wiki/ru).
+The `docs/wiki/` directory carries the extended user guide in wiki format,
+in English and Russian — per-feature pages (activation cache, HSS dialog
+stabilizer, projects, dynamic sidebar) and how-tos. Entry pages:
+[docs/wiki/en/Home.md](docs/wiki/en/Home.md),
+[docs/wiki/ru/Home.md](docs/wiki/ru/Home.md).
 
 ## Source layout
 
