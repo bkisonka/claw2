@@ -160,6 +160,7 @@ export async function memoryRecallScored(
         // Provenance must survive the store→consumer seam (the anti-laundering
         // check in the orchestrator reads exactly this field).
         ...(x.chunk.untrustedOrigin ? { untrustedOrigin: true } : {}),
+
       })),
     };
   }
