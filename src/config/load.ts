@@ -18,6 +18,8 @@ function ensureEnvLoaded(): void {
   }
 }
 
+import { normalizeContainerServiceUrls } from "./container-net.js";
+
 const ENV_REF_PREFIX = "env:";
 
 function resolveEnvRef(value: unknown): string {
@@ -180,7 +182,12 @@ export function loadConfig(overridePath?: string): Claw2Config {
     console.error("[config] Config empty or invalid, using defaults. Check path and YAML syntax.");
   }
   const resolved = resolveObject(raw) as Partial<Claw2Config>;
-  return mergeConfig(resolved);
+  const config = mergeConfig(resolved);
+  // Container delivery: operator-written loopback URLs (127.0.0.1/localhost)
+  // point at host services the container cannot reach — map them once, at
+  // load time, for every consumer and every hot-reload.
+  normalizeContainerServiceUrls(config);
+  return config;
 }
 
 function mergeConfig(partial: Partial<Claw2Config>): Claw2Config {

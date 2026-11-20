@@ -5,6 +5,10 @@ llm:
   provider: openai
   model: gpt-4o-mini
   apiKey: env:OPENAI_API_KEY
+  # 127.0.0.1 / localhost service URLs (a local llama.cpp, Ollama, LM Studio
+  # on your machine) are fine in the compose delivery: at load time the
+  # gateway in the container maps them to host.docker.internal automatically.
+  # The stored config keeps your portable form.
 
 memory:
   enabled: false
