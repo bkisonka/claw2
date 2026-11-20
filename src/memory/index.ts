@@ -153,7 +153,14 @@ export async function memoryRecallScored(
   if (store.recallScored) {
     const scored = await store.recallScored(queryEmbedding, n, options);
     return {
-      chunks: scored.map((x) => ({ text: x.chunk.text, source: x.chunk.source, score: x.score })),
+      chunks: scored.map((x) => ({
+        text: x.chunk.text,
+        source: x.chunk.source,
+        score: x.score,
+        // Provenance must survive the store→consumer seam (the anti-laundering
+        // check in the orchestrator reads exactly this field).
+        ...(x.chunk.untrustedOrigin ? { untrustedOrigin: true } : {}),
+      })),
     };
   }
   const chunks = await store.recall(queryEmbedding, n, options);
@@ -162,6 +169,7 @@ export async function memoryRecallScored(
       text: c.text,
       source: c.source,
       score: Math.max(0, 1 - i * 0.08),
+      ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
     })),
   };
 }

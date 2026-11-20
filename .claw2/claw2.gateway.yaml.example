@@ -42,6 +42,10 @@ gateway:
 #   telegram:
 #     enabled: true
 #     botToken: env:TELEGRAM_BOT_TOKEN
+#     # Channel messages are untrusted-origin content by default (they arm
+#     # the prompt-injection provenance ledger). List the operator's own
+#     # Telegram user IDs to treat those messages as trusted operator speech:
+#     # trustedUserIds: [123456789]
 #   vk:
 #     enabled: true
 #     accessToken: env:VK_ACCESS_TOKEN
