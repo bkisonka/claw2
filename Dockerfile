@@ -14,6 +14,10 @@ RUN npm run build
 COPY web/package.json web/package-lock.json ./web/
 RUN cd web && npm ci
 COPY web ./web
+# Personal delivery: the web client runs in single-user mode — no hosted
+# login UI; the gateway key is entered once at the first visit and stored
+# in the browser (GatewayKeyGate).
+ENV VITE_CLAW2_SINGLE_USER=1
 RUN npm run build:web
 
 COPY pwa/package.json pwa/package-lock.json pwa/tsconfig.json pwa/tsconfig.node.json pwa/vite.config.ts pwa/index.html ./pwa/

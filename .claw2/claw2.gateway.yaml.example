@@ -14,8 +14,9 @@ memory:
 
 gateway:
   port: 3000
-  # Chats: local SQLite. Postgres (databaseUrl) is only needed for hosted multi-user + registration.
-  # chatsDbPath: ./.claw2/data/claw2_chats.sqlite
+  # Chats: local SQLite, persisted in the mounted data/ volume (compose).
+  chatsDbPath: ./data/claw2_chats.sqlite
+  # Postgres (databaseUrl) is only needed for hosted multi-user + registration.
   # API key auth is on by default — generate a key (openssl rand -hex 24) and
   # put it into .env as CLAW2_GATEWAY_API_KEY. The web UI and the API both ask
   # for it. Turn off only if the gateway is unreachable from other machines.

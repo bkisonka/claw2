@@ -4,6 +4,8 @@ import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { AuthenticatedArea } from "./pages/AuthenticatedArea";
 import { isSingleUserClient } from "./lib/singleUser";
+import { apiKey } from "./config";
+import { GatewayKeyGate } from "./components/GatewayKeyGate";
 import { useT } from "./i18n";
 
 function RootRedirect() {
@@ -28,6 +30,9 @@ function AuthOnly({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
+  // Personal deployment (single-user build, no baked-in key): ask for the
+  // gateway key before rendering anything — every API call would 401 anyway.
+  if (isSingleUserClient() && !apiKey) return <GatewayKeyGate />;
   return (
     <Routes>
       <Route path="/" element={<RootRedirect />} />

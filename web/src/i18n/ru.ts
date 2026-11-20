@@ -63,6 +63,15 @@ export const ru: Record<MessageKey, string> = {
     "Модель уже подключена. Задайте образ помощника или пропустите — можно вернуться во вкладку «Личность» в любой момент.",
 
   "auth.loginTitle": "Вход",
+  "keyGate.title": "claw2",
+  "keyGate.description":
+    "Эта установка защищена ключом доступа шлюза. Введите ключ один раз — он сохранится в этом браузере.",
+  "keyGate.label": "Ключ шлюза",
+  "keyGate.placeholder": "CLAW2_GATEWAY_API_KEY",
+  "keyGate.submit": "Продолжить",
+  "keyGate.enterKey": "Введите ключ шлюза",
+  "keyGate.wrongKey": "Ключ отклонён шлюзом. Проверьте CLAW2_GATEWAY_API_KEY в .env на сервере.",
+  "keyGate.unreachable": "Шлюз недоступен. Контейнер запущен?",
   "auth.loginLabel": "Логин / Email",
   "auth.loginPlaceholder": "Логин или email",
   "auth.password": "Пароль",

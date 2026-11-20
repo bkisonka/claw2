@@ -61,6 +61,15 @@ export const en = {
     "Your model is connected. Define the assistant’s character, or skip — you can open the Personality tab anytime.",
 
   "auth.loginTitle": "Sign in",
+  "keyGate.title": "claw2",
+  "keyGate.description":
+    "This deployment is protected by a gateway access key. Enter the key once — it stays in this browser.",
+  "keyGate.label": "Gateway key",
+  "keyGate.placeholder": "CLAW2_GATEWAY_API_KEY",
+  "keyGate.submit": "Continue",
+  "keyGate.enterKey": "Enter the gateway key",
+  "keyGate.wrongKey": "The key was rejected by the gateway. Check CLAW2_GATEWAY_API_KEY in the server .env.",
+  "keyGate.unreachable": "The gateway is unreachable. Is the container running?",
   "auth.loginLabel": "Username / Email",
   "auth.loginPlaceholder": "Username or email",
   "auth.password": "Password",
