@@ -107,15 +107,6 @@ function ensureVecTables(db: Database.Database, dim: number): void {
     );
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_user ON memory_chunks(user_id);
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_created ON memory_chunks(created_at);
-
-  // Provenance migration (existing databases): 1 = chunk derives from
-  // untrusted-origin content (written during a trifecta-armed turn).
-  try {
-    db.exec("ALTER TABLE memory_chunks ADD COLUMN origin_untrusted INTEGER DEFAULT 0");
-  } catch {
-    /* column already exists */
-  }
-
     CREATE TABLE IF NOT EXISTS hss_chronicle (
       id INTEGER PRIMARY KEY,
       entry_id TEXT UNIQUE NOT NULL,
@@ -135,6 +126,16 @@ function ensureVecTables(db: Database.Database, dim: number): void {
     CREATE INDEX IF NOT EXISTS idx_hss_chronicle_session ON hss_chronicle(session_key);
     CREATE INDEX IF NOT EXISTS idx_hss_chronicle_ts ON hss_chronicle(timestamp);
   `);
+
+  // Provenance migration (existing databases): 1 = chunk derives from
+  // untrusted-origin content (written during a trifecta-armed turn).
+  // NOTE: must run OUTSIDE the db.exec() template above — inside it, this
+  // JS block would become literal SQL and parse as "near '/': syntax error".
+  try {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN origin_untrusted INTEGER DEFAULT 0");
+  } catch {
+    /* column already exists */
+  }
 
   // vec0 cannot use IF NOT EXISTS reliably across versions — check sqlite_master
   const hasMemoryVec = db
