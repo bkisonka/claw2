@@ -610,6 +610,8 @@ function isAuthPublicPath(path: string): boolean {
   if (AUTH_PUBLIC_PATHS.has(path)) return true;
   // /files/ is deliberately NOT public: uploads and outputs are private user data.
   if (path.startsWith("/assets/") || path.startsWith("/pwa")) return true;
+  // Built-in wiki shell + pages: documentation content, not user data.
+  if (path === "/wiki" || path.startsWith("/wiki/")) return true;
   // Static files (pictures, favicon) - without authorization, so that the login form loads
   if (/^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
   return false;
@@ -624,6 +626,8 @@ function isAuthPublicPath(path: string): boolean {
  */
 function isUiShellPath(path: string): boolean {
   if (path === "/health") return true;
+  // Built-in wiki shell and its markdown pages: documentation content.
+  if (path === "/wiki" || path.startsWith("/wiki/")) return true;
   if (
     path === "/" ||
     path === "/index.html" ||
@@ -3864,6 +3868,54 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end("Error");
       }
       return;
+    }
+    // Built-in wiki (landing/wiki shell + markdown pages): served same-origin
+    // so the cabinet "Help" link works offline and without external sites.
+    // When no wiki directory is configured (e.g. plain desktop runs), the
+    // request falls back to the public product wiki site.
+    const wikiPath = process.env.CLAW2_WIKI_PATH?.trim()
+      ? resolve(process.env.CLAW2_WIKI_PATH)
+      : undefined;
+    if (req.method === "GET" && (p === "/wiki" || p.startsWith("/wiki/"))) {
+      if (!wikiPath || !existsSync(join(wikiPath, "index.html"))) {
+        res.writeHead(302, { Location: "https://claw2.online/wiki/#/en/Home.md" });
+        res.end();
+        return;
+      }
+      try {
+        const sub = p.slice("/wiki".length).replace(/^\/+/, "") || "index.html";
+        const file = resolve(join(wikiPath, sub === "" ? "index.html" : sub));
+        if (isInsideRoot(wikiPath, file) && existsSync(file) && statSync(file).isFile()) {
+          const ext = sub.split(".").pop() ?? "";
+          const ct =
+            ext === "html"
+              ? "text/html; charset=utf-8"
+              : ext === "md"
+                ? "text/markdown; charset=utf-8"
+                : ext === "json"
+                  ? "application/json"
+                  : ext === "css"
+                    ? "text/css"
+                    : ext === "js"
+                      ? "application/javascript"
+                      : ext === "svg"
+                        ? "image/svg+xml"
+                        : "application/octet-stream";
+          res.writeHead(200, { "Content-Type": ct });
+          res.end(
+            readFileSync(file, ext === "html" || ext === "md" || ext === "css" || ext === "js" || ext === "json" ? "utf-8" : undefined)
+          );
+          return;
+        }
+        // Unknown sub-path under a configured wiki: shell handles hash routing.
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(readFileSync(join(wikiPath, "index.html"), "utf-8"));
+        return;
+      } catch {
+        res.writeHead(500, { "Content-Type": TEXT_TYPE });
+        res.end("Error");
+        return;
+      }
     }
     const pwaPath = process.env.CLAW2_PWA_PATH?.trim() ? resolve(process.env.CLAW2_PWA_PATH) : undefined;
     if (req.method === "GET" && pwaPath && p.startsWith("/pwa")) {

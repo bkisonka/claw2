@@ -8,7 +8,6 @@ import { PersonaTab } from "../components/PersonaTab";
 import { useAuth } from "../context/AuthContext";
 import { isSingleUserClient } from "../lib/singleUser";
 import { useT, useI18n } from "../i18n";
-import { claw2WikiHomeUrl } from "../config/urls";
 
 export function CabinetPage() {
   const location = useLocation();
@@ -60,7 +59,7 @@ export function CabinetPage() {
         <h2 className="cabinet-title">{t("cabinet.title")}</h2>
         <a
           className="cabinet-wiki-link"
-          href={claw2WikiHomeUrl(locale)}
+          href={`/wiki/#/${locale}/Home.md`}
           target="_blank"
           rel="noopener noreferrer"
           title={t("cabinet.wikiTitle")}

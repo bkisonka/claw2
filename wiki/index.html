@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claw2 — Help</title>
+    <meta name="description" content="claw2 user guide" />
+    <style>
+      :root {
+        --bg: #0f1115;
+        --panel: #171a21;
+        --text: #e8eaed;
+        --muted: #9aa3b2;
+        --accent: #6ea8fe;
+        --line: rgba(255, 255, 255, 0.08);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.55;
+      }
+      .wrap {
+        display: grid;
+        grid-template-columns: minmax(200px, 260px) 1fr;
+        min-height: 100vh;
+      }
+      @media (max-width: 800px) {
+        .wrap {
+          grid-template-columns: 1fr;
+        }
+        nav {
+          border-right: none !important;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+      nav {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        padding: 1.25rem 1rem 2rem;
+      }
+      nav h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.1rem;
+      }
+      nav .sub {
+        color: var(--muted);
+        font-size: 0.8rem;
+        margin-bottom: 0.75rem;
+      }
+      .lang {
+        display: flex;
+        gap: 0.35rem;
+        margin-bottom: 1.1rem;
+      }
+      .lang button {
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--muted);
+        border-radius: 8px;
+        padding: 0.25rem 0.55rem;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      .lang button.active,
+      .lang button:hover {
+        color: var(--text);
+        border-color: rgba(110, 168, 254, 0.45);
+        background: rgba(110, 168, 254, 0.12);
+      }
+      nav a {
+        display: block;
+        color: var(--muted);
+        text-decoration: none;
+        padding: 0.35rem 0.5rem;
+        border-radius: 8px;
+        font-size: 0.92rem;
+      }
+      nav a:hover,
+      nav a.active {
+        color: var(--text);
+        background: rgba(110, 168, 254, 0.12);
+      }
+      nav .group {
+        margin-top: 1rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        padding: 0 0.5rem;
+      }
+      main {
+        padding: 1.5rem 1.75rem 3rem;
+        max-width: 48rem;
+      }
+      main a {
+        color: var(--accent);
+      }
+      main h1,
+      main h2,
+      main h3 {
+        line-height: 1.25;
+      }
+      main h1 {
+        margin-top: 0;
+      }
+      main code {
+        background: rgba(255, 255, 255, 0.06);
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        font-size: 0.92em;
+      }
+      main pre {
+        background: #0a0c10;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 0.9rem 1rem;
+        overflow-x: auto;
+      }
+      main pre code {
+        background: none;
+        padding: 0;
+      }
+      main table {
+        border-collapse: collapse;
+        width: 100%;
+        font-size: 0.95rem;
+      }
+      main th,
+      main td {
+        border: 1px solid var(--line);
+        padding: 0.45rem 0.6rem;
+        text-align: left;
+      }
+      main blockquote {
+        margin: 1rem 0;
+        padding: 0.35rem 0 0.35rem 0.9rem;
+        border-left: 3px solid var(--accent);
+        color: var(--muted);
+      }
+      .err {
+        color: #ff8e8e;
+      }
+      .note {
+        margin-top: 2rem;
+        font-size: 0.8rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav aria-label="Table of contents">
+        <h1>Claw2</h1>
+        <p class="sub" id="nav-sub">User guide</p>
+        <div class="lang" role="group" aria-label="Language">
+          <button type="button" data-lang="en" id="btn-en">EN</button>
+          <button type="button" data-lang="ru" id="btn-ru">RU</button>
+        </div>
+        <div id="nav-links"></div>
+        <p class="note" id="nav-note">Temporary shell — will embed into claw2.online design later.</p>
+      </nav>
+      <main id="content" aria-live="polite">Loading…</main>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+      const UI = {
+        en: {
+          sub: "User guide",
+          note: "Temporary shell — will embed into claw2.online design later.",
+          loading: "Loading…",
+          err: "Failed to load page: ",
+          titleFallback: "Help",
+          nav: [
+            ["Home.md", "Home"],
+            ["Product.md", "Product"],
+            ["HSS.md", "HSS"],
+            ["Settings.md", "Settings"],
+            ["Dynamic-Sidebar.md", "Dynamic sidebar"],
+            ["Activation-Cache.md", "Activation cache"],
+            ["Projects.md", "Projects"],
+            ["FAQ.md", "FAQ"],
+            ["group", "How-To"],
+            ["How-To/Getting-Started.md", "Getting started"],
+            ["How-To/Tray-and-Background.md", "Tray & background"],
+            ["How-To/Remote-PWA.md", "Remote PWA"],
+            ["How-To/Voice.md", "Voice"],
+          ],
+        },
+        ru: {
+          sub: "Справка пользователя",
+          note: "Оболочка временная — позже встроим в дизайн claw2.online.",
+          loading: "Загрузка…",
+          err: "Не удалось загрузить страницу: ",
+          titleFallback: "справка",
+          nav: [
+            ["Home.md", "Главная"],
+            ["Product.md", "О продукте"],
+            ["HSS.md", "HSS"],
+            ["Settings.md", "Настройки"],
+            ["Dynamic-Sidebar.md", "Динамический сайдбар"],
+            ["Activation-Cache.md", "Кэш активации"],
+            ["Projects.md", "Проекты"],
+            ["FAQ.md", "FAQ"],
+            ["group", "How-To"],
+            ["How-To/Getting-Started.md", "Первый запуск"],
+            ["How-To/Tray-and-Background.md", "Трей и фон"],
+            ["How-To/Remote-PWA.md", "Удалённый PWA"],
+            ["How-To/Voice.md", "Голос"],
+          ],
+        },
+      };
+
+      const content = document.getElementById("content");
+      const navLinks = document.getElementById("nav-links");
+      const navSub = document.getElementById("nav-sub");
+      const navNote = document.getElementById("nav-note");
+      const btnEn = document.getElementById("btn-en");
+      const btnRu = document.getElementById("btn-ru");
+
+      function detectLang() {
+        const raw = (location.hash || "").replace(/^#\/?/, "");
+        if (raw.startsWith("en/")) return "en";
+        if (raw.startsWith("ru/")) return "ru";
+        const nav = (navigator.language || "en").toLowerCase();
+        return nav.startsWith("ru") ? "ru" : "en";
+      }
+
+      function pageFromHash(lang) {
+        const raw = (location.hash || "").replace(/^#\/?/, "");
+        if (!raw) return lang + "/Home.md";
+        if (raw.startsWith("en/") || raw.startsWith("ru/")) return raw;
+        // Legacy flat links → current language
+        return lang + "/" + raw.replace(/^\//, "");
+      }
+
+      function renderNav(lang) {
+        const ui = UI[lang];
+        navSub.textContent = ui.sub;
+        navNote.textContent = ui.note;
+        document.documentElement.lang = lang;
+        btnEn.classList.toggle("active", lang === "en");
+        btnRu.classList.toggle("active", lang === "ru");
+        navLinks.innerHTML = "";
+        ui.nav.forEach(([page, label]) => {
+          if (page === "group") {
+            const g = document.createElement("div");
+            g.className = "group";
+            g.textContent = label;
+            navLinks.appendChild(g);
+            return;
+          }
+          const a = document.createElement("a");
+          a.href = "#/" + lang + "/" + page;
+          a.dataset.page = lang + "/" + page;
+          a.textContent = label;
+          navLinks.appendChild(a);
+        });
+      }
+
+      function resolveWikiPath(currentPage, href) {
+        const base = currentPage.includes("/")
+          ? currentPage.slice(0, currentPage.lastIndexOf("/") + 1)
+          : "";
+        try {
+          const url = new URL(href, "https://wiki.local/" + base);
+          return decodeURIComponent(url.pathname.replace(/^\//, ""));
+        } catch {
+          return href.replace(/^\.\//, "").replace(/^\.\.\//, "");
+        }
+      }
+
+      function rewriteWikiLinks(html, currentPage) {
+        const div = document.createElement("div");
+        div.innerHTML = html;
+        div.querySelectorAll("a[href]").forEach((a) => {
+          const href = a.getAttribute("href") || "";
+          if (/^https?:\/\//i.test(href) || href.startsWith("#") || href.startsWith("mailto:")) return;
+          if (href.endsWith(".md") || href.includes(".md#")) {
+            const path = resolveWikiPath(currentPage, href);
+            a.setAttribute("href", "#/" + path);
+          }
+        });
+        return div.innerHTML;
+      }
+
+      async function loadPage(page) {
+        const lang = page.startsWith("ru/") ? "ru" : "en";
+        const ui = UI[lang];
+        renderNav(lang);
+        [...navLinks.querySelectorAll("a[data-page]")].forEach((a) =>
+          a.classList.toggle("active", a.dataset.page === page)
+        );
+        content.textContent = ui.loading;
+        try {
+          const res = await fetch("pages/" + page);
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const md = await res.text();
+          const html = marked.parse(md, { mangle: false, headerIds: true });
+          content.innerHTML = rewriteWikiLinks(html, page);
+          content.scrollTop = 0;
+          document.title =
+            "Claw2 — " + (content.querySelector("h1")?.textContent || ui.titleFallback);
+        } catch (e) {
+          content.innerHTML =
+            '<p class="err">' + ui.err + String(e.message || e) + "</p>";
+        }
+      }
+
+      function go(lang, pageFile) {
+        location.hash = "#/" + lang + "/" + (pageFile || "Home.md");
+      }
+
+      btnEn.addEventListener("click", () => {
+        const cur = pageFromHash("en");
+        const rest = cur.replace(/^(en|ru)\//, "");
+        go("en", rest);
+      });
+      btnRu.addEventListener("click", () => {
+        const cur = pageFromHash("ru");
+        const rest = cur.replace(/^(en|ru)\//, "");
+        go("ru", rest);
+      });
+
+      window.addEventListener("hashchange", () => {
+        const lang = detectLang();
+        loadPage(pageFromHash(lang));
+      });
+
+      (function init() {
+        const lang = detectLang();
+        const page = pageFromHash(lang);
+        if (!location.hash || location.hash === "#") {
+          location.replace("#/" + page);
+          return;
+        }
+        // Normalize legacy #/Home.md → #/en/Home.md (or ru)
+        const raw = location.hash.replace(/^#\/?/, "");
+        if (raw && !raw.startsWith("en/") && !raw.startsWith("ru/")) {
+          location.replace("#/" + lang + "/" + raw);
+          return;
+        }
+        loadPage(page);
+      })();
+    </script>
+  </body>
+</html>

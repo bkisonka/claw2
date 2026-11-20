@@ -66,10 +66,12 @@ COPY --from=build /app/web/dist ./web/dist
 COPY --from=build /app/pwa/dist ./pwa/dist
 COPY agents ./agents
 COPY hss.cjs ./
+COPY wiki ./wiki
 
 ENV NODE_ENV=production
 ENV CLAW2_STATIC_PATH=/app/web/dist
 ENV CLAW2_PWA_PATH=/app/pwa/dist
+ENV CLAW2_WIKI_PATH=/app/wiki
 ENV CLAW2_CONFIG_PATH=/app/.claw2/claw2.yaml
 
 # Non-root: the gateway (and sibling skill containers built from this image)
