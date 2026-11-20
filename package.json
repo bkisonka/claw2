@@ -9,7 +9,7 @@
     "claw2": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc && node scripts/copy-gateway-sql.cjs",
+    "build": "tsc && node scripts/copy-gateway-sql.cjs && esbuild src/sandbox/egress-preload.ts --bundle --platform=node --format=cjs --outfile=dist/egress-preload.cjs --log-level=warning && esbuild src/sandbox/egress-sidecar.ts --bundle --platform=node --format=cjs --outfile=dist/egress-sidecar.cjs --log-level=warning",
     "build:web": "cd web && npm run build",
     "build:pwa": "cd pwa && npm run build",
     "start": "node dist/cli.js",
@@ -51,6 +51,9 @@
     "@types/node": "^22.10.0",
     "@types/pg": "^8.16.0",
     "concurrently": "^9.1.0",
+    "esbuild": "^0.28.2",
+    "http-proxy-agent": "^9.1.0",
+    "https-proxy-agent": "^9.1.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^5.1.1"

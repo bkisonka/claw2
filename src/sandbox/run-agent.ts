@@ -10,6 +10,8 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, relative } from "node:path";
 import type { Claw2Config } from "../config/types.js";
+import { getEgressGuardProxy } from "./egress-proxy.js";
+import { ensureEgressPreload, ensureEgressSidecar } from "./egress-preload-build.js";
 
 /** Absolute path without symlink (on macOS /tmp → /private/tmp) - otherwise --allow-fs-* does not match.*/
 function realAbs(path: string): string {
@@ -197,6 +199,127 @@ export function collectHostAgentDependencyRoots(agentsDir: string): string[] {
   return [...roots];
 }
 
+/** Internal docker network for skill containers (no external route). */
+const EGRESS_NET = "claw2-skill-egress";
+/** Normal (non-internal) network for the sidecar's own upstream traffic. */
+const EGRESS_UPSTREAM_NET = "claw2-egress-upstream";
+const EGRESS_SIDECAR = "claw2-egress-sidecar";
+const EGRESS_SIDECAR_PORT = 3128;
+
+function dockerSpawnSync(args: string[], timeoutMs = 15_000): { status: number; stdout: string; stderr: string } {
+  const r = spawnSync("docker", args, { encoding: "utf-8", timeout: timeoutMs });
+  return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** Ensure a docker network exists (internal ones get no external route). */
+function ensureDockerNetwork(name: string, internal: boolean): { ok: true } | { ok: false; error: string } {
+  const inspect = dockerSpawnSync(["network", "inspect", name]);
+  if (inspect.status === 0) return { ok: true };
+  const args = ["network", "create"];
+  if (internal) args.push("--internal");
+  args.push(name);
+  const created = dockerSpawnSync(args);
+  if (created.status !== 0) {
+    return { ok: false, error: `cannot create docker network ${name}: ${created.stderr.trim().slice(0, 200)}` };
+  }
+  return { ok: true };
+}
+
+interface DockerEgressPrep {
+  ok: true;
+  dockerArgs: string[];
+  env: Record<string, string>;
+  nodeArgs: string[];
+}
+
+/**
+ * Hard-tier egress setup for a docker-sandbox skill run:
+ *   - skill containers join the --internal network `claw2-skill-egress`
+ *     (no external route at all — kernel-enforced);
+ *   - a sidecar container on that network (+ a normal bridge for its own
+ *     upstream) runs the guard proxy and is the skills' only egress point;
+ *   - the mounted preload routes the skill's fetch/http/https into it.
+ * Nothing is published to the host; works identically on Linux and
+ * Docker Desktop.
+ */
+async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPrep | { ok: false; error: string }> {
+  const preload = ensureEgressPreload();
+  if (!preload.ok) return { ok: false, error: preload.error };
+  const sidecar = ensureEgressSidecar();
+  if (!sidecar.ok) return { ok: false, error: sidecar.error };
+
+  const image = config.sandbox?.image ?? "node:20-alpine";
+  const netErr = ensureDockerNetwork(EGRESS_NET, true);
+  if (!netErr.ok) return { ok: false, error: netErr.error };
+  const upErr = ensureDockerNetwork(EGRESS_UPSTREAM_NET, false);
+  if (!upErr.ok) return { ok: false, error: upErr.error };
+
+  // Sidecar: reuse the running one, (re)start when missing.
+  let sidecarStatus = dockerSpawnSync(["container", "inspect", "-f", "{{.State.Running}}", EGRESS_SIDECAR]);
+  if (sidecarStatus.status !== 0 || sidecarStatus.stdout.trim() !== "true") {
+    dockerSpawnSync(["rm", "-f", EGRESS_SIDECAR]);
+    const allowPrivate = config.sandbox?.egress?.allowPrivateHosts === true ? "1" : "0";
+    const started = dockerSpawnSync([
+      "run",
+      "-d",
+      "--name",
+      EGRESS_SIDECAR,
+      // Internal net: reachable by skill containers, no external route.
+      // Upstream net (user-defined, non-internal): the sidecar's own path to
+      // the internet. Docker refuses default "bridge" alongside a
+      // user-defined network, hence the dedicated one.
+      "--network",
+      EGRESS_NET,
+      "--network",
+      EGRESS_UPSTREAM_NET,
+      "--cap-drop=ALL",
+      "--security-opt=no-new-privileges",
+      "--read-only",
+      "--tmpfs",
+      "/tmp:rw,noexec,nosuid,size=16m",
+      "-e",
+      `CLAW2_EGRESS_ALLOW_PRIVATE=${allowPrivate}`,
+      "-v",
+      `${sidecar.path}:/sidecar.cjs:ro`,
+      image,
+      "node",
+      "/sidecar.cjs",
+    ]);
+    if (started.status !== 0) {
+      return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
+    }
+    // Wait for readiness (sidecar prints a ready line; poll its /health).
+    let ready = false;
+    for (let i = 0; i < 30 && !ready; i++) {
+      const ping = dockerSpawnSync([
+        "exec",
+        EGRESS_SIDECAR,
+        "node",
+        "-e",
+        `fetch('http://127.0.0.1:${EGRESS_SIDECAR_PORT}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`,
+      ]);
+      ready = ping.status === 0;
+      if (!ready) await new Promise((r) => setTimeout(r, 300));
+    }
+    if (!ready) {
+      const logs = dockerSpawnSync(["logs", EGRESS_SIDECAR]);
+      return { ok: false, error: `egress sidecar did not become ready: ${logs.stdout.trim().slice(0, 200)}` };
+    }
+  }
+
+  const proxyUrl = `http://${EGRESS_SIDECAR}:${EGRESS_SIDECAR_PORT}`;
+  return {
+    ok: true,
+    dockerArgs: ["--network", EGRESS_NET, "-v", `${preload.path}:/app/.claw2-egress-preload.cjs:ro`],
+    env: {
+      CLAW2_EGRESS_PROXY: proxyUrl,
+      HTTP_PROXY: proxyUrl,
+      HTTPS_PROXY: proxyUrl,
+    },
+    nodeArgs: ["--require", "/app/.claw2-egress-preload.cjs"],
+  };
+}
+
 function dockerUnavailableMessage(detail?: string): string {
   const hint =
     process.env.CLAW2_DESKTOP === "1"
@@ -234,7 +357,7 @@ export function isDockerAvailable(): { ok: boolean; detail?: string } {
  * With --permission (+ optional sandbox.hostFs); network allowed; without child_process.
  * Env: only PATH and explicitly passed options.env (not the whole process.env).
  */
-export function runAgentHost(
+export async function runAgentHost(
   config: Claw2Config,
   options: RunAgentOptions
 ): Promise<RunAgentResult> {
@@ -266,18 +389,57 @@ export function runAgentHost(
   const nodeBin = resolveHostNodeBin();
   const perm = buildHostPermissionArgs(config, agentsReal, outputReal, options.uploadsDir);
   if (perm.length === 0) {
-    return Promise.resolve({
+    return {
       stdout: "",
       stderr:
         `Error: Node --permission is required for host sandbox, but this Node build does not support it (${nodeBin}). Use Docker (sandbox.useDocker: true), set CLAW2_NODE_BIN to Node 20+, or upgrade Node.`,
       exitCode: -1,
-    });
+    };
+  }
+
+  // Egress guard, soft tier (default on): the skill's fetch/http/https is
+  // routed through the gateway's guard proxy with the same SSRF rules as
+  // web_fetch — loopback/private/link-local/metadata destinations are blocked
+  // and audited. Standard HTTP stacks only: raw node:net/node:tls sockets are
+  // a documented gap here (kernel-level isolation is the Docker tier's job).
+  const egressMode = config.sandbox?.egress?.mode ?? "guard";
+  let egressNodeArgs: string[] = [];
+  if (egressMode === "guard") {
+    const preload = ensureEgressPreload();
+    if (!preload.ok) {
+      return {
+        stdout: "",
+        stderr: `Error: egress guard could not start: ${preload.error} (fail-closed; set sandbox.egress.mode: "off" to disable the guard)`,
+        exitCode: -1,
+      };
+    }
+    try {
+      const guard = getEgressGuardProxy({
+        config,
+        allowPrivateHosts: config.sandbox?.egress?.allowPrivateHosts === true,
+      });
+      const port = await guard.listenOn("127.0.0.1");
+      // Passed as node argv flags, NOT via NODE_OPTIONS: NODE_OPTIONS is
+      // whitespace-delimited and breaks on install paths with spaces. The
+      // preload must also be readable under the --permission sandbox.
+      egressNodeArgs = ["--require", preload.path];
+      perm.push(`--allow-fs-read=${preload.path}`);
+      const preloadReal = realAbs(preload.path);
+      if (preloadReal !== preload.path) perm.push(`--allow-fs-read=${preloadReal}`);
+      env.CLAW2_EGRESS_PROXY = `http://127.0.0.1:${port}`;
+    } catch (err) {
+      return {
+        stdout: "",
+        stderr: `Error: egress guard proxy failed: ${err instanceof Error ? err.message : String(err)} (fail-closed; set sandbox.egress.mode: "off" to disable the guard)`,
+        exitCode: -1,
+      };
+    }
   }
 
   return new Promise((resolvePromise, rejectPromise) => {
     // --no-addons closes the permission-model bypass via native modules: without
     // it a skill could require(".node") addons and escape the fs/network regime.
-    const proc = spawn(nodeBin, [...perm, "--no-addons", script, ...args], {
+    const proc = spawn(nodeBin, [...perm, "--no-addons", ...egressNodeArgs, script, ...args], {
       cwd: agentsReal,
       stdio: ["pipe", "pipe", "pipe"],
       env,
@@ -370,8 +532,31 @@ export async function runAgent(
   }
   const script = scriptRes.path;
   const args = options.args ?? [];
+
   const injectedEnv: Record<string, string> = { ...options.env };
   injectedEnv.OUTPUT_DIR = "/app/output";
+
+  // Egress guard, hard tier (default on): the container joins a --internal
+  // network — no external route at all — and reaches the guard proxy through
+  // the network gateway IP (mounted preload + proxy env).
+  const egressMode = config.sandbox?.egress?.mode ?? "guard";
+  let egressDockerArgs: string[] = [];
+  let egressNodeArgs: string[] = [];
+  if (egressMode === "guard") {
+    const prep = await prepareDockerEgress(config);
+    if (!prep.ok) {
+      return {
+        stdout: "",
+        stderr: `Error: egress guard (docker sandbox) failed: ${prep.error} (fail-closed; set sandbox.egress.mode: "off" to disable the guard)`,
+        exitCode: -1,
+      };
+    }
+    egressDockerArgs = prep.dockerArgs;
+    // argv flags, not NODE_OPTIONS (whitespace-delimited, breaks on odd paths).
+    egressNodeArgs = prep.nodeArgs;
+    Object.assign(injectedEnv, prep.env);
+  }
+
   const envEntries = Object.entries(injectedEnv).length
     ? Object.entries(injectedEnv).map(([k, v]) => ["-e", `${k}=${v}`]).flat()
     : [];
@@ -406,12 +591,14 @@ export async function runAgent(
     "--read-only",
     "--tmpfs",
     "/tmp:rw,noexec,nosuid,size=64m",
+    ...egressDockerArgs,
     ...volumeMounts.flatMap((v) => ["-v", v]),
     "-w",
     "/app/agents",
     ...envEntries,
     image,
     "node",
+    ...egressNodeArgs,
     script,
     ...args,
   ];

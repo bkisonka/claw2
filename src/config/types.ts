@@ -172,6 +172,22 @@ export interface Claw2Config {
     /** Docker-sandbox hardening: process count cap per skill run (default 64). */
     dockerPidsLimit?: number;
     /**
+     * Outbound network control for skills.
+     * guard (default): all skill fetch/http/https goes through the gateway's
+     * egress guard proxy with the same SSRF rules as web_fetch; loopback,
+     * private, link-local and metadata destinations are blocked and audited.
+     * Soft tier (host sandbox / in-container): standard HTTP stacks are
+     * covered; raw node:net/node:tls sockets are a documented gap.
+     * Hard tier (sandbox.useDocker: true): the skill container additionally
+     * runs on a docker --internal network — the guard proxy is the only
+     * host-reachable egress point, kernel-enforced.
+     * off: no egress control (not recommended).
+     */
+    egress?: {
+      mode?: "guard" | "off";
+      allowPrivateHosts?: boolean;
+    };
+    /**
      * Optional expansion of host FS for agents when useDocker is false.
      * Default (omit / mode default): read agents/ (+ uploads), write agents/output only.
      * allowlist: those defaults plus read[] / write[] paths.
@@ -342,6 +358,16 @@ export interface Claw2Config {
     superuserIds?: string[];
     /** URL of the facial recognition service (POST image → JSON { userId }). If set, the browser sends the frame here instead of the local face-api*/
     recognizeUrl?: string;
+    /**
+     * Shared HMAC secret with the recognition service. A client-sent
+     * recognizedUser is trusted only together with a signature
+     * (HMAC-SHA256 of `${userId}:${ts}`, fields recognizedTs/recognizedSig)
+     * that verifies against this secret and is fresh (±30 s). Without the
+     * secret — or with a bad/stale signature — the claim is rejected
+     * outright: no memory binding, no superuser. Telegram/VK identity is
+     * server-side and unaffected.
+     */
+    recognizeSecret?: string;
   };
   /** Input channels (stage 2): Telegram, VK, etc.*/
   channels?: {

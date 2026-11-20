@@ -12,6 +12,7 @@ import { getConfigPath, loadConfig } from "../config/load.js";
 import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
 import { composeWebchatUserPayload, formatBrowserSelectionForHistory, type BrowserPageContext } from "../security/content-boundary.js";
+import { verifyVisionClaim } from "../security/vision-claim.js";
 import { auditLog } from "../audit/log.js";
 import { runOrchestrator } from "../core/orchestrator.js";
 import { isAbortError, throwIfAborted } from "../core/abort.js";
@@ -247,6 +248,24 @@ function getCachedUserConfig(
 
 function invalidateUserConfigCache(userId: string): void {
   userConfigCache.delete(userId);
+}
+
+let visionNoSecretWarned = false;
+/**
+ * One-time notice: a client claimed a vision identity, but no
+ * vision.recognizeSecret is configured — the claim cannot be verified and is
+ * dropped. Signed claims require the shared secret with the recognition
+ * service.
+ */
+function warnVisionNoSecretOnce(config: Claw2Config): void {
+  if (visionNoSecretWarned) return;
+  visionNoSecretWarned = true;
+  const msg =
+    "[vision] recognizedUser received without vision.recognizeSecret — claim rejected. " +
+    "Set vision.recognizeSecret (env:VISION_SECRET) and sign claims in the recognition service: " +
+    "HMAC-SHA256(`${userId}:${ts}`) → recognizedTs/recognizedSig.";
+  if (config.vision?.enabled) console.warn(`[vision] ${msg}`);
+  else console.warn(`${msg} (vision is disabled in config — is the client misconfigured?)`);
 }
 
 function mergeConfigKeepingSecrets(
@@ -1023,9 +1042,33 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           data.voiceEmotion === "angry" || data.voiceEmotion === "happy" || data.voiceEmotion === "neutral" || data.voiceEmotion === "sad"
             ? data.voiceEmotion
             : undefined;
+        // Client-asserted vision identity: trusted only with a valid, fresh
+        // HMAC signature from the recognition service (vision.recognizeSecret).
+        // Anything else is rejected outright — no memory binding, no superuser
+        // (Telegram/VK pass their own server-side id through runOrchestrator
+        // directly and are unaffected).
         const rawRecognized = typeof data.recognizedUser === "string" ? data.recognizedUser.trim() : "";
-        const recognizedUser =
-          rawRecognized && rawRecognized.toLowerCase() !== "unknown" ? rawRecognized : undefined;
+        const recognizedUser = (() => {
+          if (!rawRecognized || rawRecognized.toLowerCase() === "unknown") return undefined;
+          const secret = config.vision?.recognizeSecret?.trim();
+          if (!secret) {
+            warnVisionNoSecretOnce(config);
+            return undefined;
+          }
+          const check = verifyVisionClaim(secret, {
+            userId: rawRecognized,
+            ts: typeof data.recognizedTs === "number" ? data.recognizedTs : undefined,
+            sig: typeof data.recognizedSig === "string" ? data.recognizedSig : undefined,
+          });
+          if (!check.ok) {
+            auditLog(config, {
+              type: "vision_claim_rejected",
+              details: { reason: check.reason, claimed: rawRecognized.slice(0, 64) },
+            });
+            return undefined;
+          }
+          return rawRecognized;
+        })();
         const rawPageContextEarly = data.pageContext;
         let pageContext: BrowserPageContext | undefined;
         if (

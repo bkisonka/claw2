@@ -16,6 +16,12 @@ agentsDir: ./agents
 sandbox:
   image: node:20-alpine
   timeoutMs: 60000
+  # Outbound network control for skills (default: guard): skill
+  # fetch/http/https goes through an SSRF-guard proxy (loopback, private,
+  # link-local and metadata destinations blocked and audited). See the
+  # gateway example config for the full option set.
+  # egress:
+  #   mode: guard
 
 # Prompt-injection containment ("lethal trifecta"): when a turn combines data
 # access with untrusted content and a way to send it out, the turn is audited

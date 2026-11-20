@@ -60,7 +60,9 @@ export type AuditEventType =
   | "agent_selection_version_added"
   | "insight_offered"
   | "insight_accepted"
-  | "insight_dismissed";
+  | "insight_dismissed"
+  | "vision_claim_rejected"
+  | "egress_blocked";
 
 export interface AuditEvent {
   type: AuditEventType;

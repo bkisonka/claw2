@@ -23,11 +23,18 @@ gateway:
     enabled: true
     apiKey: env:CLAW2_GATEWAY_API_KEY
     # Individual client: do not set registrationEnabled / databaseUrl / sessionSecret.
-# Camera recognition (biometric identification): client sends recognizedUser with each request
+# Camera recognition (biometric identification). The recognition service
+# signs its verdict; the browser only relays it. The gateway trusts a
+# recognizedUser only with a valid fresh signature:
+#   HMAC-SHA256(`${userId}:${ts}`, VISION_SECRET) → recognizedTs, recognizedSig
+# Without recognizeSecret — or with a bad/stale signature — the claim is
+# rejected outright (no memory binding, no superuser). Generate the secret:
+#   openssl rand -hex 24   # → VISION_SECRET in .env
 # vision:
 #   enabled: true
 #   superuserIds: []   # IDs with full access (including all users' memory)
-#   recognizeUrl: http://localhost:9000/recognize   # voice service: POST frame → JSON { userId }
+#   recognizeUrl: http://localhost:9000/recognize   # POST frame → { userId, ts, sig }
+#   recognizeSecret: env:VISION_SECRET
 
 # Channels: Telegram and/or VK (private community, DMs to the bot)
 # channels:
@@ -73,6 +80,17 @@ skills:
 sandbox:
   image: node:20-alpine
   timeoutMs: 60000
+  # Outbound network control for skills (default: guard).
+  #   guard — skill fetch/http/https goes through the egress guard proxy with
+  #   the same SSRF rules as web_fetch (loopback, private, link-local and
+  #   metadata destinations are blocked and audited). In the Docker sandbox
+  #   the container additionally runs on an isolated network: the guard proxy
+  #   is its only way out, enforced by the kernel.
+  #   allowPrivateHosts: true — let skills reach your LAN services.
+  #   mode: "off" — disable the guard (not recommended).
+  # egress:
+  #   mode: guard
+  #   allowPrivateHosts: false
   # Docker-sandbox resource caps per skill run.
   # dockerMemory: 512m
   # dockerPidsLimit: 64

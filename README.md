@@ -159,10 +159,11 @@ Your configuration, conversations and memory live in mounted volumes
 
 Skills live in `agents/` as ordinary JavaScript files. The container mounts
 this directory, so you can add or edit skills on the host with any editor —
-the agent sees the changes on the next turn. Inside the container skills
-run in a hardened sandbox: a plain Node.js process with the
-`--permission` and `--no-addons` flags, restricted environment and no
-network access to your private subnets.
+the agent sees the changes on the next turn. Skills run in a hardened
+sandbox: a plain Node.js process with the `--permission` and `--no-addons`
+flags and a restricted environment, and their outbound traffic goes through
+the egress guard (see Security) — loopback, private and metadata
+destinations are unreachable from a skill by default.
 
 When the agent needs something no skill covers, it can write a new one —
 but a skill that is not on the allowlist (shipped in the example config)
@@ -197,6 +198,21 @@ with your own, its local `node_modules` (if present) takes precedence.
   loopback, private or link-local addresses (cloud metadata included), and
   re-checks every redirect hop. To let the agent reach your own LAN services,
   set `tools.webFetch.allowPrivateHosts: true`.
+- **Egress guard for skills.** Skills cannot bypass the fetch guard with
+  their own code: every skill's `fetch`/`http`/`https` is routed through an
+  SSRF-guard proxy (`sandbox.egress.mode: guard`, on by default) that blocks
+  the same destination classes and writes refusals to the audit log. In the
+  Docker sandbox the enforcement is kernel-level: the skill container runs
+  on an isolated network with no external route at all, and a dedicated
+  guard-proxy sidecar is its only way out. The non-Docker tier covers the
+  standard HTTP stacks; a skill speaking raw TLS over `node:net` is the
+  documented gap there — use the Docker sandbox when that matters.
+- **Verified identity.** Vision-based recognition ("who is at the camera")
+  is trusted only when the recognition service signs its verdict with a
+  shared secret (`vision.recognizeSecret`, HMAC + freshness window);
+  unsigned identity claims are rejected outright — no memory binding, no
+  elevated rights. Telegram/VK identity comes from the platform payload the
+  gateway received itself and is unaffected.
 - **Cross-site guard.** With gateway auth off, requests whose `Host` header
   is not an IP, `localhost`, `*.local` or a name listed in
   `gateway.trustedHosts` are refused — a page from a foreign site (or a
