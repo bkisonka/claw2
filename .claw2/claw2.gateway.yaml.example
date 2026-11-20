@@ -46,6 +46,10 @@ gateway:
 #     enabled: true
 #     accessToken: env:VK_ACCESS_TOKEN
 #     groupId: 123456789   # community ID (positive number)
+#     # Channel messages are untrusted-origin content by default (they arm
+#     # the prompt-injection provenance ledger). List the operator's own IDs
+#     # to treat those DMs as trusted operator speech:
+#     # trustedUserIds: [12345678]
 #     voice:               # same as Telegram: STT/TTS via voice service
 #       sttUrl: http://localhost:8765/stt
 #       ttsUrl: http://localhost:8765/tts

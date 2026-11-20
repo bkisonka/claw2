@@ -391,6 +391,13 @@ export interface Claw2Config {
       ownerId?: number;
       /** Path to SQLite for admission list and invitations. Default - ./data/telegram_allowlist.sqlite*/
       allowlistDbPath?: string;
+      /**
+       * Channel user IDs whose messages count as trusted operator speech:
+       * not wrapped in external-content markers, not tainting the session
+       * provenance ledger. Default: none — every channel message is
+       * untrusted-origin content (hard by default).
+       */
+      trustedUserIds?: number[];
       /** Voice: STT/TTS via separate voice service*/
       voice?: {
         /** URL STT (POST multipart file → JSON { text }) */
@@ -410,6 +417,12 @@ export interface Claw2Config {
       accessToken?: string;
       /** Community ID (positive number) or env:VK_GROUP_ID*/
       groupId?: number;
+      /**
+       * Community member IDs whose DMs count as trusted operator speech
+       * (see telegram.trustedUserIds). Default: none — every community
+       * message is untrusted-origin content.
+       */
+      trustedUserIds?: number[];
       /** Voice: STT/TTS via separate voice service (similar to Telegram)*/
       voice?: {
         sttUrl?: string;

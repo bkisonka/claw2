@@ -74,6 +74,7 @@ export class ChromaStore implements IMemoryStore {
       const meta: Record<string, string> = { source: chunk.source, createdAt: String(now) };
       if (chunk.userId) meta.userId = chunk.userId;
       if (typeof chunk.importance === "number") meta.importance = String(chunk.importance);
+      if (chunk.untrustedOrigin) meta.untrustedOrigin = "1";
       await collection.add({
         ids: [id],
         embeddings: [chunk.embedding],
@@ -125,6 +126,7 @@ export class ChromaStore implements IMemoryStore {
         const source = (meta?.source === "internal" ? "internal" : "user") as MemorySource;
         const createdAt = typeof meta?.createdAt === "string" ? Number(meta.createdAt) : Date.now();
         const userId = typeof meta?.userId === "string" ? meta.userId : undefined;
+        const untrustedOrigin = typeof meta?.untrustedOrigin === "string" && meta.untrustedOrigin === "1";
         const importanceRaw = typeof meta?.importance === "string" ? Number(meta.importance) : 0.5;
         const importance =
           typeof importanceRaw === "number" && Number.isFinite(importanceRaw)
@@ -144,6 +146,7 @@ export class ChromaStore implements IMemoryStore {
             createdAt,
             userId,
             importance,
+            untrustedOrigin,
           },
         });
       }

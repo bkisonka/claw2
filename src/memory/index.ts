@@ -20,11 +20,11 @@ export interface MemoryWriteResult {
 }
 
 export interface MemoryRecallResult {
-  chunks: { text: string; source: MemorySource }[];
+  chunks: { text: string; source: MemorySource; untrustedOrigin?: boolean }[];
 }
 
 export interface MemoryRecallScoredResult {
-  chunks: { text: string; source: MemorySource; score: number }[];
+  chunks: { text: string; source: MemorySource; score: number; untrustedOrigin?: boolean }[];
 }
 
 let defaultStore: IMemoryStore | null = null;
@@ -72,7 +72,8 @@ export async function memoryWrite(
   text: string,
   source: MemorySource,
   userId?: string,
-  importance?: number
+  importance?: number,
+  originUntrusted?: boolean
 ): Promise<MemoryWriteResult> {
   if (!config.memory?.enabled) return { ok: false, reason: "memory_disabled" };
 
@@ -95,9 +96,13 @@ export async function memoryWrite(
       embedding,
       source,
       importance: imp,
+      ...(originUntrusted ? { untrustedOrigin: true } : {}),
       ...(userId ? { userId } : {}),
     });
-    auditLog(config, { type: "memory_write", details: { importance: imp } });
+    auditLog(config, {
+      type: "memory_write",
+      details: { importance: imp, untrustedOrigin: originUntrusted === true },
+    });
     return { ok: true, id };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -124,7 +129,11 @@ export async function memoryRecall(
 ): Promise<MemoryRecallResult> {
   const scored = await memoryRecallScored(client, config, query, limit, options);
   return {
-    chunks: scored.chunks.map((c) => ({ text: c.text, source: c.source })),
+    chunks: scored.chunks.map((c) => ({
+      text: c.text,
+      source: c.source,
+      ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
+    })),
   };
 }
 

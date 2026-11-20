@@ -11,6 +11,13 @@ export interface MemoryChunk {
   userId?: string;
   /** Importance 0..1; sets the model for remember. Affects recall.*/
   importance?: number;
+  /**
+   * True when this chunk derives from untrusted-origin content (written
+   * during a trifecta-armed turn). Recalling such a chunk must arm the
+   * reading session's taint ledger (security/origin.ts) — otherwise
+   * untrusted content re-enters later sessions labeled "internal".
+   */
+  untrustedOrigin?: boolean;
 }
 
 const DEFAULT_MAX_CHUNKS = 500;

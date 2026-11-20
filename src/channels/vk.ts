@@ -7,6 +7,8 @@ import type { Claw2Config } from "../config/index.js";
 import { wrapExternalContent } from "../security/content-boundary.js";
 import { runOrchestrator } from "../core/orchestrator.js";
 import { getSessionHistory, appendToSession } from "../gateway/sessions.js";
+import { markUntrustedOrigin, hasUntrustedOrigin } from "../security/origin.js";
+import { channelIngressConfig, resolveChannelIngressTrust } from "./ingress.js";
 import { saveUploadedDocuments, type IncomingDocument } from "../gateway/documents.js";
 import { stt, tts } from "./voice-client.js";
 import { markdownToPlainText } from "./markdown-to-channel.js";
@@ -254,7 +256,13 @@ export function startVkBot(config: Claw2Config): void {
     userVoiceEmotion?: "angry" | "happy" | "neutral" | "sad"
   ): Promise<string> {
     const sessionId = `vk:${peerId}`;
-    const wrapped = wrapExternalContent(userText, { source: "vk" });
+    // Community DMs are untrusted-origin content by default (see telegram
+    // ingress note); trustedUserIds soften it for the operator's own ID.
+    const trust = resolveChannelIngressTrust(channelIngressConfig(config, "vk"), peerId);
+    const wrapped = trust.trusted
+      ? userText
+      : wrapExternalContent(userText, { source: "vk" });
+    if (!trust.trusted) markUntrustedOrigin(sessionId);
     const history = getSessionHistory(sessionId);
     const result = await runOrchestrator({
       config,
@@ -265,8 +273,18 @@ export function startVkBot(config: Claw2Config): void {
       userVoiceEmotion,
       sessionId,
     });
-    appendToSession(sessionId, "user", userText);
-    appendToSession(sessionId, "assistant", result.content);
+    appendToSession(
+      sessionId,
+      "user",
+      userText,
+      trust.trusted ? undefined : { source: "channel", untrusted: true }
+    );
+    appendToSession(
+      sessionId,
+      "assistant",
+      result.content,
+      hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
+    );
     return result.error ? `Error:${result.error}` : result.content;
   }
 

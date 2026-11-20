@@ -108,6 +108,14 @@ function ensureVecTables(db: Database.Database, dim: number): void {
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_user ON memory_chunks(user_id);
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_created ON memory_chunks(created_at);
 
+  // Provenance migration (existing databases): 1 = chunk derives from
+  // untrusted-origin content (written during a trifecta-armed turn).
+  try {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN origin_untrusted INTEGER DEFAULT 0");
+  } catch {
+    /* column already exists */
+  }
+
     CREATE TABLE IF NOT EXISTS hss_chronicle (
       id INTEGER PRIMARY KEY,
       entry_id TEXT UNIQUE NOT NULL,

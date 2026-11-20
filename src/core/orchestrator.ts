@@ -46,7 +46,7 @@ import {
   sidebarMigrate,
 } from "../sidebar/store.js";
 import { hasUntrustedInText, checkLethalTrifecta } from "../security/lethal-trifecta.js";
-import { initTrifectaState, markUntrustedOrigin } from "../security/origin.js";
+import { initTrifectaState, markUntrustedOrigin, hasUntrustedOrigin } from "../security/origin.js";
 import { isPathUploadsOrOutput } from "../security/path-allowed.js";
 import { wrapExternalContent } from "../security/content-boundary.js";
 import { urlContainsSensitive, filterExternalResponse } from "../security/external-content-filters.js";
@@ -759,6 +759,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         : undefined;
       const recalled = await memoryRecall(client, config, fullUserMessage, undefined, recallOptions);
       throwIfAborted(signal);
+      // Anti-laundering: a chunk written during a trifecta-armed turn derives
+      // from untrusted content — recalling it must arm THIS session too,
+      // otherwise memory re-labels web content as trusted "internal".
+      if (recalled.chunks.some((c) => c.untrustedOrigin)) {
+        markUntrustedOrigin(sessionId ?? "");
+      }
       if (recalled.chunks.length > 0) {
         const block = recalled.chunks.map((c) => `[${c.source}] ${c.text}`).join("\n\n");
         systemPrompt = `${systemPrompt}\n\nRelevant memory:\n${block}`;
@@ -871,7 +877,11 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         config,
         summary,
         "internal",
-        recognizedUser ?? undefined
+        recognizedUser ?? undefined,
+        undefined,
+        // The summary condenses prior history: strictest-label inheritance —
+        // tainted prior context makes the summary a tainted derivative.
+        hasUntrustedOrigin(sessionId ?? "")
       );
       auditLog(config, {
         type: "context_summarized",
@@ -1160,7 +1170,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               text,
               source,
               recognizedUser ?? undefined,
-              importance
+              importance,
+              // Content saved during a trifecta-armed turn derives from
+              // untrusted context (strictest-label inheritance).
+              trifectaState.untrustedContent
             );
             toolResults.push({
               id: tc.id!,
@@ -1445,6 +1458,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               ? { userId: recognizedUser, isSuperuser }
               : undefined;
             const { chunks } = await memoryRecall(client, config, query, limit, recallOpts);
+            if (chunks.some((c) => c.untrustedOrigin)) {
+              trifectaState.untrustedContent = true;
+              markUntrustedOrigin(sessionId ?? "");
+            }
             for (const c of chunks) {
               if (c.text && memoryReturnedContents.length < MAX_SENSITIVE_CHUNKS) {
                 const chunk = c.text.slice(0, MAX_SENSITIVE_CHUNK_BYTES);

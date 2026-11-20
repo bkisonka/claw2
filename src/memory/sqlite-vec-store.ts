@@ -37,8 +37,8 @@ export class SqliteVecStore implements IMemoryStore {
       const info = db.prepare("INSERT INTO memory_vec(embedding) VALUES (?)").run(embParam);
       const rowid = Number(info.lastInsertRowid);
       db.prepare(
-        `INSERT INTO memory_chunks(id, chunk_id, text, source, created_at, user_id, importance)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO memory_chunks(id, chunk_id, text, source, created_at, user_id, importance, origin_untrusted)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         rowid,
         chunkId,
@@ -46,7 +46,8 @@ export class SqliteVecStore implements IMemoryStore {
         chunk.source,
         now,
         chunk.userId ?? null,
-        typeof chunk.importance === "number" ? chunk.importance : 0.5
+        typeof chunk.importance === "number" ? chunk.importance : 0.5,
+        chunk.untrustedOrigin === true ? 1 : 0
       );
 
       // FIFO trim by maxChunks
@@ -105,6 +106,7 @@ export class SqliteVecStore implements IMemoryStore {
         source: string;
         created_at: number;
         user_id: string | null;
+            origin_untrusted: number | null;
         importance: number | null;
         distance: number;
       }>;
@@ -112,7 +114,7 @@ export class SqliteVecStore implements IMemoryStore {
       if (options?.userId && !options?.isSuperuser) {
         rows = db
           .prepare(
-            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, v.distance
+            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, v.distance
              FROM memory_vec v
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
@@ -123,7 +125,7 @@ export class SqliteVecStore implements IMemoryStore {
       } else {
         rows = db
           .prepare(
-            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, v.distance
+            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, v.distance
              FROM memory_vec v
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
@@ -148,6 +150,7 @@ export class SqliteVecStore implements IMemoryStore {
           createdAt: r.created_at,
           userId: r.user_id ?? undefined,
           importance,
+          untrustedOrigin: r.origin_untrusted === 1,
         };
         return { chunk, score };
       });

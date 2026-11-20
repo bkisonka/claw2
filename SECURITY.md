@@ -47,7 +47,16 @@ Provenance note: untrusted-content detection for the trifecta is
 out-of-band — a per-session ledger (security/origin.ts) records that web /
 search / skill-output content entered the context, so the signal survives
 history summarization and cannot be forged by text. The in-band
-`<<<EXT>>>` markers remain as a backstop.
+`<<<EXT>>>` markers remain as a backstop. The ledger covers the full
+lifecycle of untrusted content: channel messages are untrusted at ingress
+(`channels.*.trustedUserIds` lists the operator's own IDs as the
+documented softening), context summaries written to long-term memory keep
+their taint (`untrustedOrigin` on memory chunks), and recalling a tainted
+chunk arms the reading session — untrusted content cannot be laundered
+into trusted "internal" memory. The mobile client (PWA) has no
+outbound-sending tool (its `fetch_url` only reads), so the trifecta's
+third leg does not exist there and the ledger does not apply; the
+in-band content boundary is mirrored in the PWA engine.
 
 Known limitations that are **not** vulnerabilities (documented behavior):
 
