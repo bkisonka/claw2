@@ -21,3 +21,8 @@ export const apiKey =
 export function setGatewayKey(key: string): void {
   localStorage.setItem(KEY_STORAGE, key.trim());
 }
+
+/** Drop a stored key that the gateway rejected (e.g. rotated on the server). */
+export function clearGatewayKey(): void {
+  localStorage.removeItem(KEY_STORAGE);
+}

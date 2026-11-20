@@ -1,10 +1,11 @@
+import { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "./context/AuthContext";
 import { LoginPage } from "./pages/LoginPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { AuthenticatedArea } from "./pages/AuthenticatedArea";
 import { isSingleUserClient } from "./lib/singleUser";
-import { apiKey } from "./config";
+import { apiBase, apiKey, clearGatewayKey } from "./config";
 import { GatewayKeyGate } from "./components/GatewayKeyGate";
 import { useT } from "./i18n";
 
@@ -30,9 +31,28 @@ function AuthOnly({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  // Personal deployment (single-user build, no baked-in key): ask for the
-  // gateway key before rendering anything — every API call would 401 anyway.
-  if (isSingleUserClient() && !apiKey) return <GatewayKeyGate />;
+  // Personal deployment (single-user build): ask for the gateway key when
+  // none is stored, and re-ask when the stored key has been rejected by the
+  // gateway (rotated on the server) — otherwise every API call 401s silently.
+  const [keyInvalid, setKeyInvalid] = useState(false);
+  useEffect(() => {
+    if (!isSingleUserClient() || !apiKey) return;
+    let cancelled = false;
+    fetch(`${apiBase}/api/me`, {
+      headers: { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` },
+    })
+      .then((res) => {
+        if (!cancelled && (res.status === 401 || res.status === 403)) {
+          clearGatewayKey();
+          setKeyInvalid(true);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  if (isSingleUserClient() && (!apiKey || keyInvalid)) return <GatewayKeyGate />;
   return (
     <Routes>
       <Route path="/" element={<RootRedirect />} />
