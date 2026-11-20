@@ -78,25 +78,28 @@ skills:
     - rename-output.js
     - chart.js
 sandbox:
-  image: node:20-alpine
+  # Hard skill sandbox — on by default in this delivery (the compose stack
+  # ships the restricted docker API proxy): every skill runs as a one-off
+  # sibling container on an isolated docker network whose only way out is
+  # the egress guard sidecar. Siblings use the claw2 image itself (skill
+  # dependencies are preinstalled there).
+  image: claw2:latest
+  useDocker: true
   timeoutMs: 60000
-  # Outbound network control for skills (default: guard).
-  #   guard — skill fetch/http/https goes through the egress guard proxy with
-  #   the same SSRF rules as web_fetch (loopback, private, link-local and
-  #   metadata destinations are blocked and audited). In the Docker sandbox
-  #   the container additionally runs on an isolated network: the guard proxy
-  #   is its only way out, enforced by the kernel.
-  #   allowPrivateHosts: true — let skills reach your LAN services.
-  #   mode: "off" — disable the guard (not recommended).
-  # egress:
-  #   mode: guard
-  #   allowPrivateHosts: false
+  # Softening (at your own risk):
+  #   useDocker: false    — run skills inside the gateway container instead
+  #                         (no kernel isolation; the SSRF guard still covers
+  #                         standard HTTP stacks, raw sockets become possible)
+  #   egress.mode: "off"  — also drop the SSRF guard entirely (not recommended)
+  # Outbound network control for skills (guard is the default):
+  #   loopback, private, link-local and metadata destinations are blocked
+  #   and audited; allowPrivateHosts lets skills reach your LAN services.
+  egress:
+    mode: guard
+    allowPrivateHosts: false
   # Docker-sandbox resource caps per skill run.
   # dockerMemory: 512m
   # dockerPidsLimit: 64
-  # Inside a claw2 container there is no Docker daemon: skills run in the
-  # same container via node --permission. Uncomment when running in Docker.
-  # useDocker: false
 
 # Prompt-injection containment ("lethal trifecta"): when a turn combines data
 # access with untrusted content and a way to send it out, the turn is audited

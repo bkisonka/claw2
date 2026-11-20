@@ -6,12 +6,25 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, relative } from "node:path";
 import type { Claw2Config } from "../config/types.js";
 import { getEgressGuardProxy } from "./egress-proxy.js";
 import { ensureEgressPreload, ensureEgressSidecar } from "./egress-preload-build.js";
+
+/**
+ * Sibling-sandbox mode (compose delivery): the gateway runs inside a
+ * container and launches skill containers on the HOST docker through a
+ * restricted API proxy (DOCKER_HOST). Container paths (/app/…) must be
+ * mapped to host paths for sibling binds; the compose stack provides the
+ * host root via CLAW2_SIBLING_HOST_ROOT. Without it, skill containers are
+ * started with mounts from the gateway's own filesystem (host-installed
+ * gateway, where container paths == host paths).
+ */
+function siblingHostRoot(): string {
+  return process.env.CLAW2_SIBLING_HOST_ROOT?.trim() ?? "";
+}
 
 /** Absolute path without symlink (on macOS /tmp → /private/tmp) - otherwise --allow-fs-* does not match.*/
 function realAbs(path: string): string {
@@ -241,12 +254,19 @@ interface DockerEgressPrep {
  *   - the mounted preload routes the skill's fetch/http/https into it.
  * Nothing is published to the host; works identically on Linux and
  * Docker Desktop.
+ *
+ * Sibling mode (gateway itself runs in a container, CLAW2_SIBLING_HOST_ROOT
+ * set): binds must use HOST paths, so the preload is staged through a
+ * host-visible mount (/app/data → <root>/data) and the sidecar runs from the
+ * claw2 image itself (the bundle lives in dist/ inside the image).
  */
 async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPrep | { ok: false; error: string }> {
   const preload = ensureEgressPreload();
   if (!preload.ok) return { ok: false, error: preload.error };
-  const sidecar = ensureEgressSidecar();
-  if (!sidecar.ok) return { ok: false, error: sidecar.error };
+  const hostRoot = siblingHostRoot();
+  if (hostRoot && !hostRoot.startsWith("/")) {
+    return { ok: false, error: "CLAW2_SIBLING_HOST_ROOT must be an absolute HOST path" };
+  }
 
   const image = config.sandbox?.image ?? "node:20-alpine";
   const netErr = ensureDockerNetwork(EGRESS_NET, true);
@@ -254,12 +274,27 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
   const upErr = ensureDockerNetwork(EGRESS_UPSTREAM_NET, false);
   if (!upErr.ok) return { ok: false, error: upErr.error };
 
+  // Preload for the skill container: in sibling mode stage it to the
+  // host-visible data mount (the gateway's dist/ is not a host path).
+  let preloadBindSrc = preload.path;
+  if (hostRoot) {
+    try {
+      copyFileSync(preload.path, "/app/data/egress-preload.cjs");
+      preloadBindSrc = join(hostRoot, "data", "egress-preload.cjs");
+    } catch (err) {
+      return {
+        ok: false,
+        error: `cannot stage egress preload to /app/data (sibling mode): ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
   // Sidecar: reuse the running one, (re)start when missing.
-  let sidecarStatus = dockerSpawnSync(["container", "inspect", "-f", "{{.State.Running}}", EGRESS_SIDECAR]);
+  const sidecarStatus = dockerSpawnSync(["container", "inspect", "-f", "{{.State.Running}}", EGRESS_SIDECAR]);
   if (sidecarStatus.status !== 0 || sidecarStatus.stdout.trim() !== "true") {
     dockerSpawnSync(["rm", "-f", EGRESS_SIDECAR]);
     const allowPrivate = config.sandbox?.egress?.allowPrivateHosts === true ? "1" : "0";
-    const started = dockerSpawnSync([
+    const sidecarCmd = [
       "run",
       "-d",
       "--name",
@@ -279,14 +314,23 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
       "/tmp:rw,noexec,nosuid,size=16m",
       "-e",
       `CLAW2_EGRESS_ALLOW_PRIVATE=${allowPrivate}`,
-      "-v",
-      `${sidecar.path}:/sidecar.cjs:ro`,
-      image,
-      "node",
-      "/sidecar.cjs",
-    ]);
+    ];
+    if (hostRoot) {
+      // Sibling mode: the claw2 image carries dist/egress-sidecar.cjs.
+      sidecarCmd.push(image, "node", "/app/dist/egress-sidecar.cjs");
+    } else {
+      const sidecar = ensureEgressSidecar();
+      if (!sidecar.ok) return { ok: false, error: sidecar.error };
+      sidecarCmd.push("-v", `${sidecar.path}:/sidecar.cjs:ro`, image, "node", "/sidecar.cjs");
+    }
+    const started = dockerSpawnSync(sidecarCmd);
     if (started.status !== 0) {
-      return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
+      // rm may be denied by a restricted API proxy or race with a stale
+      // container — try the existing one as-is before failing.
+      const restarted = dockerSpawnSync(["start", EGRESS_SIDECAR]);
+      if (restarted.status !== 0) {
+        return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
+      }
     }
     // Wait for readiness (sidecar prints a ready line; poll its /health).
     let ready = false;
@@ -310,7 +354,12 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
   const proxyUrl = `http://${EGRESS_SIDECAR}:${EGRESS_SIDECAR_PORT}`;
   return {
     ok: true,
-    dockerArgs: ["--network", EGRESS_NET, "-v", `${preload.path}:/app/.claw2-egress-preload.cjs:ro`],
+    dockerArgs: [
+      "--network",
+      EGRESS_NET,
+      "-v",
+      `${preloadBindSrc}:/app/.claw2-egress-preload.cjs:ro`,
+    ],
     env: {
       CLAW2_EGRESS_PROXY: proxyUrl,
       HTTP_PROXY: proxyUrl,
@@ -561,9 +610,42 @@ export async function runAgent(
     ? Object.entries(injectedEnv).map(([k, v]) => ["-e", `${k}=${v}`]).flat()
     : [];
 
-  const volumeMounts = [`${agentsDir}:/app/agents:ro`, `${outputDir}:/app/output`];
-  if (options.uploadsDir) {
-    volumeMounts.push(`${options.uploadsDir}:/app/uploads:ro`);
+  // Sibling mode: binds must reference HOST paths. Container paths under the
+  // compose layout start with /app/ — anything else would silently mount a
+  // wrong host directory, so refuse instead. A remote daemon (DOCKER_HOST)
+  // without a host root cannot map anything at all.
+  const hostRoot = siblingHostRoot();
+  const remoteDaemon = (process.env.DOCKER_HOST ?? "").trim().startsWith("tcp://");
+  if (remoteDaemon && !hostRoot) {
+    return {
+      stdout: "",
+      stderr:
+        "Error: the docker daemon is remote (DOCKER_HOST) but CLAW2_SIBLING_HOST_ROOT is not set; skill sandbox binds cannot be mapped to host paths (fail-closed)",
+      exitCode: -1,
+    };
+  }
+  const mapToHost = (src: string): string | null => {
+    if (!hostRoot) return src;
+    if (src === "/app") return hostRoot;
+    if (src.startsWith("/app/")) return hostRoot + src.slice("/app".length);
+    return null;
+  };
+  const mountSpecs: Array<{ src: string; dst: string; opts: string }> = [
+    { src: agentsDir, dst: "/app/agents", opts: "ro" },
+    { src: outputDir, dst: "/app/output", opts: "" },
+    ...(options.uploadsDir ? [{ src: options.uploadsDir, dst: "/app/uploads", opts: "ro" }] : []),
+  ];
+  const volumeMounts: string[] = [];
+  for (const m of mountSpecs) {
+    const hostSrc = mapToHost(m.src);
+    if (hostSrc === null) {
+      return {
+        stdout: "",
+        stderr: `Error: cannot map skill sandbox mount "${m.src}" to a host path (CLAW2_SIBLING_HOST_ROOT=${hostRoot}); refusing to bind a wrong directory`,
+        exitCode: -1,
+      };
+    }
+    volumeMounts.push(`${hostSrc}:${m.dst}${m.opts ? ":" + m.opts : ""}`);
   }
 
   // Unique name: on timeout the container is killed by name — the CLI dying

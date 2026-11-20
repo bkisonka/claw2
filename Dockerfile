@@ -25,8 +25,12 @@ RUN cd pwa && npm run build
 FROM node:20-alpine AS runtime
 WORKDIR /app
 
+# docker CLI: the gateway launches every skill as a sibling container on the
+# host docker through a restricted API proxy (compose ships docker-socket-
+# proxy; DOCKER_HOST points at it). The gateway itself never sees the socket.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && \
+RUN apk add --no-cache docker-cli && \
+    npm ci --omit=dev && \
     npm install --no-save --omit=dev --no-audit --no-fund \
       "cheerio@^1.2.0" "rss-parser@^3.13.0" "mammoth@^1.8.0" "pdf-parse@^1.1.1" \
       "tesseract.js@^5.1.0" "xlsx@^0.18.5" "docx@^9.5.0"

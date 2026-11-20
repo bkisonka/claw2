@@ -1,6 +1,8 @@
 # claw2 — single-container deployment: gateway, web interface and mobile web client.
-# Configuration lives in .claw2/claw2.yaml, secrets in .env (see README).
-# Один контейнер: шлюз, веб-интерфейс и мобильный веб-клиент.
+# Skills run in the hard sandbox by default: as one-off sibling containers on
+# an isolated docker network (see "Security" in the README). Their only egress
+# point is the guard sidecar; the gateway reaches the host docker through a
+# restricted API proxy, never through the socket itself.
 # Конфигурация — в .claw2/claw2.yaml, секреты — в .env (см. README).
 
 services:
@@ -17,10 +19,15 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
+      # Hard skill sandbox (sibling containers): talk to the host docker via
+      # the restricted API proxy, and map container paths to host paths for
+      # sibling binds (${PWD} = the directory you run compose from).
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - CLAW2_SIBLING_HOST_ROOT=${PWD}
     volumes:
       - ./.claw2:/app/.claw2
       # data/ keeps chat databases when gateway.chatsDbPath points here;
-      # by default chats live under .claw2/. Same directory on the host —
+      # by default chats live inside .claw2/. Same directory on the host —
       # nothing is lost across rebuilds.
       # data/ хранит базы чатов, если gateway.chatsDbPath указывает сюда;
       # по умолчанию чаты живут внутри .claw2/. Каталог на хосте —
@@ -34,12 +41,48 @@ services:
       # Container time = host time (reminders and schedules).
       # Время в контейнере = время на хосте (напоминания и расписания).
       - /etc/localtime:/etc/localtime:ro
+    networks:
+      - default
+      # Only to reach the restricted docker API proxy.
+      # Только для доступа к ограниченному прокси docker API.
+      - sandbox-control
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    depends_on:
+      - docker-proxy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # Restricted docker API proxy: the gateway's docker CLI may manage skill
+  # sandbox containers/networks and nothing else — no mounts of arbitrary
+  # host paths, no daemon info beyond version, no swarm/volumes/images-push.
+  # Ограниченный прокси docker API: docker CLI шлюза управляет только
+  # контейнерами/сетями песочницы навыков — остальное запрещено.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: claw2-docker-proxy
+    environment:
+      # Deny by default; allow only what the skill sandbox needs.
+      - CONTAINERS=1
+      - EXEC=1
+      - IMAGES=1
+      - INFO=1
+      - NETWORKS=1
+      - SYSTEM=1
+      - LOGS=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - sandbox-control
+    restart: unless-stopped
+
+networks:
+  # Reachable only from the gateway container.
+  sandbox-control:
+    internal: true

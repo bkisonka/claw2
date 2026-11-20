@@ -159,11 +159,15 @@ Your configuration, conversations and memory live in mounted volumes
 
 Skills live in `agents/` as ordinary JavaScript files. The container mounts
 this directory, so you can add or edit skills on the host with any editor —
-the agent sees the changes on the next turn. Skills run in a hardened
-sandbox: a plain Node.js process with the `--permission` and `--no-addons`
-flags and a restricted environment, and their outbound traffic goes through
-the egress guard (see Security) — loopback, private and metadata
-destinations are unreachable from a skill by default.
+the agent sees the changes on the next turn. In this delivery every skill
+runs in the hard sandbox by default: as a one-off sibling container on an
+isolated docker network (no external route at all), whose only way out is
+the egress guard sidecar — loopback, private and metadata destinations are
+unreachable from a skill, and so is everything except the guard's rules
+(see Security). On a host installation without the compose stack, skills
+run in-process with the `--permission` and `--no-addons` flags and
+HTTP-stack-level guarding instead; `sandbox.useDocker: true` with a local
+docker gives the same hard isolation there.
 
 When the agent needs something no skill covers, it can write a new one —
 but a skill that is not on the allowlist (shipped in the example config)
@@ -198,15 +202,27 @@ with your own, its local `node_modules` (if present) takes precedence.
   loopback, private or link-local addresses (cloud metadata included), and
   re-checks every redirect hop. To let the agent reach your own LAN services,
   set `tools.webFetch.allowPrivateHosts: true`.
-- **Egress guard for skills.** Skills cannot bypass the fetch guard with
-  their own code: every skill's `fetch`/`http`/`https` is routed through an
-  SSRF-guard proxy (`sandbox.egress.mode: guard`, on by default) that blocks
-  the same destination classes and writes refusals to the audit log. In the
-  Docker sandbox the enforcement is kernel-level: the skill container runs
-  on an isolated network with no external route at all, and a dedicated
-  guard-proxy sidecar is its only way out. The non-Docker tier covers the
-  standard HTTP stacks; a skill speaking raw TLS over `node:net` is the
-  documented gap there — use the Docker sandbox when that matters.
+- **Egress guard for skills (hard by default).** The compose delivery runs
+  every skill as a one-off sibling container on an isolated docker network
+  with no external route — the enforcement is kernel-level, and a dedicated
+  guard-proxy sidecar is the container's only way out. Everything a skill
+  sends (`fetch`/`http`/`https`, and any raw socket too) passes the same
+  SSRF rules as `web_fetch`: loopback, private, link-local and metadata
+  destinations are refused and logged. Softening — running skills inside
+  the gateway container (`sandbox.useDocker: false`) or dropping the guard
+  (`sandbox.egress.mode: off`) — is possible but documented as an explicit,
+  at-your-own-risk change: without the sandbox tier, standard HTTP stacks
+  are still guarded, while a skill speaking raw TLS over `node:net` is a
+  known gap.
+- **Restricted docker access.** The gateway talks to the host docker only
+  through an API proxy that denies everything except the calls the skill
+  sandbox needs (container/network lifecycle, exec for health checks,
+  logs); the docker socket itself is never mounted into the gateway.
+  Stated plainly: a *fully compromised* gateway process could still abuse
+  the allowed container-create subset — that is the same trust boundary as
+  the gateway's own configuration file (which only the operator writes),
+  and it is why the skill sandbox exists at all: skill code, including
+  model-written skills, never gets that access.
 - **Verified identity.** Vision-based recognition ("who is at the camera")
   is trusted only when the recognition service signs its verdict with a
   shared secret (`vision.recognizeSecret`, HMAC + freshness window);
