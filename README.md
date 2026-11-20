@@ -25,6 +25,13 @@ container that serves both the web interface and the API.
   downloading files, reading PDF and DOCX documents, charts, weather and
   more. When no suitable skill exists, the agent can write a new one and
   start using it after your confirmation.
+- **Activation cache (optional).** Export the trajectory of a successful
+  deep conversation to a `.claw-cache` file and seed a new chat with it:
+  the new session starts in the rebuilt context contour of that topic
+  instead of a blank field. Managed in the cabinet's "Activation cache"
+  tab (export, import, per-chat selection); in the compose delivery keep
+  the cache directory inside the mounted `data/` volume (e.g.
+  `./data/claw-cache`) so caches survive rebuilds.
 - **Dialog stability (experimental).** A session-level controller tracks
   semantic entropy and coherence while the conversation unfolds; when the
   thread starts to drift it switches the model into a stricter answering
@@ -250,6 +257,13 @@ server; a SearXNG instance can serve as the search backend. These are
 ordinary external services: add them to `compose.yml`, point
 `gateway.databaseUrl` and `memory.chroma.url` at them, and restart. The
 reference deployment in the author's repository runs exactly this way.
+
+## Documentation
+
+The `docs/wiki/` directory carries the extended user guide in English and
+Russian — per-feature pages (activation cache, HSS dialog stabilizer,
+projects, dynamic sidebar) and how-tos: [docs/wiki/en](docs/wiki/en),
+[docs/wiki/ru](docs/wiki/ru).
 
 ## Source layout
 

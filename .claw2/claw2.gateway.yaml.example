@@ -65,6 +65,13 @@ gateway:
 #   enabled: true
 
 agentsDir: ./agents
+
+# Activation cache (.claw-cache): export/import the context trajectory of a
+# successful conversation and seed a new chat with it (cabinet → "Activation
+# cache"). Keep it inside the mounted data/ volume (compose) so caches
+# survive rebuilds. The directory may stay empty — the tab just lists files.
+orchestrator:
+  cacheStorePath: ./data/claw-cache
 # Skill allowlist: only these files are executable by the agent. The model can
 # draft a new skill, but running it needs your one-time confirmation — send
 # `/allow <name>.js` in the chat and it lands in this list. Remove the section
