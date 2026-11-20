@@ -47,11 +47,52 @@ async function probeGet(
     const body = await res.text().catch(() => "");
     return { ok: res.ok, status: res.status, body: body.slice(0, 240) };
   } catch (err) {
+    // Node's fetch collapses the real cause (ECONNREFUSED, ENOTFOUND, "bad
+    // port"…) into err.cause — surface it so the panel can say something
+    // useful instead of the bare "fetch failed".
+    const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
     return {
       ok: false,
       status: 0,
-      body: err instanceof Error ? err.message : String(err),
+      body: `${err instanceof Error ? err.message : String(err)}${cause?.code ? ` (${cause.code})` : ""}${cause?.message ? ` ${cause.message}` : ""}`,
     };
+  }
+}
+
+/**
+ * Structured connection errors: `conn:<id>:<code>[:<arg>]`. The client maps
+ * known codes to localized, human text ("LLM не подключена", …); unknown
+ * strings render as-is. Keep codes stable — they are a UI contract.
+ */
+export type ConnectionErrorCode = {
+  id: string;
+  code: string;
+  arg?: string;
+};
+
+export function parseConnectionErrorCode(
+  error: string | undefined
+): ConnectionErrorCode | null {
+  if (!error || !error.startsWith("conn:")) return null;
+  const parts = error.split(":");
+  if (parts.length < 3 || parts[0] !== "conn") return null;
+  const [, id, code] = parts;
+  const arg = parts.length > 3 ? parts.slice(3).join(":") : undefined;
+  return { id, code, arg };
+}
+
+function connError(id: string, code: string, arg?: string): string {
+  return arg ? `conn:${id}:${code}:${arg}` : `conn:${id}:${code}`;
+}
+
+function urlTarget(url: string): { host: string; port: string; target: string } | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    const port = u.port || (u.protocol === "https:" ? "443" : "80");
+    return { host, port, target: `${host}:${port}` };
+  } catch {
+    return null;
   }
 }
 
@@ -76,11 +117,7 @@ async function checkLlm(config: Claw2Config): Promise<ConnectionCheck> {
   const id = "llm";
   const assessed = assessLlmConfigured(config);
   if (!assessed.ok) {
-    return {
-      id,
-      status: "error",
-      error: assessed.reason || "LLM not configured",
-    };
+    return { id, status: "error", error: connError(id, "not_configured") };
   }
   const baseURL = assessed.baseURL!;
   const apiKey = config.llm?.apiKey?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
@@ -90,7 +127,29 @@ async function checkLlm(config: Claw2Config): Promise<ConnectionCheck> {
   else if (assessed.localEndpoint) headers.Authorization = "Bearer ollama";
   const probe = await probeGet(modelsUrl, { headers });
   if (!probe.ok) {
-    return { id, status: "error", error: errText(probe, "LLM unreachable") };
+    // Structured codes: the client renders localized human text
+    // ("LLM не подключена", "неверный API-ключ (401)", …).
+    if (probe.status > 0) {
+      if (probe.status === 401 || probe.status === 403) {
+        return { id, status: "error", error: connError(id, "bad_key") };
+      }
+      if (probe.status === 404) {
+        return { id, status: "error", error: connError(id, "bad_path") };
+      }
+      return { id, status: "error", error: connError(id, "server_error", String(probe.status)) };
+    }
+    const raw = probe.body.toLowerCase();
+    const t = urlTarget(modelsUrl);
+    if (raw.includes("econnrefused") || raw.includes("bad port")) {
+      return { id, status: "error", error: connError(id, "no_listener", t?.target) };
+    }
+    if (raw.includes("enotfound") || raw.includes("getaddrinfo")) {
+      return { id, status: "error", error: connError(id, "unknown_host", t?.host) };
+    }
+    if (raw.includes("timeout") || raw.includes("abort")) {
+      return { id, status: "error", error: connError(id, "timeout", String(TIMEOUT_MS / 1000)) };
+    }
+    return { id, status: "error", error: connError(id, "no_connection", t?.target) };
   }
   return { id, status: "ok", detail: config.llm?.model?.trim() || undefined };
 }

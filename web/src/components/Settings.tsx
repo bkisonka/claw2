@@ -24,6 +24,28 @@ import { IconClose } from "./icons";
 
 const MASK = "***";
 
+type ConnTranslate = (key: Parameters<ReturnType<typeof useI18n>["t"]>[0], vars?: Record<string, string | number>) => string;
+
+function localizeConnectionError(
+  error: string | undefined,
+  t: ConnTranslate
+): string | undefined {
+  if (!error) return undefined;
+  if (!error.startsWith("conn:")) return error;
+  const parts = error.split(":");
+  if (parts.length < 3 || parts[0] !== "conn") return error;
+  const [, , code] = parts;
+  const arg = parts.length > 3 ? parts.slice(3).join(":") : undefined;
+  // Gateway codes are snake_case (no_listener); i18n keys are camelCase.
+  const camel = code.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const key = `settings.connLlm.${camel}`;
+  try {
+    return arg ? t(key as never, { arg }) : t(key as never);
+  } catch {
+    return error;
+  }
+}
+
 function ConnectionIndicator({
   check,
   loading,
@@ -42,12 +64,16 @@ function ConnectionIndicator({
   }
   if (!check) return null;
   const status = check.status;
+  // Structured gateway codes (conn:<id>:<code>[:<arg>]) render localized
+  // human text ("LLM не подключена", "неверный API-ключ (401)", …);
+  // unrecognized strings show as-is.
+  const localizedError = localizeConnectionError(check.error, t);
   const title =
     status === "ok"
       ? check.detail || t("settings.connOk")
       : status === "off"
         ? check.error || t("settings.connOff")
-        : check.error || t("settings.connError");
+        : localizedError || t("settings.connError");
   return (
     <span
       className={`conn-status conn-status--${status}`}
@@ -56,8 +82,8 @@ function ConnectionIndicator({
       aria-label={title}
     >
       <span className="conn-dot" aria-hidden />
-      {status === "error" && check.error ? (
-        <span className="conn-status-text">{check.error}</span>
+      {status === "error" && localizedError ? (
+        <span className="conn-status-text">{localizedError}</span>
       ) : null}
     </span>
   );
