@@ -168,7 +168,7 @@ function normalizeHostFs(
 /**
  * Loads config from YAML. Secrets are substituted from env (values ​​like env:VAR_NAME).
  */
-export function loadConfig(overridePath?: string): Claw2Config {
+export function loadConfigRaw(overridePath?: string): Claw2Config {
   ensureEnvLoaded();
   const path = overridePath ?? getConfigPath();
   let raw: Record<string, unknown> = {};
@@ -182,10 +182,19 @@ export function loadConfig(overridePath?: string): Claw2Config {
     console.error("[config] Config empty or invalid, using defaults. Check path and YAML syntax.");
   }
   const resolved = resolveObject(raw) as Partial<Claw2Config>;
-  const config = mergeConfig(resolved);
-  // Container delivery: operator-written loopback URLs (127.0.0.1/localhost)
-  // point at host services the container cannot reach — map them once, at
-  // load time, for every consumer and every hot-reload.
+  return mergeConfig(resolved);
+}
+
+/**
+ * Effective config for the running process. In the containerized delivery
+ * this maps operator-written loopback URLs (127.0.0.1/localhost) to
+ * host.docker.internal (config/container-net.ts); the stored YAML keeps the
+ * operator's portable form. UI surfaces that EDIT the config should read
+ * loadConfigRaw() — the unmapped, portable form — while runtime consumers
+ * use this one.
+ */
+export function loadConfig(overridePath?: string): Claw2Config {
+  const config = loadConfigRaw(overridePath);
   normalizeContainerServiceUrls(config);
   return config;
 }

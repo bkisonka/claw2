@@ -8,7 +8,7 @@ import { dirname, join, relative, resolve, extname, isAbsolute } from "node:path
 import { saveUploadedDocuments, type IncomingDocument } from "./documents.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Claw2Config } from "../config/types.js";
-import { getConfigPath, loadConfig } from "../config/load.js";
+import { getConfigPath, loadConfig, loadConfigRaw } from "../config/load.js";
 import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
 import { composeWebchatUserPayload, formatBrowserSelectionForHistory, type BrowserPageContext } from "../security/content-boundary.js";
@@ -2873,11 +2873,14 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             source = "db";
           } else {
             // There is no config in the database - we give the file one as a template to be filled in in the settings.
-            payload = maskSecrets(config) as Record<string, unknown>;
+            // RAW form (loadConfigRaw): the UI edits and stores the operator's
+            // portable 127.0.0.1 form; loopback→host.docker.internal mapping
+            // happens only in loadConfig for runtime consumers.
+            payload = maskSecrets(loadConfigRaw(getConfigPath())) as Record<string, unknown>;
             source = "file";
           }
         } else {
-          payload = maskSecrets(config) as Record<string, unknown>;
+          payload = maskSecrets(loadConfigRaw(getConfigPath())) as Record<string, unknown>;
         }
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ ...payload, _source: source }));
