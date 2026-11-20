@@ -1,4 +1,5 @@
 import { getAuthHeaders } from "../auth/storage";
+import { apiKey } from "../config";
 
 export type SidebarItemAction = "prompt" | "navigate" | "url";
 
@@ -43,7 +44,7 @@ export interface DynamicSidebarState {
 export async function fetchSidebar(sessionId: string): Promise<DynamicSidebarState> {
   const q = encodeURIComponent(sessionId || "anon");
   const res = await fetch(`/api/sidebar?sessionId=${q}`, {
-    headers: { ...getAuthHeaders() },
+    headers: apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}`, ...getAuthHeaders() } : { ...getAuthHeaders() },
   });
   if (!res.ok) throw new Error(`sidebar HTTP ${res.status}`);
   return (await res.json()) as DynamicSidebarState;
@@ -56,7 +57,7 @@ export async function clickSidebarItem(
 ): Promise<DynamicSidebarState> {
   const res = await fetch("/api/sidebar/click", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+    headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` } : {}), ...getAuthHeaders() },
     body: JSON.stringify({ sessionId: sessionId || "anon", itemId }),
   });
   if (!res.ok) {

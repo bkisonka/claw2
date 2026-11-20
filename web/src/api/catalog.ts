@@ -1,4 +1,4 @@
-import { apiBase } from "../config";
+import { apiBase, apiKey } from "../config";
 import { getAuthHeaders } from "../auth/storage";
 
 export interface CatalogCache {
@@ -21,7 +21,7 @@ async function readError(res: Response): Promise<string> {
 
 export async function getCatalogCaches(): Promise<CatalogCache[]> {
   const res = await fetch(`${apiBase}/api/catalog/caches`, {
-    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` } : {}), ...getAuthHeaders() },
   });
   if (res.status === 401) throw new Error("auth_required");
   if (!res.ok) throw new Error(await readError(res));
@@ -33,7 +33,7 @@ export async function getCatalogCaches(): Promise<CatalogCache[]> {
 export async function importCatalogCache(sourcePath: string): Promise<CatalogCache> {
   const res = await fetch(`${apiBase}/api/catalog/caches/import`, {
     method: "POST",
-    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` } : {}), ...getAuthHeaders() },
     body: JSON.stringify({ sourcePath }),
   });
   if (!res.ok) throw new Error(await readError(res));
@@ -45,7 +45,7 @@ export async function importCatalogCache(sourcePath: string): Promise<CatalogCac
 export async function renameCatalogCache(fileName: string, name: string): Promise<CatalogCache> {
   const res = await fetch(`${apiBase}/api/catalog/caches`, {
     method: "PATCH",
-    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` } : {}), ...getAuthHeaders() },
     body: JSON.stringify({ file_name: fileName, name }),
   });
   if (!res.ok) throw new Error(await readError(res));
@@ -57,7 +57,7 @@ export async function renameCatalogCache(fileName: string, name: string): Promis
 export async function deleteCatalogCache(fileName: string): Promise<void> {
   const res = await fetch(`${apiBase}/api/catalog/caches`, {
     method: "DELETE",
-    headers: { ...getAuthHeaders(), "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(apiKey ? { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` } : {}), ...getAuthHeaders() },
     body: JSON.stringify({ file_name: fileName }),
   });
   if (!res.ok) throw new Error(await readError(res));
