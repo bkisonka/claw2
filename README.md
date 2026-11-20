@@ -260,11 +260,12 @@ reference deployment in the author's repository runs exactly this way.
 
 ## Documentation
 
-The `docs/wiki/` directory carries the extended user guide in wiki format,
-in English and Russian — per-feature pages (activation cache, HSS dialog
-stabilizer, projects, dynamic sidebar) and how-tos. Entry pages:
-[docs/wiki/en/Home.md](docs/wiki/en/Home.md),
-[docs/wiki/ru/Home.md](docs/wiki/ru/Home.md).
+The extended user guide ships in wiki format, in English and Russian —
+per-feature pages (activation cache, HSS dialog stabilizer, projects,
+dynamic sidebar) and how-tos. In a running delivery the gateway serves it
+itself: open **/wiki/** on your instance (the "Help" link in the cabinet
+leads there). In this repository the same pages live under
+[docs/wiki/](docs/wiki/en/Home.md) / [docs/wiki/ru/](docs/wiki/ru/Home.md).
 
 ## Source layout
 
