@@ -285,3 +285,9 @@ the copyright holder. See [LICENSE](LICENSE) (English, canonical) and
 [LICENSE.ru.md](LICENSE.ru.md) (Russian translation), applied together with
 the end-user agreement [EULA.txt](EULA.txt). Third-party open-source
 components keep their own licenses — see [NOTICE](NOTICE).
+
+The HSS core (`hss.cjs` — the dialog-stability state model) is deliberately
+licensed separately under [LGPL-3.0-or-later](LICENSE-HSS.md): it may be
+studied, modified and redistributed on LGPL terms, and modified versions
+must remain LGPL — improvements to the core are expected to come back to
+the project. Everything else remains under the proprietary license above.

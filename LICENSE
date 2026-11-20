@@ -41,12 +41,21 @@ Software from your systems.
    e) use the name "claw2" or the name of the copyright holder to promote or
       endorse products derived from the Software.
 
-3. Third-party components
+3. Third-party components and separately licensed files
 
    The Software builds on third-party components distributed under their own
    open-source licenses. Nothing in this license restricts the rights those
    licenses grant directly. The NOTICE file lists the notable components and
    their licenses.
+
+   The file `hss.cjs` (the HSS core — the dialog-stability state model) is
+   licensed separately under GNU LGPL-3.0-or-later; see LICENSE-HSS.md.
+   Nothing in this license restricts the rights LGPL-3.0 grants for that
+   file: it may be studied, modified and redistributed on LGPL-3.0 terms,
+   and modified versions of it must in turn remain under LGPL-3.0.
+   Contributions to this file are accepted under LGPL-3.0, so improvements
+   to the core come back to the project. All other files of the Software
+   remain under this license.
 
 4. No warranty
 
