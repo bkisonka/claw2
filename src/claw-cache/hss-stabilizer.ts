@@ -82,7 +82,17 @@ function getHss(config?: Claw2Config): HssModule | null {
   return hssModule;
 }
 
-const COHERENCE_IMMORTAL_MIN = 0.8;
+const COHERENCE_SETTLED_MIN = 0.8;
+
+/**
+ * Master switch for the dialog-stability layer: `orchestrator.hss.enabled`
+ * (default true). False disables session-state evolution, chronicle recall
+ * and the response-mode addendum — the ablation/opt-out path.
+ */
+export function isHssEnabled(config?: Claw2Config): boolean {
+  return config?.orchestrator?.hss?.enabled !== false;
+}
+
 export const DEFAULT_HSS_ENTROPY_DELTA_STABILIZE_MIN = 0.0015;
 export const DEFAULT_HSS_CONTEXT_CHUNK_SIZE = 400;
 export const DEFAULT_HSS_CONTEXT_CHUNK_MIN_LEN = 600;
@@ -119,7 +129,7 @@ export function getHssNodeStoreSizeForTests(): number {
 export interface HssState {
   coherence: number;
   status: "STABLE" | "FRAGMENTED";
-  immortal: boolean;
+  settled: boolean;
   entropy: number;
   entropyDelta: number;
   maxChunkEntropyDelta?: number;
@@ -212,7 +222,7 @@ function measureNodeState(node: {
   return {
     coherence: typeof coherence === "number" ? coherence : 0,
     status,
-    immortal: status === "STABLE" && (typeof coherence === "number" ? coherence > COHERENCE_IMMORTAL_MIN : false),
+    settled: status === "STABLE" && (typeof coherence === "number" ? coherence > COHERENCE_SETTLED_MIN : false),
     entropy,
     entropyDelta: entropy - prevEntropy,
   };
@@ -605,6 +615,7 @@ export async function evolveHssAndGetState(
   options?: { llmClient?: OpenAI }
 ): Promise<HssState | null> {
   const conf = config ?? ({} as Claw2Config);
+  if (!isHssEnabled(conf)) return null;
   const entry = await getOrCreateNode(sessionId, cacheId, conf);
   if (!entry) return null;
 
@@ -759,8 +770,8 @@ export async function evolveHssAndGetState(
   const inv = node.check_topological_invariant();
   const coherence = node.measure_coherence ? node.measure_coherence() : (inv as { trace?: number }).trace ?? 0;
   const status = (inv.status === "STABLE" ? "STABLE" : "FRAGMENTED") as "STABLE" | "FRAGMENTED";
-  const immortal =
-    status === "STABLE" && (typeof coherence === "number" ? coherence > COHERENCE_IMMORTAL_MIN : false);
+  const settled =
+    status === "STABLE" && (typeof coherence === "number" ? coherence > COHERENCE_SETTLED_MIN : false);
   const entropy = typeof evolveResult?.S === "number" ? evolveResult.S : (last?.entropy ?? 0);
 
   if (fieldEnabled && contextEmbedding?.length) {
@@ -809,8 +820,8 @@ export async function evolveHssAndGetState(
       contextChunkSize: getHssContextChunkSize(conf),
       contextChunkMinLen: getHssContextChunkMinLen(conf),
       status,
-      immortal,
-      immortalThreshold: COHERENCE_IMMORTAL_MIN,
+      settled,
+      settledThreshold: COHERENCE_SETTLED_MIN,
       chronicleSizeBefore,
       chronicleSizeAfter,
       chronicleConfigured: isChronicleChromaConfigured(conf),
@@ -838,7 +849,7 @@ export async function evolveHssAndGetState(
   return {
     coherence: typeof coherence === "number" ? coherence : 0,
     status,
-    immortal,
+    settled,
     entropy,
     entropyDelta,
     maxChunkEntropyDelta,
@@ -867,6 +878,7 @@ export async function appendModelChronicleEntry(
 ): Promise<{ ok: boolean; id?: string; reason?: string }> {
   const trimmed = text?.trim();
   if (!trimmed) return { ok: false, reason: "empty_text" };
+  if (!isHssEnabled(config)) return { ok: false, reason: "hss_disabled" };
 
   const hss = getHss(config);
   if (!hss?.ChronicleEntry) return { ok: false, reason: "hss_unavailable" };

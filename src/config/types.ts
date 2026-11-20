@@ -125,6 +125,12 @@ export interface Claw2Config {
     /** HSS log file (evolution, chronicle, prompt hint). Empty - only the console.*/
     hssLogPath?: string | null;
     hssLogFormat?: "text" | "json";
+    /**
+     * Master switch for the dialog-stability layer (HSS): session-state
+     * evolution, chronicle recall and the response-mode addendum.
+     * Default true; set false to disable entirely (ablation / opt-out).
+     */
+    hss?: { enabled?: boolean };
     /** Entropy >= threshold → stabilize mode (legacy, see hssEntropyDeltaStabilizeMin).*/
     hssEntropyStabilizeMin?: number;
     /** Δ entropy >= threshold → stabilize mode. Default is 0.0015.*/

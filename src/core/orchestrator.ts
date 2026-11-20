@@ -723,7 +723,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         restoredFromChronicle: hssState.restoredFromChronicle,
         entropyDeltaStabilizeMin: getHssEntropyDeltaStabilizeMin(config),
         status: hssState.status,
-        immortal: hssState.immortal,
+        settled: hssState.settled,
         pendingStatus: pendingHssHint?.status,
       },
       config
@@ -744,7 +744,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         restoredFromChronicle: hssState.restoredFromChronicle,
         entropyDeltaStabilizeMin: getHssEntropyDeltaStabilizeMin(config),
         status: hssState.status,
-        immortal: hssState.immortal,
+        settled: hssState.settled,
         pendingStatus: pendingHssHint?.status,
         contextLen: hssContext.length,
       },

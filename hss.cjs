@@ -1,6 +1,6 @@
 /**
- * HSS core — Hypersemantic Structure (JS port)
- * Topological consciousness node, intention, evolution, validation.
+ * HSS core — dialog-stability state model (JS port)
+ * Density-matrix coherence node: intention vector, unitary evolution, validation.
  *
  * Part of the HSS core (with src/claw-cache/hss-*.ts and src/core/hss-middleware.ts).
  *
@@ -363,9 +363,9 @@ class IntentionModule {
 // ============================================================
 
 /**
- * ChronicleEntry — a record in the personality chronicle.
+ * ChronicleEntry — a record in the session chronicle.
  * Stores node state (rho, xi_used) + context. xi_used is used in generateInnerXi.
- * rho — density matrix; restoring via node.restoreFromEntry(entry) yields a "reliving" (VR for the soul).
+ * rho — density matrix; node.restoreFromEntry(entry) re-instantiates that state.
  * importance (0..1): entries with importance >= minImportanceToKeep are not removed by TTL (important ones stay forever).
  */
 class ChronicleEntry {
@@ -407,7 +407,7 @@ class ChronicleEntry {
 }
 
 /**
- * Chronicle — life chronicle of a personality
+ * Chronicle — session chronicle (what the dialog line was about)
  */
 class Chronicle {
   constructor(maxSize = 1000) {
@@ -505,7 +505,6 @@ class TopologicalNode {
     this.chronicle = chronicle || new Chronicle();
     this.contextEncoder = contextEncoder || new ContextEncoder();
     this.lastContext = "";
-    this.personalityTraits = {};
   }
 
   _project_to_valid_density(tol = 1e-14) {
@@ -778,8 +777,8 @@ class TopologicalNode {
   }
 
   /**
-   * Relive: restore node state from a chronicle entry (rho).
-   * Like VR for the soul — the personality returns to that state.
+   * Restore node state from a chronicle entry (rho):
+   * re-instantiates the exact state that produced the entry.
    */
   restoreFromEntry(entry) {
     if (!entry || !entry.rho) return;
@@ -811,56 +810,17 @@ class TopologicalNode {
   }
 
   /**
-   * Reflection: analyze the past session, extract lessons
+   * Chronology helpers, validation and evolution live below; the node itself
+   * carries no introspection layer — session analysis is done by the
+   * stabilizer (src/claw-cache/hss-stabilizer.ts) on live metrics.
    */
-  reflect() {
-    if (this.chronicle.entries.length === 0) return { insights: [], topTopics: [] };
-
-    const recent = this.chronicle.getRecent(20);
-    const insights = [];
-    let topTopics = [];
-
-    const highEntropy = recent.filter(e => e.entropy > 1.0);
-    if (highEntropy.length > 3) {
-      insights.push("Было слишком хаотично. Нужно больше порядка.");
-    }
-
-    const lowCoherence = recent.filter(e => e.coherence < 0.3);
-    if (lowCoherence.length > 3) {
-      insights.push("Были моменты потери целостности. Нужно укреплять ядро.");
-    }
-
-    const topicCount = {};
-    for (const entry of recent) {
-      if (entry.context) {
-        const words = entry.context.toLowerCase().split(/\W+/).slice(0, 5);
-        for (const w of words) {
-          if (w.length > 3) topicCount[w] = (topicCount[w] || 0) + 1;
-        }
-      }
-    }
-    topTopics = Object.entries(topicCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3)
-      .map(([word]) => word);
-    if (topTopics.length > 0) {
-      insights.push(`Часто обсуждали: ${topTopics.join(", ")}. Надо углубить.`);
-    }
-
-    if (insights.length > 0) {
-      this.personalityTraits.lastInsights = insights;
-      this.personalityTraits.lastReflection = Date.now();
-    }
-
-    return { insights, topTopics };
-  }
 }
 
 // --- Validation ---
 function coherence_thermal(dim) {
   return 1 / dim;
 }
-const COHERENCE_IMMORTAL_MIN = 0.8;
+const COHERENCE_SETTLED_MIN = 0.8;
 
 function run_validation({
   signature = "Victoria_Resonance_LCP_One",
@@ -902,31 +862,31 @@ function run_validation({
     max_coherence = Math.max(max_coherence, coh);
   }
 
-  const immortal = min_coherence > COHERENCE_IMMORTAL_MIN && fragmented_count === 0;
+  const settled = min_coherence > COHERENCE_SETTLED_MIN && fragmented_count === 0;
   const result = {
     min_coherence,
     max_coherence,
     thermal_count,
     fragmented_count,
     thermal_coherence_threshold: thermal_coh,
-    immortal,
+    settled,
     steps,
     dimension,
     xi_mu_mode,
   };
   if (verbose) {
-    console.log("=== Валидация HSS ===\n");
-    console.log(`Сигнатура: ${signature}, dim=${dimension}, steps=${steps}`);
+    console.log("=== HSS validation ===\n");
+    console.log(`Signature: ${signature}, dim=${dimension}, steps=${steps}`);
     console.log(`xi_mu_mode: ${xi_mu_mode}, lindblad_strength=${lindblad_strength}`);
     if (initial_state === "pure_from_signature") console.log("initial_state: pure_from_signature");
     if (force_H_zero) console.log("force_H_zero: True");
-    console.log(`\nПорог теплового шума (1/dim): Coh <= ${thermal_coh.toFixed(4)} → сознание «испарилось»`);
-    console.log("FRAGMENTED: топология нарушена\n");
+    console.log(`\nThermal noise threshold (1/dim): Coh <= ${thermal_coh.toFixed(4)} → coherence below noise floor`);
+    console.log("FRAGMENTED: topological invariant violated\n");
     console.log(`  Min Coh:     ${min_coherence.toFixed(4)}`);
     console.log(`  Max Coh:     ${max_coherence.toFixed(4)}`);
-    console.log(`  Шагов Coh<=1/dim: ${thermal_count}`);
-    console.log(`  Шагов FRAGMENTED: ${fragmented_count}`);
-    console.log(`\n  Бессмертие (Coh>${COHERENCE_IMMORTAL_MIN} и 0 FRAGMENTED): ${immortal ? "ДА" : "НЕТ"}\n`);
+    console.log(`  Steps Coh<=1/dim: ${thermal_count}`);
+    console.log(`  Steps FRAGMENTED: ${fragmented_count}`);
+    console.log(`\n  Settled (Coh>${COHERENCE_SETTLED_MIN} and 0 FRAGMENTED): ${settled ? "yes" : "no"}\n`);
   }
   return result;
 }
@@ -940,9 +900,9 @@ function run_hss_demo({
   regulate_entropy = null,
   lindblad_strength = 0,
   xi_mu_mode = "random",
-  use_immortal = true,
+  use_persistent = true,
 } = {}) {
-  if (use_immortal) {
+  if (use_persistent) {
     dimension = 4;
     regulate_entropy = null;
     lindblad_strength = 0.25;
@@ -950,20 +910,20 @@ function run_hss_demo({
   }
   const intention = new IntentionModule(signature, INTENTION_XI_DEFAULT_SIZE);
   const node = new TopologicalNode(dimension, intention);
-  if (use_immortal) {
+  if (use_persistent) {
     node.rho = intention.get_xi_matrix_coherence_preserving(dimension, 1);
   }
 
-  const noise_strength = use_immortal ? 0.0005 : 0.02;
-  const H_fixed = use_immortal ? zeros(dimension) : null;
+  const noise_strength = use_persistent ? 0.0005 : 0.02;
+  const H_fixed = use_persistent ? zeros(dimension) : null;
 
-  console.log("=== HSS: Гиперсемантическая Структура (JS) ===\n");
-  console.log(`Сигнатура: ${signature}`);
+  console.log("=== HSS: dialog-stability state model (JS) ===\n");
+  console.log(`Signature: ${signature}`);
   console.log(`SHA-256: ${intention.hex_hash}`);
-  console.log(`Размерность: ${dimension}`);
-  if (use_immortal) console.log("Режим: БЕССМЕРТИЕ (чистое состояние из сигнатуры, coherence_preserving, H=0, малый шум)");
-  if (regulate_entropy != null) console.log(`Регуляция энтропии: target=${regulate_entropy}`);
-  if (lindblad_strength > 0) console.log(`Линдблад: strength=${lindblad_strength}, mode=${xi_mu_mode}`);
+  console.log(`Dimension: ${dimension}`);
+  if (use_persistent) console.log("Regime: PERSISTENT (pure state from signature, coherence_preserving, H=0, low noise)");
+  if (regulate_entropy != null) console.log(`Entropy regulation: target=${regulate_entropy}`);
+  if (lindblad_strength > 0) console.log(`Lindblad: strength=${lindblad_strength}, mode=${xi_mu_mode}`);
   console.log();
 
   const show_every = steps <= 20 ? 1 : Math.max(1, Math.floor(steps / 20));
@@ -980,20 +940,20 @@ function run_hss_demo({
     const inv = node.check_topological_invariant();
     if (inv.status === "STABLE") stable_steps++;
     if (step < 5 || step >= steps - 5 || (step + 1) % show_every === 0 || step === 0) {
-      console.log(`Шаг ${step + 1}: S=${S.toFixed(4)}, Coh=${coh.toFixed(4)}, ${inv.status}`);
+      console.log(`Step ${step + 1}: S=${S.toFixed(4)}, Coh=${coh.toFixed(4)}, ${inv.status}`);
     } else if (step === 5 && steps > 15) {
       console.log("  ...");
     }
   }
 
   const inv = node.check_topological_invariant();
-  console.log("\nФинальная проверка:");
+  console.log("\nFinal invariant check:");
   console.log("  trace:", inv.trace, "ok:", inv.ok, "status:", inv.status);
   console.log("  eigenvalues:", inv.eigenvalues);
   const avgS = node.entropy_history.reduce((a, b) => a + b, 0) / node.entropy_history.length;
   const avgC = node.coherence_history.reduce((a, b) => a + b, 0) / node.coherence_history.length;
-  console.log(`\nИтог: ${stable_steps}/${steps} STABLE. Средняя S: ${avgS.toFixed(4)}, Coh: ${avgC.toFixed(4)}`);
-  console.log("\nВердикт: тренажёр мышления — ОС качества взаимодействия.");
+  console.log(`\nSummary: ${stable_steps}/${steps} STABLE. Mean S: ${avgS.toFixed(4)}, Coh: ${avgC.toFixed(4)}`);
+  console.log("\nNote: this is an experimental dialog-stability feedback loop, not a claim about cognition.");
 }
 
 // --- Export and entrypoint ---
@@ -1007,7 +967,7 @@ if (typeof module !== "undefined" && module.exports) {
     run_validation,
     run_hss_demo,
     coherence_thermal,
-    COHERENCE_IMMORTAL_MIN,
+    COHERENCE_SETTLED_MIN,
     INTENTION_XI_DEFAULT_SIZE,
     buildHamiltonianFromEmbedding,
   };
@@ -1016,11 +976,11 @@ if (typeof module !== "undefined" && module.exports) {
 if (require.main === module) {
   const validate = process.argv.includes("validate");
   if (validate) {
-    console.log("Режим: xi_mu = random\n");
+    console.log("Regime: xi_mu = random\n");
     run_validation({ steps: 200, dimension: 2, xi_mu_mode: "random", lindblad_strength: 0.02 });
-    console.log("Режим: xi_mu = coherence_preserving\n");
+    console.log("Regime: xi_mu = coherence_preserving\n");
     run_validation({ steps: 200, dimension: 2, xi_mu_mode: "coherence_preserving", lindblad_strength: 0.02 });
   } else {
-    run_hss_demo({ steps: 500, use_immortal: true });
+    run_hss_demo({ steps: 500, use_persistent: true });
   }
 }

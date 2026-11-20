@@ -12,6 +12,7 @@ import {
   type ChronicleRecallHit,
 } from "./chronicle-chroma.js";
 import { hssLog } from "./hss-log.js";
+import { isHssEnabled } from "./hss-stabilizer.js";
 import { sanitizeForChroniclePrompt } from "./prompt-leak-sanitize.js";
 
 export interface ChronicleRecallResult {
@@ -45,7 +46,7 @@ export async function recallChronicleForPrompt(
   query: string,
   options?: { limit?: number }
 ): Promise<ChronicleRecallResult> {
-  if (!isChronicleRecallEnabled(config) || !query.trim()) {
+  if (!isHssEnabled(config) || !isChronicleRecallEnabled(config) || !query.trim()) {
     return { hits: [], promptBlock: "" };
   }
 
@@ -93,7 +94,7 @@ export async function searchChronicleSession(
   query: string,
   limit?: number
 ): Promise<ChronicleRecallHit[]> {
-  if (!isChronicleChromaConfigured(config) || !query.trim()) return [];
+  if (!isHssEnabled(config) || !isChronicleChromaConfigured(config) || !query.trim()) return [];
   const queryEmbedding = await getEmbedding(client, config, query);
   return recallChronicleEntries(config, sessionId, cacheId, queryEmbedding, {
     limit: limit ?? config.orchestrator?.hssChronicleRecall?.maxEntries ?? 5,

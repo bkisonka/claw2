@@ -88,6 +88,16 @@ async function main() {
     o: { config?: Claw2Config; evolveOpts?: Record<string, unknown> } = {}
   ) => evolveHssAndGetState(SESSION, "default", text, o.config ?? config, o.evolveOpts ?? {});
 
+  await test("evolve: master switch (orchestrator.hss.enabled: false) disables the layer", async () => {
+    const configOff = {
+      orchestrator: { hss: { enabled: false } },
+    } as unknown as Claw2Config;
+    releaseHssSession(SESSION);
+    const state = await evolveHssAndGetState(SESSION, "default", "любой ход", configOff, {});
+    assert.equal(state, null, "disabled HSS must return null (no session state, no prompt addendum)");
+    releaseHssSession(SESSION);
+  });
+
   await test("evolve: first turn is calibration with zero effectiveDelta", async () => {
     releaseHssSession(SESSION);
     const state = await runTurn("Привет, как дела?");

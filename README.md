@@ -25,6 +25,12 @@ container that serves both the web interface and the API.
   downloading files, reading PDF and DOCX documents, charts, weather and
   more. When no suitable skill exists, the agent can write a new one and
   start using it after your confirmation.
+- **Dialog stability (experimental).** A session-level controller tracks
+  semantic entropy and coherence while the conversation unfolds; when the
+  thread starts to drift it switches the model into a stricter answering
+  mode and recalls what the session was about. Every threshold is a
+  visible config number and the whole layer can be disabled for a
+  before/after comparison (`orchestrator.hss.enabled`).
 - **Long-term memory.** The agent remembers facts between conversations and
   recalls the relevant ones before each answer. Memory is stored locally.
 - **Scheduler and reminders.** Skills can run on a schedule, in the classic
