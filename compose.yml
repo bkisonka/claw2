@@ -10,6 +10,11 @@ services:
     build: .
     image: claw2:latest
     container_name: claw2
+    # Start as root: the entrypoint (docker-entrypoint.sh) fixes ownership of
+    # the bind mounts (Docker auto-creates ./data as root on the first
+    # `compose up`) and then drops to node via gosu — application code never
+    # runs as root. Skill sibling containers keep the image's non-root USER.
+    user: "0"
     ports:
       # Loopback only. To serve other devices: "8080:3000" — and enable
       # gateway.auth first (see README, "Security").

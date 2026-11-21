@@ -74,12 +74,23 @@ ENV CLAW2_PWA_PATH=/app/pwa/dist
 ENV CLAW2_WIKI_PATH=/app/wiki
 ENV CLAW2_CONFIG_PATH=/app/.claw2/claw2.yaml
 
-# Non-root: the gateway (and sibling skill containers built from this image)
-# run as node (uid 1000). Mounted host dirs (.claw2, data, agents) must be
-# writable by uid 1000 — true for Docker Desktop and the typical first user
-# on Linux hosts; chown them once if your host layout differs.
+# gosu: the entrypoint (docker-entrypoint.sh) starts as root only to fix the
+# ownership of bind mounts, then drops to `node` — application code never
+# runs as root.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Default (non-root): sibling skill containers built from this image and
+# standalone `docker run` use this user, so their entrypoint run skips the
+# root branch and just execs the command. The compose gateway overrides it
+# with `user: "0"` so the entrypoint can chown the bind mounts (Docker
+# auto-creates ./data as root on the first `compose up`) before dropping
+# back to node (uid 1000).
 USER node
 
 EXPOSE 3000
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "dist/gateway/cli.js"]
