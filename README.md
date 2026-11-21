@@ -21,6 +21,11 @@ The distribution format is source code for self-hosting: a Linux machine
 with Docker is all that is required, and a single container serves both
 the web interface and the API.
 
+<p align="center">
+  <img src="docs/screenshots/chat.png" width="49%" alt="claw2 chat window: a conversation with the agent" />
+  <img src="docs/screenshots/settings.png" width="49%" alt="claw2 settings: cabinet with LLM, voice, memory and security sections" />
+</p>
+
 ## Quick start
 
 ```bash

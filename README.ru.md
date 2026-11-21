@@ -22,6 +22,11 @@ Node.js, который он может написать сам и выполн�
 достаточно машины под Linux с Docker, а один контейнер обслуживает и
 веб-интерфейс, и API.
 
+<p align="center">
+  <img src="docs/screenshots/chat.png" width="49%" alt="Окно чата claw2: диалог с агентом" />
+  <img src="docs/screenshots/settings.png" width="49%" alt="Настройки claw2: кабинет с секциями LLM, голос, память и безопасность" />
+</p>
+
 ## Быстрый старт
 
 ```bash
