@@ -310,8 +310,8 @@ and modified versions must remain LGPL — improvements to the core are
 expected to come back to the project.
 
 Third-party open-source components keep their own licenses — see
-[NOTICE](NOTICE). Contributions are accepted under AGPL-3.0-only with
-no CLA — see [CONTRIBUTING.md](CONTRIBUTING.md). Commercial licensing is
-also available on request — contact the copyright holder via the repository.
+[NOTICE](NOTICE). Contributions are licensed under AGPL-3.0-only via CLA —
+see [CONTRIBUTING.md](CONTRIBUTING.md) for how to sign. Commercial licensing
+is also available on request — contact the copyright holder via the repository.
 The name "claw2" and the project logos are trademarks of Vitaliy Bondar;
 the license grants rights to the code, not to the branding.

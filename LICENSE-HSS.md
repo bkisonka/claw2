@@ -35,8 +35,10 @@ Works) explicitly permits. They carry no LGPL obligations and impose none.
 - Keep the LGPL notice inside `hss.cjs` and this file with any
   redistribution of the core.
 - Modifications to `hss.cjs` must stay under LGPL-3.0-only (or GPL-3.0,
-  as LGPL-3.0 permits). Contributions to this file are accepted under
-  LGPL-3.0 so improvements to the core come back to the project.
+  as LGPL-3.0 permits). Contributions to the core are accepted via CLA
+  (see [CONTRIBUTING.md](CONTRIBUTING.md)) and distributed by the copyright
+  holder under LGPL-3.0-only, so improvements to the core come back to the
+  project.
 - The rest of claw2 — including its own configuration files, build scripts
   and documentation — is licensed under GNU AGPL-3.0-only; see
   [`LICENSE`](LICENSE). LGPL-3.0 and AGPL-3.0 are compatible: claw2 as a
