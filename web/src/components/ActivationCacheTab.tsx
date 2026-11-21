@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  acceptCatalogCache,
   deleteCatalogCache,
   getCatalogCaches,
   importCatalogCache,
   renameCatalogCache,
   type CatalogCache,
+  type CatalogCacheScan,
 } from "../api/catalog";
 import { getConfig, putConfig, type Config } from "../api/config";
 import { useT } from "../i18n";
@@ -14,6 +16,7 @@ export function ActivationCacheTab() {
   const t = useT();
   const isDesktop = isSingleUserClient();
   const [caches, setCaches] = useState<CatalogCache[]>([]);
+  const [quarantined, setQuarantined] = useState<CatalogCache[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -21,23 +24,27 @@ export function ActivationCacheTab() {
   const [cacheStorePath, setCacheStorePath] = useState("");
   const [pendingFile, setPendingFile] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [renamingFile, setRenamingFile] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
 
   const refreshList = useCallback(async () => {
-    const list = await getCatalogCaches().catch(() => []);
-    setCaches(Array.isArray(list) ? list : []);
+    const list = await getCatalogCaches().catch(() => ({ caches: [], quarantined: [] }));
+    setCaches(Array.isArray(list.caches) ? list.caches : []);
+    setQuarantined(Array.isArray(list.quarantined) ? list.quarantined : []);
   }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setNotice(null);
     try {
       const [list, cfg] = await Promise.all([
-        getCatalogCaches().catch(() => []),
+        getCatalogCaches().catch(() => ({ caches: [], quarantined: [] })),
         getConfig(),
       ]);
-      setCaches(Array.isArray(list) ? list : []);
+      setCaches(Array.isArray(list.caches) ? list.caches : []);
+      setQuarantined(Array.isArray(list.quarantined) ? list.quarantined : []);
       setConfig(cfg);
       const orch = cfg?.orchestrator as
         | { activationCache?: string | null; cacheStorePath?: string | null }
@@ -126,6 +133,16 @@ export function ActivationCacheTab() {
     }
   }, [cacheStorePath, persistOrchestrator, refreshList, t]);
 
+  const scanNotice = useCallback(
+    (scan: CatalogCacheScan) => {
+      if (!scan.passedInjectionScan) {
+        return t("cache.importFlagged", { count: scan.injectionIssues });
+      }
+      return scan.signed ? t("cache.importOkSigned") : t("cache.importOk");
+    },
+    [t]
+  );
+
   const handlePickCacheFile = useCallback(async () => {
     if (!window.claw2Desktop?.pickFile) return;
     if (!cacheStorePath.trim()) {
@@ -144,9 +161,12 @@ export function ActivationCacheTab() {
     setPendingFile(res.path);
     setSaving(true);
     setError(null);
+    setNotice(null);
     try {
-      const item = await importCatalogCache(res.path);
-      await persistOrchestrator({ activationCache: item.cache_id });
+      // Imported caches land in quarantine and never auto-activate: a shared
+      // cache is a third-party prompt. Explicit acceptance is a separate step.
+      const { cache, scan } = await importCatalogCache(res.path);
+      setNotice(`${t("cache.importQuarantined", { name: cache.name })} ${scanNotice(scan)}`);
       await refreshList();
       setPendingFile("");
     } catch (e) {
@@ -155,7 +175,25 @@ export function ActivationCacheTab() {
     } finally {
       setSaving(false);
     }
-  }, [cacheStorePath, persistOrchestrator, refreshList, t]);
+  }, [cacheStorePath, persistOrchestrator, refreshList, scanNotice, t]);
+
+  const handleAccept = useCallback(
+    async (c: CatalogCache) => {
+      if (!window.confirm(t("cache.acceptConfirm", { name: c.name }))) return;
+      setSaving(true);
+      setError(null);
+      try {
+        const accepted = await acceptCatalogCache(c.file_name);
+        setNotice(t("cache.accepted", { name: accepted.name }));
+        await refreshList();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSaving(false);
+      }
+    },
+    [refreshList, t]
+  );
 
   const handleRename = useCallback(
     async (c: CatalogCache) => {
@@ -178,13 +216,13 @@ export function ActivationCacheTab() {
   );
 
   const handleDelete = useCallback(
-    async (c: CatalogCache) => {
+    async (c: CatalogCache, isQuarantined: boolean) => {
       if (!window.confirm(t("cache.deleteConfirm", { name: c.name }))) return;
       setSaving(true);
       setError(null);
       try {
         await deleteCatalogCache(c.file_name);
-        if (selectedId === c.cache_id) {
+        if (!isQuarantined && selectedId === c.cache_id) {
           await persistOrchestrator({ activationCache: null });
         }
         await refreshList();
@@ -205,6 +243,125 @@ export function ActivationCacheTab() {
     );
   }
 
+  const metaLine = (c: CatalogCache) => {
+    const parts = [c.domain, c.language].filter(Boolean).join(" · ");
+    const author = c.author ? `${t("cache.author")}: ${c.author}` : "";
+    const badge = c.signed ? ` · ${t("cache.signed")}` : "";
+    return [parts, author].filter(Boolean).join(" · ") + badge + (c.description ? ` — ${c.description}` : "");
+  };
+
+  const cacheRow = (c: CatalogCache, isQuarantined: boolean) => (
+    <div key={`${isQuarantined ? "q" : "a"}-${c.file_name}`} className="activation-cache-row">
+      {!isQuarantined ? (
+        <label className="activation-cache-item">
+          <input
+            type="radio"
+            name="activationCache"
+            checked={selectedId === c.cache_id}
+            onChange={() => void handleSelect(c.cache_id)}
+            disabled={saving}
+          />
+          {renamingFile === c.file_name ? (
+            <input
+              className="activation-cache-rename-input"
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              disabled={saving}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleRename(c);
+                if (e.key === "Escape") {
+                  setRenamingFile(null);
+                  setRenameValue("");
+                }
+              }}
+            />
+          ) : (
+            <span className="activation-cache-name">{c.name}</span>
+          )}
+          {(c.description || c.domain || c.language || c.author || c.signed) && renamingFile !== c.file_name ? (
+            <span className="activation-cache-meta">{metaLine(c)}</span>
+          ) : null}
+        </label>
+      ) : (
+        <label className="activation-cache-item">
+          <span className="activation-cache-name">
+            {c.name} · {t("cache.quarantineBadge")}
+          </span>
+          {(c.description || c.domain || c.language || c.author || c.signed) ? (
+            <span className="activation-cache-meta">{metaLine(c)}</span>
+          ) : null}
+        </label>
+      )}
+      <div className="activation-cache-item-actions">
+        {isQuarantined ? (
+          <>
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={saving}
+              onClick={() => void handleAccept(c)}
+            >
+              {t("cache.accept")}
+            </button>
+            <button
+              type="button"
+              className="skills-btn skills-btn-danger"
+              disabled={saving}
+              onClick={() => void handleDelete(c, true)}
+            >
+              {t("common.delete")}
+            </button>
+          </>
+        ) : renamingFile === c.file_name ? (
+          <>
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={saving || !renameValue.trim()}
+              onClick={() => void handleRename(c)}
+            >
+              {t("common.save")}
+            </button>
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={saving}
+              onClick={() => {
+                setRenamingFile(null);
+                setRenameValue("");
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="skills-btn"
+              disabled={saving}
+              onClick={() => {
+                setRenamingFile(c.file_name);
+                setRenameValue(c.name);
+              }}
+            >
+              {t("cache.rename")}
+            </button>
+            <button
+              type="button"
+              className="skills-btn skills-btn-danger"
+              disabled={saving}
+              onClick={() => void handleDelete(c, false)}
+            >
+              {t("common.delete")}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <div className="cabinet-section">
       <h3 className="cabinet-section-title">{t("cache.title")}</h3>
@@ -212,6 +369,11 @@ export function ActivationCacheTab() {
       {error && (
         <p className="cabinet-error" role="alert">
           {error}
+        </p>
+      )}
+      {!error && notice && (
+        <p className="cabinet-section-desc" role="status">
+          {notice}
         </p>
       )}
 
@@ -267,94 +429,19 @@ export function ActivationCacheTab() {
           />
           <span>{t("cache.none")}</span>
         </label>
-        {caches.map((c) => (
-          <div key={c.file_name} className="activation-cache-row">
-            <label className="activation-cache-item">
-              <input
-                type="radio"
-                name="activationCache"
-                checked={selectedId === c.cache_id}
-                onChange={() => void handleSelect(c.cache_id)}
-                disabled={saving}
-              />
-              {renamingFile === c.file_name ? (
-                <input
-                  className="activation-cache-rename-input"
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  disabled={saving}
-                  autoFocus
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleRename(c);
-                    if (e.key === "Escape") {
-                      setRenamingFile(null);
-                      setRenameValue("");
-                    }
-                  }}
-                />
-              ) : (
-                <span className="activation-cache-name">{c.name}</span>
-              )}
-              {(c.description || c.domain || c.language) && renamingFile !== c.file_name ? (
-                <span className="activation-cache-meta">
-                  {[c.domain, c.language].filter(Boolean).join(" · ")}
-                  {c.description && ` — ${c.description}`}
-                </span>
-              ) : null}
-            </label>
-            <div className="activation-cache-item-actions">
-              {renamingFile === c.file_name ? (
-                <>
-                  <button
-                    type="button"
-                    className="skills-btn"
-                    disabled={saving || !renameValue.trim()}
-                    onClick={() => void handleRename(c)}
-                  >
-                    {t("common.save")}
-                  </button>
-                  <button
-                    type="button"
-                    className="skills-btn"
-                    disabled={saving}
-                    onClick={() => {
-                      setRenamingFile(null);
-                      setRenameValue("");
-                    }}
-                  >
-                    {t("common.cancel")}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="skills-btn"
-                    disabled={saving}
-                    onClick={() => {
-                      setRenamingFile(c.file_name);
-                      setRenameValue(c.name);
-                    }}
-                  >
-                    {t("cache.rename")}
-                  </button>
-                  <button
-                    type="button"
-                    className="skills-btn skills-btn-danger"
-                    disabled={saving}
-                    onClick={() => void handleDelete(c)}
-                  >
-                    {t("common.delete")}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
+        {caches.map((c) => cacheRow(c, false))}
       </div>
       {caches.length === 0 && cacheStorePath.trim() && (
         <p className="cabinet-section-desc">{t("cache.emptyDir")}</p>
       )}
+
+      {quarantined.length > 0 ? (
+        <div className="activation-cache-list">
+          <div className="activation-cache-file-label">{t("cache.quarantineTitle")}</div>
+          <p className="cabinet-section-desc activation-cache-file-hint">{t("cache.quarantineHint")}</p>
+          {quarantined.map((c) => cacheRow(c, true))}
+        </div>
+      ) : null}
     </div>
   );
 }

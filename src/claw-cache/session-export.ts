@@ -1,8 +1,14 @@
 /**
  * Export session history to .claw-cache (distillation of the dialogue of a strong model to activate another).
+ *
+ * Sharing note: the exporter can be an innocent victim — injection that entered
+ * the session through web/tool content would otherwise be laundered into every
+ * downstream cache. The export therefore runs the same injection scanner over
+ * the resulting dialogue and reports warnings, without blocking the user's own
+ * export.
  */
 
-import { scanText } from "./CacheInjectionScanner.js";
+import { scanText, scanDialogueMessages } from "./CacheInjectionScanner.js";
 import { packToClawCache, type ClawCachePackInput } from "./CachePacker.js";
 import { buildActivationVectorFromMessages } from "./activation-vector.js";
 import type { ClawCacheTriggers } from "./types.js";
@@ -159,6 +165,8 @@ export async function exportSessionToClawCacheBuffer(opts: SessionClawCacheExpor
   cacheId: string;
   turnCount: number;
   filename: string;
+  /** Injection-scan hits found in the exported dialogue (laundering risk). */
+  warnings: string[];
 }> {
   const pack = buildSessionClawCachePackInput(opts);
   const cacheId = pack.manifest?.cache_id ?? `export-${Date.now()}`;
@@ -166,11 +174,24 @@ export async function exportSessionToClawCacheBuffer(opts: SessionClawCacheExpor
   if (turnCount < 2) {
     throw new Error("Not enough messages to export (at least 2 user/assistant messages are required).");
   }
+  const dialogueMessages = pack.dialogueJsonl
+    ? (JSON.parse(`[${pack.dialogueJsonl.split("\n").filter(Boolean).join(",")}]`) as { role: string; content: string }[])
+    : [];
+  const scan = scanDialogueMessages(dialogueMessages);
+  const warnings = scan.passed
+    ? []
+    : scan.issues.map(
+        (issue) =>
+          `line ${issue.line} (${issue.role ?? "?"}): ${issue.matches
+            .map((m) => `${m.category}: ${m.sample}`)
+            .join("; ")}`
+      );
   const buffer = await packToClawCache(pack);
   return {
     buffer,
     cacheId,
     turnCount,
     filename: `${cacheId}.claw-cache`,
+    warnings,
   };
 }

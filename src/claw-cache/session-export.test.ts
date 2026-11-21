@@ -3,6 +3,9 @@
  * Run: npx tsx src/claw-cache/session-export.test.ts
  */
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   sanitizeCacheId,
   unwrapExtContent,
@@ -10,6 +13,10 @@ import {
   buildSessionClawCachePackInput,
   exportSessionToClawCacheBuffer,
 } from "./session-export.js";
+
+// Export signs the archive: route the test key into a temp dir so the test
+// never writes key material into the repo working directory.
+process.env.CLAW2_CACHE_SIGNING_KEY_PATH = join(mkdtempSync(join(tmpdir(), "claw-cache-test-keys-")), "k.pem");
 
 // sanitizeCacheId: ASCII only; fallback is also sanitized
 assert.equal(sanitizeCacheId("ok_cache-1"), "ok_cache-1");

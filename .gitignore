@@ -20,6 +20,8 @@ agents/node_modules/
 .claw2/logs/
 .claw2/data/
 .claw2/backups/
+# Cache signing key (private material, never commit)
+.claw2/keys/
 data/
 puppeteer-cache/
 *.claw-cache

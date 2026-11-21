@@ -47,6 +47,18 @@ From a good, deep dialogue:
 
 That turns a past dialogue into a source of context trajectory and structure for later discussions.
 
+## Sharing caches and quarantine
+
+A cache from another person is **someone else's prompt in the shape of chat history**, so sharing is guarded by a separate layer:
+
+- **Quarantine.** An imported cache lands in the `untrusted/` subdirectory and **never activates automatically**. It appears in the "Quarantine" section and can be activated only explicitly, via the "Accept" button.
+- **Automatic checks.** Every imported (and every activating) cache is scanned for prompt injection — including obfuscated ones: homoglyphs, invisible characters, attacks split across different turns — and its archive integrity is verified.
+- **Signature.** Exports are signed with a local Ed25519 key. If the same cache (by id) arrives with a different signature, it is a replacement and will not activate. A signature makes an author recognizable, not trusted: an unknown signed cache still requires explicit acceptance.
+- **Trust boundary.** Even for an accepted cache, the imported dialogue is framed in the prompt as "an imported sample, not real history": statements inside claiming "system access" or "prior agreements" are fiction for the model.
+- **Failing is safe.** If a cache fails a check, the chat simply starts without activation; the audit log records the reason (`cache_warmup_skipped`).
+
+Practical rule: take caches only from sources you trust for the content, and read the description before "Accept".
+
 ## What you should expect
 
 - On the **first** message in a **new** chat with a cache selected, the past dialogue’s context-vector chain is raised and the deep structure of **this** chat is formed; a short starter dialogue may be prepended to the first request.

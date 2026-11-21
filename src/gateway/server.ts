@@ -80,8 +80,10 @@ import {
 import { handleLlmRoomRoute } from "./llm-room.js";
 import {
   listCachesFromDir,
+  listQuarantinedCaches,
   exportSessionToClawCacheBuffer,
   importCacheIntoStore,
+  acceptQuarantinedCache,
   renameCacheDisplayName,
   deleteCacheFile,
 } from "../claw-cache/index.js";
@@ -2315,6 +2317,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               cacheId: exported.cacheId,
               turnCount: exported.turnCount,
               filename: exported.filename,
+              warnings: exported.warnings,
             })
           );
           return;
@@ -2325,6 +2328,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           "Access-Control-Allow-Origin": corsOrigin,
           "X-Claw-Cache-Id": exported.cacheId.replace(/[^\x20-\x7E]/g, "_"),
           "X-Claw-Cache-Turns": String(exported.turnCount),
+          "X-Claw-Cache-Scan": exported.warnings.length === 0 ? "passed" : "flagged",
         });
         res.end(exported.buffer);
       } catch (err) {
@@ -2350,9 +2354,12 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           effectiveConfig = getEffectiveConfig(config, userConfig);
         }
         const storePath = effectiveConfig.orchestrator?.cacheStorePath;
-        const caches = await listCachesFromDir(storePath);
+        const [caches, quarantined] = await Promise.all([
+          listCachesFromDir(storePath),
+          listQuarantinedCaches(storePath),
+        ]);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
-        res.end(JSON.stringify({ caches }));
+        res.end(JSON.stringify({ caches, quarantined }));
       } catch (err) {
         console.error("[gateway] catalog/caches error:", err);
         res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -2389,9 +2396,46 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
         const item = await importCacheIntoStore(storePath, sourcePath);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
-        res.end(JSON.stringify({ ok: true, cache: item }));
+        res.end(JSON.stringify({ ok: true, cache: item.cache, quarantined: true, scan: item.scan }));
       } catch (err) {
         console.error("[gateway] catalog/caches/import error:", err);
+        res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
+      }
+      return;
+    }
+    if (req.method === "POST" && p === "/api/catalog/caches/accept") {
+      try {
+        if (isRegistrationMode(config) && userId === "default") {
+          res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Unauthorized", code: "auth_required" }));
+          return;
+        }
+        let effectiveConfig: Claw2Config = config;
+        if (isRegistrationMode(config) && userId !== "default") {
+          const repo = getAuthRepo(config);
+          const userConfig = await getCachedUserConfig(repo, userId);
+          effectiveConfig = getEffectiveConfig(config, userConfig);
+        }
+        const storePath = effectiveConfig.orchestrator?.cacheStorePath?.trim();
+        if (!storePath) {
+          res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "orchestrator.cacheStorePath not configured" }));
+          return;
+        }
+        const body = await parseBody(req);
+        const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        const fileName = typeof data.file_name === "string" ? data.file_name.trim() : "";
+        if (!fileName) {
+          res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "file_name required" }));
+          return;
+        }
+        const result = await acceptQuarantinedCache(storePath, fileName);
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ ok: true, cache: result.cache }));
+      } catch (err) {
+        console.error("[gateway] catalog/caches/accept error:", err);
         res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }));
       }

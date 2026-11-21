@@ -27,16 +27,28 @@ export {
 export { writeNpyFloat32, readNpyFloat32 } from "./npy.js";
 export { buildWarmupMessages, parseDialogueJsonl, resolveDialogueWarmupTurnLimit } from "./WarmupBuilder.js";
 export type { WarmupBuildResult, WarmupBuildOptions, WarmupSource } from "./WarmupBuilder.js";
-export { scanTriggers, scanText } from "./CacheInjectionScanner.js";
-export type { ScanResult } from "./CacheInjectionScanner.js";
-export { listCachesFromDir } from "./list-catalog.js";
+export { scanTriggers, scanText, scanDialogueMessages, normalizeScanText, sanitizeDisplayText } from "./CacheInjectionScanner.js";
+export type { ScanResult, ScanMatch, ScanCategory, DialogueScanResult, DialogueScanIssue } from "./CacheInjectionScanner.js";
+export { applyWarmupContainment, escapeWarmupContent, WARMUP_OPEN, WARMUP_CLOSE } from "./warmup-containment.js";
+export {
+  loadOrCreateSigningKey,
+  signCacheZip,
+  verifyCacheSignature,
+  verifyAndPinCacheKey,
+  clearCacheKeyPin,
+  CacheKeyConflictError,
+} from "./cache-signature.js";
+export type { CacheSigningKey, SignCacheResult, VerifyCacheResult } from "./cache-signature.js";
+export { listCachesFromDir, listQuarantinedCaches } from "./list-catalog.js";
 export type { CatalogCacheItem } from "./list-catalog.js";
 export {
   importCacheIntoStore,
+  acceptQuarantinedCache,
   renameCacheDisplayName,
   deleteCacheFile,
   safeCacheFileName,
 } from "./catalog-manage.js";
+export type { ImportCacheResult, AcceptCacheResult } from "./catalog-manage.js";
 export { evolveHssAndGetState, peekHssState, resolveHssPromptMode, getHssEntropyStabilizeMin, getHssEntropyDeltaStabilizeMin, splitHssContextChunks, appendModelChronicleEntry, releaseHssSession } from "./hss-stabilizer.js";
 export { recallChronicleForPrompt, searchChronicleSession, buildChronicleRecallPromptBlock } from "./chronicle-recall.js";
 export { isChronicleChromaConfigured, isChronicleRecallEnabled, isChronicleStoreConfigured } from "./chronicle-chroma.js";
@@ -99,6 +111,31 @@ export async function loadCache(pathOrId: string, storePath?: string | null): Pr
 }
 
 /**
+ * Same as loadCache but reports the load failure reason (integrity/signature/
+ * size/parse) so callers can surface an actionable skip reason in audit/UI.
+ */
+export async function loadCacheDetailed(
+  pathOrId: string,
+  storePath?: string | null
+): Promise<{ content: ClawCacheContent | null; error: string | null }> {
+  const fromStore = getCached(pathOrId);
+  if (fromStore) return { content: fromStore, error: null };
+
+  const looksLikePath = /[/\\]/.test(pathOrId) || pathOrId.endsWith(".claw-cache");
+  const resolved =
+    storePath && !looksLikePath
+      ? resolve(storePath, pathOrId.endsWith(".claw-cache") ? pathOrId : pathOrId + ".claw-cache")
+      : resolve(pathOrId);
+  try {
+    const content = await loadCacheFromPath(resolved);
+    setCached(content);
+    return { content, error: null };
+  } catch (err) {
+    return { content: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/**
  * Builds a preamble for insertion into the dialog (after system, before history).
  * Returns an empty array if the cache is not loaded or fails validation.
  */
@@ -110,7 +147,7 @@ export function getWarmupMessages(content: ClawCacheContent | null): WarmupMessa
 /** The full result of building a warmup (source, limits) is for audit.*/
 export function getWarmupBuildResult(content: ClawCacheContent | null): WarmupBuildResult {
   if (!content) {
-    return { messages: [], source: "none", turnLimit: 0, dialogueParsed: 0 };
+    return { messages: [], source: "none", turnLimit: 0, dialogueParsed: 0, filtered: [], failClosed: false };
   }
   return buildWarmupMessages(content);
 }

@@ -37,6 +37,40 @@ export interface ClawCacheActivationVector {
   encoder: string;
 }
 
+export type CacheIntegrityStatus =
+  /** security/digests.sha256 present and every entry digest matched. */
+  | "verified"
+  /** No digests file (legacy cache): integrity not checked. */
+  | "none"
+  /** Digests present but a mismatch was found; load is rejected. */
+  | "mismatch";
+
+export interface CacheSignatureInfo {
+  algorithm: "ed25519";
+  /** Short fingerprint of the signing public key (sha256 head). */
+  keyId: string;
+  /** Signature present and valid for the digest file. */
+  verified: boolean;
+  signedAt?: string;
+}
+
+export interface CacheScanReport {
+  integrity: CacheIntegrityStatus;
+  signature: CacheSignatureInfo | null;
+  /** Non-fatal issues (unknown ZIP entries, oversized manifest fields...). */
+  warnings: string[];
+  /** Injection-scan hits that made the cache fail (when passedInjectionScan=false). */
+  injectionIssues: {
+    line: number;
+    role: string | null;
+    windowSize: number;
+    category: string;
+    sample: string;
+  }[];
+  /** Message count the dialogue scan checked (single + windows). */
+  scanChecked: number;
+}
+
 export interface ClawCacheContent {
   manifest: ClawCacheManifest;
   triggers: ClawCacheTriggers | null;
@@ -48,4 +82,6 @@ export interface ClawCacheContent {
   passedInjectionScan: boolean;
   /** The path or identifier where it was downloaded from.*/
   source: string;
+  /** Integrity/signature/scan details collected at load time. */
+  scanReport: CacheScanReport;
 }

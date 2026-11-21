@@ -70,7 +70,7 @@ import { buildTelephonyContextBlock } from "./telephony-prompt.js";
 import { getSipClient } from "../sip/client.js";
 import { auditLog } from "../audit/log.js";
 import type { Claw2Config } from "../config/types.js";
-import { loadCache, getWarmupBuildResult, evolveHssAndGetState, getHssEntropyDeltaStabilizeMin, consumePendingHssResponseHint, buildHssSystemPromptAddendum, HSS_CRITICAL_RETRY_USER_MESSAGE, appendModelChronicleEntry, recallChronicleForPrompt, searchChronicleSession } from "../claw-cache/index.js";
+import { loadCache, loadCacheDetailed, getWarmupBuildResult, evolveHssAndGetState, getHssEntropyDeltaStabilizeMin, consumePendingHssResponseHint, buildHssSystemPromptAddendum, HSS_CRITICAL_RETRY_USER_MESSAGE, appendModelChronicleEntry, recallChronicleForPrompt, searchChronicleSession, applyWarmupContainment } from "../claw-cache/index.js";
 import { stripInternalPromptLeak, sanitizeForChroniclePrompt } from "../claw-cache/prompt-leak-sanitize.js";
 import { clampImportance } from "../claw-cache/chronicle-importance.js";
 import { PROMPT_SUMMARY_PREFIX, peelPromptSummary } from "../gateway/prompt-history.js";
@@ -571,14 +571,25 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   let activationLoadSkipReason: string | null = null;
   if (config.orchestrator?.activationCache && isFirstRequestInSessionEarly) {
     const storePath = config.orchestrator?.cacheStorePath ?? undefined;
+    // Quarantined imports (storePath/untrusted/) never activate, even when the
+    // config points at the file path directly. Acceptance moves the file first.
+    if (/[\\/]untrusted[\\/]/.test(resolve(String(config.orchestrator.activationCache)))) {
+      activationLoadSkipReason = "quarantined_cache";
+    }
     try {
-      preloadedActivationCache = await Promise.race([
-        loadCache(config.orchestrator.activationCache, storePath),
-        new Promise<null>((_, reject) =>
+      const detailed = await Promise.race([
+        loadCacheDetailed(config.orchestrator.activationCache, storePath),
+        new Promise<{ content: null; error: string }>((_, reject) =>
           setTimeout(() => reject(new Error("claw-cache load timeout")), 20_000)
         ),
       ]);
       throwIfAborted(signal);
+      preloadedActivationCache = detailed.content;
+      if (!detailed.error && !detailed.content) {
+        activationLoadSkipReason = "cache_not_found";
+      } else if (detailed.error) {
+        activationLoadSkipReason = detailed.error;
+      }
     } catch (err) {
       throwIfAborted(signal);
       activationLoadSkipReason = err instanceof Error ? err.message : String(err);
@@ -954,12 +965,21 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       warmupBuild = getWarmupBuildResult(cacheContent);
       warmupMessages = warmupBuild.messages;
       if (warmupMessages.length === 0) {
-        skipReason = warmupBuild.dialogueParsed >= 2 ? "dialogue_filtered_empty" : "no_warmup_content";
+        skipReason = warmupBuild.failClosed
+          ? "injection_filtered"
+          : warmupBuild.dialogueParsed >= 2
+            ? "dialogue_filtered_empty"
+            : "no_warmup_content";
       }
     } else if (!skipReason && !cacheContent) {
       skipReason = "cache_not_found";
     }
     if (warmupMessages.length > 0 && cacheContent && warmupBuild) {
+      // Containment: the imported dialogue is framed with sentinels and an
+      // explicit trust-boundary rule in the system prompt (untrusted file).
+      const contained = applyWarmupContainment(systemPrompt, warmupMessages, cacheContent.manifest?.name ?? activationCache);
+      systemPrompt = contained.systemPrompt;
+      warmupMessages = contained.messages;
       auditLog(config, {
         type: "cache_warmup_applied",
         sessionId: sessionId ?? "anon",
@@ -977,6 +997,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           activationVectorTurns: cacheContent.activationVector?.rows.length ?? 0,
           activationVectorDim: cacheContent.activationVector?.dim ?? 0,
           source: cacheContent.source,
+          integrity: cacheContent.scanReport?.integrity ?? "none",
+          signed: !!cacheContent.scanReport?.signature?.verified,
+          signerKeyId: cacheContent.scanReport?.signature?.keyId ?? null,
+          containment: "sentinel+trust_boundary",
         },
       });
     } else {
@@ -987,6 +1011,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           activationCache,
           reason: skipReason ?? "unknown",
           storePath: storePath ?? null,
+          injectionIssues:
+            warmupBuild?.filtered.reduce((acc, f) => acc + f.matches.length, 0) ??
+            preloadedActivationCache?.scanReport?.injectionIssues.length ??
+            undefined,
         },
       });
     }

@@ -1,10 +1,16 @@
 /**
  * Packaging content in .claw-cache (ZIP) according to the specifications of claw-cache.md.
+ *
+ * Integrity: per-entry digests (security/digests.sha256) are always written;
+ * the archive is then signed with the local Ed25519 key
+ * (.claw2/keys/cache-signing-key.pem, CLAW2_CACHE_SIGNING_KEY override) when
+ * key material is available. A missing key yields an unsigned but still
+ * digest-covered archive.
  */
 
-import { createHash } from "node:crypto";
 import JSZip from "jszip";
 import type { ClawCacheManifest, ClawCacheTriggers } from "./types.js";
+import { signCacheZip } from "./cache-signature.js";
 import {
   activationVectorToNpyBuffer,
   buildActivationVectorFromDialogueJsonl,
@@ -12,6 +18,11 @@ import {
 } from "./activation-vector.js";
 
 const FORMAT_VERSION = "1.0";
+const MANIFEST_FIELD_MAX = 300;
+
+function capDisplay(value: unknown): string {
+  return typeof value === "string" ? value.replace(/[\r\n\t]+/g, " ").trim().slice(0, MANIFEST_FIELD_MAX) : (value as string);
+}
 
 export interface ClawCachePackInput {
   manifest?: Partial<ClawCacheManifest>;
@@ -27,7 +38,7 @@ export interface ClawCachePackInput {
 }
 
 function defaultManifest(overrides: Partial<ClawCacheManifest> = {}): ClawCacheManifest {
-  return {
+  const base: ClawCacheManifest = {
     format_version: FORMAT_VERSION,
     cache_id: "",
     name: "",
@@ -45,6 +56,12 @@ function defaultManifest(overrides: Partial<ClawCacheManifest> = {}): ClawCacheM
     license: "CC-BY-NC-4.0",
     ...overrides,
   };
+  for (const field of ["name", "description", "domain", "language", "author", "generator_model", "creation_method"] as const) {
+    if (typeof base[field] === "string") {
+      (base as unknown as Record<string, unknown>)[field] = capDisplay(base[field]);
+    }
+  }
+  return base;
 }
 
 function defaultTriggers(overrides: Partial<ClawCacheTriggers> = {}): ClawCacheTriggers {
@@ -129,22 +146,17 @@ async function buildZipWithoutChecksum(content: ClawCachePackInput): Promise<JSZ
   );
 
   zip.file("usage/adapter-hints.json", JSON.stringify(content.adapter_hints ?? {}, null, 2));
-  zip.file("usage/rag-profile.json", JSON.stringify(content.rag_profile ?? {}, null, 2));
-  zip.file("security/signature.sig", "");
 
   return zip;
 }
 
-/** ZIP buffer .claw-cache with checksum.sha256.*/
+/** ZIP buffer .claw-cache with digests + (when a key is available) Ed25519 signature.*/
 export async function packToClawCache(content: ClawCachePackInput): Promise<Buffer> {
   const zip = await buildZipWithoutChecksum(content);
-  const bufferWithoutChecksum = await zip.generateAsync({
-    type: "nodebuffer",
-    compression: "DEFLATE",
-    compressionOptions: { level: 6 },
-  });
-  const checksumHex = createHash("sha256").update(bufferWithoutChecksum).digest("hex");
-  zip.file("security/checksum.sha256", checksumHex);
+  const signResult = await signCacheZip(zip);
+  if (!signResult.signed) {
+    console.warn(`[claw-cache] export left unsigned: ${signResult.error ?? "unknown"}`);
+  }
   return zip.generateAsync({
     type: "nodebuffer",
     compression: "DEFLATE",

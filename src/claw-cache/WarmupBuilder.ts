@@ -2,10 +2,16 @@
  * Constructing a preamble (warmup) for a request to LLM from the loaded cache.
  * Priority: activation/dialogue.jsonl (full dialogue up to peak_depth_turn),
  * fallback: triggers.phrases. Role user/assistant only; never system.
+ *
+ * Fail-closed: unlike the previous per-message skip, ANY injection-scan hit in
+ * the included dialogue slice (or in the phrase fallback) drops the entire
+ * warmup. Mixed benign+malicious caches no longer partially apply; the audit
+ * log records what was filtered via WarmupBuildResult.
  */
 
 import type { ClawCacheContent, ClawCacheTriggers } from "./types.js";
-import { scanText } from "./CacheInjectionScanner.js";
+import { scanText, scanDialogueMessages, type ScanMatch } from "./CacheInjectionScanner.js";
+import { escapeWarmupContent } from "./warmup-containment.js";
 import { unwrapExtContent } from "./session-export.js";
 
 const MAX_PHRASE_WARMUP_MESSAGES = 3;
@@ -22,11 +28,23 @@ export interface WarmupMessage {
 
 export type WarmupSource = "dialogue" | "phrases" | "none";
 
+export interface WarmupFilteredItem {
+  /** 0-based index within the checked slice (dialogue) or phrase index. */
+  index: number;
+  role: string | null;
+  windowSize: number;
+  matches: ScanMatch[];
+}
+
 export interface WarmupBuildResult {
   messages: WarmupMessage[];
   source: WarmupSource;
   turnLimit: number;
   dialogueParsed: number;
+  /** Fail-closed drops caused by injection scan (empty messages). */
+  filtered: WarmupFilteredItem[];
+  /** True when the whole warmup was dropped because a scan failed. */
+  failClosed: boolean;
 }
 
 export interface WarmupBuildOptions {
@@ -97,39 +115,78 @@ function trimToCharBudget(messages: WarmupMessage[], maxTotalChars: number, maxC
 function buildWarmupFromDialogue(
   content: ClawCacheContent,
   options: Required<Pick<WarmupBuildOptions, "maxDialogueTurns" | "maxCharsPerMessage" | "maxTotalChars">>
-): WarmupMessage[] {
+): { messages: WarmupMessage[]; filtered: WarmupFilteredItem[]; failClosed: boolean } {
   const parsed = parseDialogueJsonl(content.dialogueRaw);
-  if (parsed.length < 2) return [];
+  if (parsed.length < 2) return { messages: [], filtered: [], failClosed: false };
 
   const turnLimit = resolveDialogueWarmupTurnLimit(content.triggers, parsed.length, options.maxDialogueTurns);
-  const slice = parsed.slice(0, turnLimit);
+  const slice = parsed.slice(0, turnLimit).map((m) => ({
+    ...m,
+    content: m.content.slice(0, options.maxCharsPerMessage).trim(),
+  }));
+
+  // Fail-closed: single messages + adjacent windows; ANY hit drops everything.
+  const scan = scanDialogueMessages(slice);
+  if (!scan.passed) {
+    return {
+      messages: [],
+      filtered: scan.issues.map((issue) => ({
+        index: issue.line,
+        role: issue.role,
+        windowSize: issue.windowSize,
+        matches: issue.matches,
+      })),
+      failClosed: true,
+    };
+  }
+
   const scanned: WarmupMessage[] = [];
   for (const msg of slice) {
-    const text = msg.content.slice(0, options.maxCharsPerMessage).trim();
-    if (!text || !scanText(text).passed) continue;
-    scanned.push({ role: msg.role, content: text });
+    if (msg.content) scanned.push({ role: msg.role, content: msg.content });
   }
-  if (scanned.length < 2) return [];
-  return trimToCharBudget(scanned, options.maxTotalChars, options.maxCharsPerMessage);
+  if (scanned.length < 2) return { messages: [], filtered: [], failClosed: false };
+  return {
+    messages: trimToCharBudget(
+      scanned.map((m) => ({ ...m, content: escapeWarmupContent(m.content) })),
+      options.maxTotalChars,
+      options.maxCharsPerMessage
+    ),
+    filtered: [],
+    failClosed: false,
+  };
 }
 
 function buildWarmupFromPhrases(
   content: ClawCacheContent,
   options: Required<Pick<WarmupBuildOptions, "maxPhraseMessages" | "maxCharsPerPhrase">>
-): WarmupMessage[] {
+): { messages: WarmupMessage[]; filtered: WarmupFilteredItem[]; failClosed: boolean } {
   const phrases = content.triggers?.phrases;
-  if (!Array.isArray(phrases) || phrases.length === 0) return [];
+  if (!Array.isArray(phrases) || phrases.length === 0) return { messages: [], filtered: [], failClosed: false };
+
+  // Scan the whole phrase list (not just the used head): a payload parked at
+  // index 5 must not ride along with benign leading phrases.
+  for (let i = 0; i < phrases.length; i++) {
+    const raw = String(phrases[i] ?? "").slice(0, options.maxCharsPerPhrase).trim();
+    const r = scanText(raw);
+    if (!r.passed) {
+      return {
+        messages: [],
+        filtered: [{ index: i, role: null, windowSize: 1, matches: r.matches }],
+        failClosed: true,
+      };
+    }
+  }
 
   const out: WarmupMessage[] = [];
   for (let i = 0; i < Math.min(phrases.length, options.maxPhraseMessages) && out.length < options.maxPhraseMessages; i++) {
     const raw = String(phrases[i]).slice(0, options.maxCharsPerPhrase).trim();
-    if (!raw || !scanText(raw).passed) continue;
+    if (!raw) continue;
     out.push({
       role: out.length % 2 === 0 ? "user" : "assistant",
-      content: raw,
+      content: escapeWarmupContent(raw),
     });
   }
-  return out;
+  return { messages: out, filtered: [], failClosed: false };
 }
 
 /**
@@ -143,22 +200,37 @@ export function buildWarmupMessages(content: ClawCacheContent, options: WarmupBu
   const maxCharsPerMessage = options.maxCharsPerMessage ?? MAX_CHARS_PER_MESSAGE;
   const maxTotalChars = options.maxTotalChars ?? MAX_WARMUP_TOTAL_CHARS;
 
+  const emptyResult = (): WarmupBuildResult => ({
+    messages: [],
+    source: "none",
+    turnLimit,
+    dialogueParsed,
+    filtered: [],
+    failClosed: false,
+  });
+
   const dialogueParsed = parseDialogueJsonl(content.dialogueRaw).length;
   const turnLimit = resolveDialogueWarmupTurnLimit(content.triggers, dialogueParsed, maxDialogueTurns);
 
   if (useOnlyIfPassedScan && !content.passedInjectionScan) {
-    return { messages: [], source: "none", turnLimit, dialogueParsed };
+    return { messages: [], source: "none", turnLimit, dialogueParsed, filtered: [], failClosed: true };
   }
 
   const fromDialogue = buildWarmupFromDialogue(content, { maxDialogueTurns, maxCharsPerMessage, maxTotalChars });
-  if (fromDialogue.length >= 2) {
-    return { messages: fromDialogue, source: "dialogue", turnLimit, dialogueParsed };
+  if (fromDialogue.failClosed) {
+    return { messages: [], source: "none", turnLimit, dialogueParsed, filtered: fromDialogue.filtered, failClosed: true };
+  }
+  if (fromDialogue.messages.length >= 2) {
+    return { messages: fromDialogue.messages, source: "dialogue", turnLimit, dialogueParsed, filtered: [], failClosed: false };
   }
 
   const fromPhrases = buildWarmupFromPhrases(content, { maxPhraseMessages, maxCharsPerPhrase });
-  if (fromPhrases.length > 0) {
-    return { messages: fromPhrases, source: "phrases", turnLimit, dialogueParsed };
+  if (fromPhrases.failClosed) {
+    return { messages: [], source: "none", turnLimit, dialogueParsed, filtered: fromPhrases.filtered, failClosed: true };
+  }
+  if (fromPhrases.messages.length > 0) {
+    return { messages: fromPhrases.messages, source: "phrases", turnLimit, dialogueParsed, filtered: [], failClosed: false };
   }
 
-  return { messages: [], source: "none", turnLimit, dialogueParsed };
+  return emptyResult();
 }
