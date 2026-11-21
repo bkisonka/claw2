@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
 /* Service worker: offline shell for iOS/Android PWA. API (/chat, /files, /api) never cached. */

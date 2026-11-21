@@ -4,8 +4,8 @@
  *
  * Part of the HSS core (with src/claw-cache/hss-*.ts and src/core/hss-middleware.ts).
  *
- * SPDX-License-Identifier: LGPL-3.0-or-later
- * License: GNU Lesser General Public License v3.0 or later.
+ * SPDX-License-Identifier: LGPL-3.0-only
+ * License: GNU Lesser General Public License v3.0 only.
  * See LICENSE-HSS.md in the repository root (or
  * https://www.gnu.org/licenses/lgpl-3.0.html).
  *

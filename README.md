@@ -295,22 +295,22 @@ reproduced with `npx cap sync` before the first build.
 ## License
 
 claw2 is free software: you can redistribute it and/or modify it under the
-terms of the **GNU Affero General Public License v3.0 or later**
-([AGPL-3.0-or-later](LICENSE)) as published by the Free Software Foundation.
+terms of the **GNU Affero General Public License v3.0**
+([AGPL-3.0-only](LICENSE)) as published by the Free Software Foundation.
 In short: you may use, study, modify and redistribute claw2 for any purpose,
 including commercially; modified versions you distribute must stay open under
-AGPL-3.0-or-later; and if you run a modified version as a network service,
+AGPL-3.0-only; and if you run a modified version as a network service,
 you must offer its source code to the users of that service (AGPL §13).
 There is no warranty, to the extent permitted by law.
 
 The HSS core (`hss.cjs` — the dialog-stability state model) is licensed
-separately under [LGPL-3.0-or-later](LICENSE-HSS.md), which is compatible
+separately under [LGPL-3.0-only](LICENSE-HSS.md), which is compatible
 with AGPL-3.0: it may be studied, modified and redistributed on LGPL terms,
 and modified versions must remain LGPL — improvements to the core are
 expected to come back to the project.
 
 Third-party open-source components keep their own licenses — see
-[NOTICE](NOTICE). Contributions are accepted under AGPL-3.0-or-later with
+[NOTICE](NOTICE). Contributions are accepted under AGPL-3.0-only with
 no CLA — see [CONTRIBUTING.md](CONTRIBUTING.md). Commercial licensing is
 also available on request — contact the copyright holder via the repository.
 The name "claw2" and the project logos are trademarks of Vitaliy Bondar;

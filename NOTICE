@@ -1,6 +1,6 @@
 # Third-party notices (claw2)
 
-claw2 is free software licensed under GNU AGPL-3.0-or-later — see the
+claw2 is free software licensed under GNU AGPL-3.0-only — see the
 `LICENSE` file for the full text. It builds on third-party open-source
 components; the authors and licenses of those components are listed below.
 Nothing in this file changes the terms of the respective third-party licenses.
@@ -33,7 +33,7 @@ Other dependencies bundled at build time retain their own licenses; consult
 
 | File | License | Notes |
 |------|---------|-------|
-| `hss.cjs` (HSS core — dialog-stability state model) | LGPL-3.0-or-later | First-party file under a copyleft license on purpose: it may be studied, modified and redistributed on LGPL-3.0 terms; modified versions must remain LGPL-3.0. See `LICENSE-HSS.md`. Contributions are accepted under LGPL-3.0 so improvements to the core come back to the project. |
+| `hss.cjs` (HSS core — dialog-stability state model) | LGPL-3.0-only | First-party file under a copyleft license on purpose: it may be studied, modified and redistributed on LGPL-3.0 terms; modified versions must remain LGPL-3.0. See `LICENSE-HSS.md`. Contributions are accepted under LGPL-3.0 so improvements to the core come back to the project. |
 
 ## Trademark
 

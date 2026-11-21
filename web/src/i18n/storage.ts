@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
 import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY, type Locale } from "./types";

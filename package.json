@@ -2,7 +2,7 @@
   "name": "claw2",
   "version": "0.2.0",
   "description": "Personal chat-driven AI agent",
-  "license": "AGPL-3.0-or-later",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "main": "dist/cli.js",
   "bin": {

@@ -1,11 +1,10 @@
-# HSS core — LGPL-3.0-or-later
+# HSS core — LGPL-3.0-only
 
 The file [`hss.cjs`](hss.cjs) — the HSS core, the dialog-stability state
 model (density-matrix coherence node, intention vector, chronicle) — is
-licensed under the **GNU Lesser General Public License version 3 or
-later**.
+licensed under the **GNU Lesser General Public License version 3 only**.
 
-SPDX-License-Identifier: `LGPL-3.0-or-later`
+SPDX-License-Identifier: `LGPL-3.0-only`
 
 ## License texts
 
@@ -18,10 +17,10 @@ SPDX-License-Identifier: `LGPL-3.0-or-later`
 
 LGPL-3.0 applies to **exactly one file**: `hss.cjs`. It may be studied,
 modified and redistributed on LGPL-3.0 terms; modified versions of it must
-in turn remain under LGPL-3.0-or-later.
+in turn remain under LGPL-3.0-only.
 
 Everything else in the repository is free software under
-**GNU AGPL-3.0-or-later** ([`LICENSE`](LICENSE)), including the TypeScript
+**GNU AGPL-3.0-only** ([`LICENSE`](LICENSE)), including the TypeScript
 layer that uses the core (`src/claw-cache/hss-*.ts`, `src/core/hss-middleware.ts`
 and the rest of `src/`). Those files are not derivatives of the LGPL library:
 they exercise it through its public API, which LGPL-3.0 section 4 (Combined
@@ -35,11 +34,11 @@ Works) explicitly permits. They carry no LGPL obligations and impose none.
   implementation keeps the rest of claw2 working.
 - Keep the LGPL notice inside `hss.cjs` and this file with any
   redistribution of the core.
-- Modifications to `hss.cjs` must stay under LGPL-3.0-or-later (or GPL-3.0,
+- Modifications to `hss.cjs` must stay under LGPL-3.0-only (or GPL-3.0,
   as LGPL-3.0 permits). Contributions to this file are accepted under
   LGPL-3.0 so improvements to the core come back to the project.
 - The rest of claw2 — including its own configuration files, build scripts
-  and documentation — is licensed under GNU AGPL-3.0-or-later; see
+  and documentation — is licensed under GNU AGPL-3.0-only; see
   [`LICENSE`](LICENSE). LGPL-3.0 and AGPL-3.0 are compatible: claw2 as a
-  combined work is conveyed under AGPL-3.0-or-later, while `hss.cjs` itself
-  remains available on LGPL-3.0-or-later terms.
+  combined work is conveyed under AGPL-3.0-only, while `hss.cjs` itself
+  remains available on LGPL-3.0-only terms.
