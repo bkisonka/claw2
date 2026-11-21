@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Pending seed of the chain of activation vectors → mixed into the HSS chronicle when creating a node.
  */

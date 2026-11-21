@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { writeFileSync, unlinkSync, readFileSync, existsSync } from "node:fs";
 import { resolve, basename, relative, isAbsolute } from "node:path";
 import type OpenAI from "openai";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Sanitization when recording into long-term memory (block of dangerous patterns according to TK).
  */

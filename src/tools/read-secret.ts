@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Access to secrets via allowlist (step 4). Only identifiers from secrets.allowlist.
  * Environment variables are supported: id = variable name (for example OPENAI_API_KEY).

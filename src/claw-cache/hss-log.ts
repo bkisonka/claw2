@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * HSS logging for debugging and comparing behavior before/after changes.
  * CLAW2_HSS_LOG=0 — off; 1 or unset — brief events; verbose — with context preview.

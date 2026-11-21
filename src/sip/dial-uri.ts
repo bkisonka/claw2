@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Build UDP-safe SIP dial URIs for the Node media backend (udp:true, tcp:false).
  *

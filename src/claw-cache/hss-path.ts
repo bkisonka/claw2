@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Resolve path to hss.cjs (repo root in dev, claw2-runtime root when packaged).
  */

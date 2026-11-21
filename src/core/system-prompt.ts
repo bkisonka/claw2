@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { CONTENT_BOUNDARY_WARNING } from "../security/content-boundary.js";
 import { loadAssistantPersona } from "./assistant-persona.js";
 import type { Claw2Config } from "../config/types.js";

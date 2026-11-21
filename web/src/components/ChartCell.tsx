@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Render a "chart" cell: JSON data for TradingView Lightweight Charts.
  * Format: { "series": [{ "type": "line"|"area", "data": [{ "time": "2024-01-01", "value": 100 }, ...] }], "title"?: string }

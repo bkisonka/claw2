@@ -20,13 +20,12 @@ LGPL-3.0 applies to **exactly one file**: `hss.cjs`. It may be studied,
 modified and redistributed on LGPL-3.0 terms; modified versions of it must
 in turn remain under LGPL-3.0-or-later.
 
-Everything else in the repository is part of the proprietary Software under
-[`LICENSE`](LICENSE), including the TypeScript layer that uses the core
-(`src/claw-cache/hss-*.ts`, `src/core/hss-middleware.ts` and the rest of
-`src/`). Those files are not derivatives of the LGPL library: they exercise
-it through its public API, which LGPL-3.0 section 4 (Combined Works)
-explicitly permits for a proprietary combined work. They carry no LGPL
-obligations and impose none.
+Everything else in the repository is free software under
+**GNU AGPL-3.0-or-later** ([`LICENSE`](LICENSE)), including the TypeScript
+layer that uses the core (`src/claw-cache/hss-*.ts`, `src/core/hss-middleware.ts`
+and the rest of `src/`). Those files are not derivatives of the LGPL library:
+they exercise it through its public API, which LGPL-3.0 section 4 (Combined
+Works) explicitly permits. They carry no LGPL obligations and impose none.
 
 ## Interaction with claw2
 
@@ -40,5 +39,7 @@ obligations and impose none.
   as LGPL-3.0 permits). Contributions to this file are accepted under
   LGPL-3.0 so improvements to the core come back to the project.
 - The rest of claw2 — including its own configuration files, build scripts
-  and documentation — is governed solely by the proprietary license; see
-  LICENSE section 3, which grants the same carve-out for this file.
+  and documentation — is licensed under GNU AGPL-3.0-or-later; see
+  [`LICENSE`](LICENSE). LGPL-3.0 and AGPL-3.0 are compatible: claw2 as a
+  combined work is conveyed under AGPL-3.0-or-later, while `hss.cjs` itself
+  remains available on LGPL-3.0-or-later terms.

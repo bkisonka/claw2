@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Encoder model: generating agent code with context from the database (dropped / winner).
  * A separate model, tailored for coding.

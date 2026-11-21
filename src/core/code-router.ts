@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Hybrid routing for skills vs code-in-chat.
  * Hint/retry only for *creating a skill/agent in agents/* — never for “show me bubble sort”.

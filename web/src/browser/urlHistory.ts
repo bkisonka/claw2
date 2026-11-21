@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Persistent visited-URL history for the embedded browser omnibox. */
 
 export type UrlHistoryEntry = {

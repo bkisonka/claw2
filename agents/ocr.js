@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Image OCR (Tesseract.js)
 // Call: run_agent({script:"ocr.js", args:["uploads/img.png","eng+rus"]})
 // In: argv[2]=path to image; argv[3]?=language; argv[4]?=txt name in output

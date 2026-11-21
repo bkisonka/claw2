@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Routing for image generation: heuristic “draw / add to the picture” + retry without tool_calls.
  * Level 1: hint when there is an explicit intent (and when editing, if there is already an image in the story).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * SMED v1 frame protocol (sip-media-sidecar Unix IPC).
  * Ref: rag2/sip-media-sidecar/docs/IPC.md

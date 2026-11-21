@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * MIME helpers for attachments. Android file pickers (gallery, Documents UI)
  * frequently hand us a File with an empty `type`, so the mime must be

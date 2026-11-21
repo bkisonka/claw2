@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { Link, NavLink, useLocation, Navigate } from "react-router-dom";
 import { Settings } from "../components/Settings";
 import { AccountTab } from "../components/AccountTab";

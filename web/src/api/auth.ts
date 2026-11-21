@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { apiBase } from "../config";
 import { getAuthHeaders } from "../auth/storage";
 

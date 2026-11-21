@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Privacy multimodal orchestration (phase 2).
  * Sidecar does OCR/PDF/paint; PiiMasker decides what to redact/block.

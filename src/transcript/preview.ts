@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** One-line preview of the transcript message.*/
 export function transcriptPreview(content: string, maxChars: number): string {
   const line = content.replace(/\s+/g, " ").trim();

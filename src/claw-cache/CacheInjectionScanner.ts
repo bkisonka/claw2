@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Scanning text from the cache for prompt injection patterns.
  * Preventing model prompt infection through cache contents.

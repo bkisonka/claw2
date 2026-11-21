@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Contextual sidebar for the model (tools) + UI.
  * In-memory per sessionId; process lifetime.

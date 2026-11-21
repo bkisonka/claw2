@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Save text to DOCX (agents/output)
 // Call: run_agent({script:"save-docx.js", stdin:"<full document text>"})
 // In: stdin=full text (long text via stdin only; short text may use args[0])

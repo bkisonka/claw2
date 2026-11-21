@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { afterEach, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import { startEmbedDaemonServer } from "./embed-daemon.js";

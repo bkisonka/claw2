@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Unit checks for CELL parsing / streaming.
  * Run: npx tsx src/core/cell-blocks.test.ts

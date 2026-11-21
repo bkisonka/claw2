@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Packaging content in .claw-cache (ZIP) according to the specifications of claw-cache.md.
  *

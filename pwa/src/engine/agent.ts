@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * The agent loop: system prompt (persona + tools + memory), OpenAI-style
  * tool-call round-trips, attachments (vision parts / inlined text files).

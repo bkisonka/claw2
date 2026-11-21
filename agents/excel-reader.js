@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Read Excel (XLS/XLSX) → text/JSON
 // Call: run_agent({script:"excel-reader.js", args:["uploads/file.xlsx"]})
 // In: argv[2]=path to spreadsheet

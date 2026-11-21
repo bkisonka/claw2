@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Anti-hallucination layer ("обнуление вранья"): honesty policy in the system
  * prompt + a verification pass that re-reads the draft answer against the

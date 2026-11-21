@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Check paths for read/write/edit tools.
  * Only paths within the workspace or in allowlist.paths are allowed.

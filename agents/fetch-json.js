@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: HTTP GET URL → response body on stdout
 // Call: run_agent({script:"fetch-json.js", args:["https://…"]})
 // In: argv[2]=URL

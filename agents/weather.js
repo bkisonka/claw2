@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: 3-day weather forecast (open-meteo)
 // Call: run_agent({script:"weather.js", args:["Moscow"]})
 // In: argv[2]=city

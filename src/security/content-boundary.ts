@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Content Boundary: wrapping untrusted content with <<<EXT>>> / <<</EXT>>> markers.
  * Single wrapping point; sanitization of nested markers in the body.

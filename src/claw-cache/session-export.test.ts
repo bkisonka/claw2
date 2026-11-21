@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Unit checks for session → .claw-cache export helpers.
  * Run: npx tsx src/claw-cache/session-export.test.ts

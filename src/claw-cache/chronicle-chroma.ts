@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Persistence and semantic recall of HSS chronicles in Chroma (legacy).
  * When memory.backend=sqlite delegates to chronicle-sqlite.

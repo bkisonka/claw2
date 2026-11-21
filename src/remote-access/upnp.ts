@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Minimal UPnP IGD (Internet Gateway Device) client — no deps.
  * Discovers the LAN router via SSDP and AddPortMapping / DeletePortMapping.

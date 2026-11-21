@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Inline cells — mobile port of src/core/cell-blocks.ts.
  * The model writes [CELL type="html|chart|image|audio|video"]...[/CELL] blocks

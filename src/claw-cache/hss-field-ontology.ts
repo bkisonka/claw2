@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * HSS field ontology (hss.txt): topologically stable node.
  * P = N×E/D, C = ρ^d×Φ, ∇S ≈ Φμ − Γμ + ξμ, 11D projection, chronicle resonance.

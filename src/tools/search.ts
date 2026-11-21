@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Universal web search: one model-facing tool, pluggable providers.
  * Providers: tavily | searxng | other (SearXNG-compatible custom endpoint).

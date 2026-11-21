@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Decode browser MediaRecorder blob (webm/opus, mp4, …) to PCM WAV for STT APIs.
  */

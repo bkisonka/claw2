@@ -1,6 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Uses the LGPL-licensed HSS core (hss.cjs, see LICENSE-HSS.md) via its API;
- * this file itself is part of the proprietary Software (see LICENSE).
+ * this file itself is licensed under AGPL-3.0-or-later (see LICENSE).
  */
 
 import type { Claw2Config } from "../config/types.js";

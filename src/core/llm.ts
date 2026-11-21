@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import OpenAI from "openai";
 import type { Claw2Config } from "../config/types.js";
 import type { AgentInfo } from "../agents/list.js";

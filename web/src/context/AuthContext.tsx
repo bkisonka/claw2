@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { UserMe } from "../api/auth";
 import { fetchMe, login as apiLogin, register as apiRegister, logout as apiLogout, changePassword as apiChangePassword } from "../api/auth";

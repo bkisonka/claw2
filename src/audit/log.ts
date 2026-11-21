@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Audit log of sensitive events (stage 4).
  * Events: memory_denied, lethal_trifecta, elevated_use, secret_access, message_policy_denied, file_read, file_write, file_edit.

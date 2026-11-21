@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Read, write, edit tools for the orchestrator. Paths are checked using isPathAllowed.
  * The alias "uploads" and "uploads/..." are substituted from config.uploads.hostPath.

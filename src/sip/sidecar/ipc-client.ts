@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * SMED v1 IPC client over Unix domain socket (Node net).
  * Windows named-pipe: not in v1 — resolveSipMediaBackend falls back to node.

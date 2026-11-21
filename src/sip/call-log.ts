@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Persistent call logs for SIP phone_call sessions.
  * Stored as JSON under .claw2/data/call-logs.json (newest first).

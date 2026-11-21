@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Selection algorithm and choice of version to launch.
  * Task = model user request (there is no such thing as a “bat”). The agent (version) performs the task and may be damaged.

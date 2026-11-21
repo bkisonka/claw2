@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * SIP UA: REGISTER to virtual PBX + outgoing/incoming calls (RTP PCM).
  * Stack: @vexyl.ai/sip (without native deps).

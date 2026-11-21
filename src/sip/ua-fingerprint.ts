@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * SIP UA identity fingerprint — used to skip destructive restart on every phone_call sync.
  */

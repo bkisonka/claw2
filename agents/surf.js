@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Parse URL (HTML/RSS/Atom/JSON Feed) → structured JSON
 // Call: run_agent({script:"surf.js", args:["https://…"]})
 // In: argv[2]=URL

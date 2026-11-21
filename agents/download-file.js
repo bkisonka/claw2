@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Download file by URL into agents/output
 // Call: run_agent({script:"download-file.js", args:["https://…", "optional-name.ext"]})
 // In: argv[2]=URL; argv[3]?=file name

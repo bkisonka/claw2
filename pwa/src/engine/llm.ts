@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Direct OpenAI-compatible LLM client — no gateway. Runs in the WebView and
  * talks to whatever endpoint the user configured (cloud API or local

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Chat title from the first user request:
  * the first phrase in its entirety, or a shortened summary if the phrase is too long.

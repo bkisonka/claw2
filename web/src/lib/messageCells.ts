@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { resolveAssistantCells, type ParsedCell } from "../../../src/core/cell-blocks";
 
 export type DisplayCell = ParsedCell;

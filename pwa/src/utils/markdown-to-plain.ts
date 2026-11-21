@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Markdown → readable plain text for the clipboard (port of the desktop
  * web/src/utils/markdown-to-plain.ts), plus mobile-specific cleanup of the

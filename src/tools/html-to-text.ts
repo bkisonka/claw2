@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Convert HTML responses to readable plain text for LLM context.
  * Content links become markdown [text](url); chrome/nav links are dropped.

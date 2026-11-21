@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Launch Gateway: HTTP API on the port from the config (gateway.port).
  * POST /chat - body { message, sessionId? }, response { content, sessionId }.

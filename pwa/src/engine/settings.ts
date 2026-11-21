@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Local app settings — the standalone mobile client has no gateway.
  * Everything lives in localStorage; LLM/tools/voice talk to their HTTP

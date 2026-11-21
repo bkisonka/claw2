@@ -1,9 +1,9 @@
 # Third-party notices (claw2)
 
-claw2 is proprietary software — see the `LICENSE` file for the terms of use.
-It builds on third-party open-source components; the authors and licenses of
-those components are listed below. Nothing in this file changes the terms of
-the respective third-party licenses.
+claw2 is free software licensed under GNU AGPL-3.0-or-later — see the
+`LICENSE` file for the full text. It builds on third-party open-source
+components; the authors and licenses of those components are listed below.
+Nothing in this file changes the terms of the respective third-party licenses.
 
 ## Notable components
 
@@ -16,20 +16,27 @@ the respective third-party licenses.
 | `acme-client` (+ `@peculiar/x509`, `asn1js`, `axios`, `node-forge`, …) | MIT / BSD-3-Clause / (BSD-3-Clause OR GPL-2.0) | Let's Encrypt / remote HTTPS |
 | `better-sqlite3`, `sqlite-vec` | MIT | Local storage |
 | `react`, `react-dom`, `vite` and other frontend libraries | MIT | Web and mobile web client |
+| Gradle wrapper (`pwa/android/gradle/wrapper/`) | Apache-2.0 | Gradle, Inc. Wrapper scripts and JAR vendored in-tree; the Android project itself is Capacitor-scaffolded (Apache-2.0 template files keep their origin) |
 
 Other dependencies bundled at build time retain their own licenses; consult
 `node_modules/*/package.json` after installing dependencies.
 
 ## License files
 
-- `LICENSE` — the claw2 proprietary license (English, canonical).
-- `LICENSE.ru.md` — Russian translation, for convenience only.
-- `EULA.txt` — the end-user license agreement: terms of use and risk
-  allocation, applied together with the license (Russian text is
-  authoritative).
+- `LICENSE` — GNU AGPL-3.0: the license of claw2 (English, canonical).
+- `LICENSE.ru.md` — Russian summary of the license, for convenience only.
+- `COPYING` — GNU GPL-3.0 text, referenced by LGPL-3.0 for the HSS core.
+- `COPYING.LESSER` — GNU LGPL-3.0 text.
+- `LICENSE-HSS.md` — scope and terms of the LGPL-licensed HSS core.
 
 ## Separately licensed first-party files
 
 | File | License | Notes |
 |------|---------|-------|
 | `hss.cjs` (HSS core — dialog-stability state model) | LGPL-3.0-or-later | First-party file under a copyleft license on purpose: it may be studied, modified and redistributed on LGPL-3.0 terms; modified versions must remain LGPL-3.0. See `LICENSE-HSS.md`. Contributions are accepted under LGPL-3.0 so improvements to the core come back to the project. |
+
+## Trademark
+
+The name "claw2" and the project logos are trademarks of Vitaliy Bondar.
+The GNU AGPL-3.0 license grants rights to the source code, but no rights to
+use the claw2 name or branding to promote derived products or services.

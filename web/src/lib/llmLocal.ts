@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Mirror of src/config/llm-ready isLikelyLocalLlmEndpoint for UI status. */
 export function isLikelyLocalBaseUrl(baseURL: string): boolean {
   if (!baseURL?.trim()) return false;

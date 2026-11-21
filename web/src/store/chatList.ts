@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Chat message (compatible with Chat.tsx). */
 import { t } from "../i18n";
 import { deriveChatTitleFromRequest } from "../../../src/core/chat-title";

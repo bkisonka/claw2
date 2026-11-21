@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Shared better-sqlite3 + sqlite-vec DB for vector memory and HSS chronicle.
  */

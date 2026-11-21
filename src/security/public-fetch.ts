@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Undici fetch with a connect-time SSRF guard: a custom DNS lookup refuses to
  * hand the socket any loopback/private/link-local address. This closes the

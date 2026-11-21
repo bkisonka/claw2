@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { randomBytes } from "node:crypto";
 import type { PromptContext } from "./prompt-history.js";
 import { releaseProvenance, type OriginTag } from "../security/origin.js";

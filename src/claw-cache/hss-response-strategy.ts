@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Model response strategy in the HSS stabilize context:
  * clarification — in-bounds clarification (normal for contradictory input),

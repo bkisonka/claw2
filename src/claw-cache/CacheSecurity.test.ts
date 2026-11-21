@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Integration checks for the shared-cache security pipeline:
  * pack (digests + Ed25519) → load (verify + TOFU pin) → tamper detection →

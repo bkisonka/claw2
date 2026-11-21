@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Task ID for natural selection of agents.
  * taskId = first 16 hex characters from SHA-256(toolName + ":" + JSON.stringify(inputSchema)).

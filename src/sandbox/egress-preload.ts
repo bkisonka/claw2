@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Preloaded into every skill process when sandbox.egress.mode is "guard"
  * (NODE_OPTIONS=--require <dist/egress-preload.cjs>): forces the skill's

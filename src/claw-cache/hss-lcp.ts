@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * LCP-1 — Luck Control Protocol (verifiable module, hss.txt).
  * P(1) = 0.5 + α·(ξ − 0.5); honest statistics, no "from chat" forgery.

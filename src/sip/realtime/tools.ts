@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Bridge Realtime function_call ↔ claw2 tools (voice-safe subset).
  * Uplink mute during tool wait is handled inside OpenAiStyleRealtimeProvider.

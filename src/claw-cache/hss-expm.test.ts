@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Run: npx tsx src/claw-cache/hss-expm.test.ts
  * Guarantees unitary evolve uses block expm at rhoDim=11 (no identity fallback from short ξ).

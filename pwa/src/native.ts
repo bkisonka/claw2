@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { Capacitor } from "@capacitor/core";
 
 /** True inside the packaged native app (Android/iOS); false in browsers / hosted PWA. */

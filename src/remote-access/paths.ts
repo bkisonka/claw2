@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { getClaw2StateDir } from "../config/state-dir.js";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Session stub for stage 1 (no backend).
  * Key in localStorage; later replace with GET /api/me check and a token.

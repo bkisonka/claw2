@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Note appended to the user-facing reply when FRAGMENTED/CRITICAL by ΔS:
  * content may be contested or unverified (no retry).

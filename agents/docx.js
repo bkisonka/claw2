@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Extract text from DOCX (mammoth)
 // Call: run_agent({script:"docx.js", args:["uploads/file.docx"]})
 // In: argv[2]=path to .docx

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Run the agent script in Docker-sandbox or on the host (useDocker: false).
  * Default policy: write only to agents/output (in the container - /app/output).

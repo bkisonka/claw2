@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import type { ChatRepository } from "../gateway/db/chat-repository.js";
 import type { InsightReasonCode } from "./types.js";
 

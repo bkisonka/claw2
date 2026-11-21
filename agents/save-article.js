@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Save article text to agents/output
 // Call: run_agent({script:"save-article.js", stdin:"…text…"})
 // In: stdin=article text

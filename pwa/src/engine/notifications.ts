@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Напоминания: системные локальные уведомления (@capacitor/local-notifications),
  * автономно — без фонового JS и внешних серверов.

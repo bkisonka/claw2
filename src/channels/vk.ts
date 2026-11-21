@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * VK channel: Long Poll community → orchestrator → reply in DM.
  * Session by peer_id (vk:<peer_id>). The functionality is similar to Telegram:

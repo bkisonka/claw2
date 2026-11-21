@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import type { PrivacyCustomRule, ReplaceFn } from "./types.js";
 
 const MAX_PATTERN_LEN = 256;

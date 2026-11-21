@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Build history for the LLM prompt separately from the full UI chat feed.
  * The summary is cached (prompt_summary/sessions map); messages are not overwritten.

@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Test runner for the gateway sources. Discovers every *.test.ts file under
  * src/ and dispatches by framework:

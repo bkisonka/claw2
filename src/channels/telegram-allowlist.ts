@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Access to the Telegram bot via allowlist: owner (ownerId) + approved by invitation.
  * Storage: SQLite (allowed_users, invite_tokens, invite_requests).

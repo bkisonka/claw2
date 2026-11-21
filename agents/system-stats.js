@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: System status (CPU/memory/disks)
 // Call: run_agent({script:"system-stats.js"})
 // In: no args (or path to /proc snapshot)

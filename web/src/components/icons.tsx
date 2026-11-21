@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Uniform 18×18 stroke icons for the desktop shell. */
 import type { SVGProps } from "react";
 

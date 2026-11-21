@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { useEffect, useState } from "react";
 import { useT } from "../i18n";
 import type { RuntimeDiedInfo } from "../desktop";

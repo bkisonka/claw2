@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Normalize assistant text for markdown display.
  * Some models (e.g. MiniMax) emit a JSON string with literal `\n` instead of real newlines,

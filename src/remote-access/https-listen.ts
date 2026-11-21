@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * HTTPS reverse-proxy to public port → local gateway (127.0.0.1).
  * Terminates TLS with a certificate from LE DNS-01.

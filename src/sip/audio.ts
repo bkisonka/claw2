@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * WAV ↔ PCM helpers for SIP (G.711 path expects 16-bit LE mono @ 8 kHz).
  */

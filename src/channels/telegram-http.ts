@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * HTTP client Bot API: only Telegram goes through proxyUrl (v2rayA / SSH -D).
  * LLM, voice, etc. - no proxy.

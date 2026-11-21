@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Shared WebSocket Realtime adapter for OpenAI-compatible event streams
  * (OpenAI, Yandex Speech Realtime, xAI Grok Voice).

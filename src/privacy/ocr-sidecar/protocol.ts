@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * PDOC v1 frame protocol (privacy-ocr-sidecar Unix IPC).
  * Ref: privacy-ocr-sidecar/docs/IPC.md

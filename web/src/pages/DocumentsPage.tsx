@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { Link } from "react-router-dom";
 import { DocumentsTab } from "../components/DocumentsTab";
 import { useT } from "../i18n";

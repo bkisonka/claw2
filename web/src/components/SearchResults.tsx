@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import type { ReactNode } from "react";
 import type { SearchResultItemApi } from "../api/chat";
 import { useT } from "../i18n";

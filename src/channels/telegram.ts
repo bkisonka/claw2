@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Telegram channel: long poll getUpdates → Content Boundary → orchestrator → reply to chat.
  * Session by chat_id (telegram:<chat_id>).

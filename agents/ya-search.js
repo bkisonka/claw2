@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Web search (multi-engine with fallback)
 // Call: run_agent({script:"ya-search.js", args:["query","--limit=10"]})
 // In: argv[2]=query; optional --limit=N

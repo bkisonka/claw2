@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Inbound-document text extraction (pdf / xlsx / docx) — mobile counterpart of
  * the desktop readers (pdf-parse/mammoth in the agent sandbox). Libraries are

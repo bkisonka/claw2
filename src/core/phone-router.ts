@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Fast-path hints when the user clearly asks to place an outbound call.
  * Goal: first tool round = phone_call(dial), not status/search/monologue.

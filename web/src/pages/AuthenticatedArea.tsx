@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useLocation, Navigate, useNavigate } from "react-router-dom";
 import { Layout } from "../components/Layout";

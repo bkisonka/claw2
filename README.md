@@ -294,16 +294,24 @@ reproduced with `npx cap sync` before the first build.
 
 ## License
 
-claw2 is proprietary software, available free of charge for personal,
-non-commercial use and modification for one's own needs. Redistribution and
-commercial use are not permitted without a separate written agreement with
-the copyright holder. See [LICENSE](LICENSE) (English, canonical) and
-[LICENSE.ru.md](LICENSE.ru.md) (Russian translation), applied together with
-the end-user agreement [EULA.txt](EULA.txt). Third-party open-source
-components keep their own licenses — see [NOTICE](NOTICE).
+claw2 is free software: you can redistribute it and/or modify it under the
+terms of the **GNU Affero General Public License v3.0 or later**
+([AGPL-3.0-or-later](LICENSE)) as published by the Free Software Foundation.
+In short: you may use, study, modify and redistribute claw2 for any purpose,
+including commercially; modified versions you distribute must stay open under
+AGPL-3.0-or-later; and if you run a modified version as a network service,
+you must offer its source code to the users of that service (AGPL §13).
+There is no warranty, to the extent permitted by law.
 
-The HSS core (`hss.cjs` — the dialog-stability state model) is deliberately
-licensed separately under [LGPL-3.0-or-later](LICENSE-HSS.md): it may be
-studied, modified and redistributed on LGPL terms, and modified versions
-must remain LGPL — improvements to the core are expected to come back to
-the project. Everything else remains under the proprietary license above.
+The HSS core (`hss.cjs` — the dialog-stability state model) is licensed
+separately under [LGPL-3.0-or-later](LICENSE-HSS.md), which is compatible
+with AGPL-3.0: it may be studied, modified and redistributed on LGPL terms,
+and modified versions must remain LGPL — improvements to the core are
+expected to come back to the project.
+
+Third-party open-source components keep their own licenses — see
+[NOTICE](NOTICE). Contributions are accepted under AGPL-3.0-or-later with
+no CLA — see [CONTRIBUTING.md](CONTRIBUTING.md). Commercial licensing is
+also available on request — contact the copyright holder via the repository.
+The name "claw2" and the project logos are trademarks of Vitaliy Bondar;
+the license grants rights to the code, not to the branding.

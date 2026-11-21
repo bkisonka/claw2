@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * generate_image tool: SD txt2img/img2img or OpenAI-compatible Images (generations/edits).
  * The result is a PNG in agents/output.

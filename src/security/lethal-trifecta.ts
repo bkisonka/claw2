@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Lethal Trifecta: heuristic (1) data access + (2) untrusted content + (3) outbound sending.
  * Called from the orchestrator before message is executed.

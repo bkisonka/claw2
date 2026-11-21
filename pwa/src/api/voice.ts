@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * PTT voice: STT via an OpenAI-compatible endpoint —
  * POST {sttBaseURL}/audio/transcriptions, multipart file+model, API key as

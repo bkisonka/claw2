@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Client for voice service (STT + TTS). Used by Telegram bot and, if necessary, by the web.
  */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Chat API facade — now backed by the in-app engine (IndexedDB + direct LLM),
  * keeping the exact interface the UI components use.

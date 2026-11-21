@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Standalone egress guard sidecar for the Docker sandbox tier. Bundled to a
  * single CJS file (dist/egress-sidecar.cjs) and run inside a minimal node

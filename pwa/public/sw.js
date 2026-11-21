@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /* Service worker: offline shell for iOS/Android PWA. API (/chat, /files, /api) never cached. */
 const CACHE = "claw2-pwa-v5";
 const PRECACHE = ["/pwa/", "/pwa/index.html", "/pwa/manifest.json", "/pwa/apple-touch-icon.png"];

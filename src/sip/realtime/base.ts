@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Base Realtime adapter: EventEmitter + resample + uplink mute.
  * Concrete providers (Yandex / OpenAI / xAI) implement WS I/O.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Vector memory: write / recall. Backends: in-memory, chroma, sqlite-vec.
  */

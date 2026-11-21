@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * In-app agent tools — every one is a direct HTTP call or pure JS,
  * no server component involved.

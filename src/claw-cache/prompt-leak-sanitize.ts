@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Strip HSS / Recap / EXT scaffolding that models sometimes dump into chat replies.
  */

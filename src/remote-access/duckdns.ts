@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Lightweight DuckDNS client: A-record and TXT update for ACME DNS-01.
  * API: https://www.duckdns.org/spec.jsp

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Checking URLs for sensitive data and filtering external content before Content Boundary.
  * Used for web_fetch (URL + response body) and run_agent output.

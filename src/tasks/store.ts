@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Storage of tasks with importance and urgency: SQLite (.claw2/tasks.db).
  */

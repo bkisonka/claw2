@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Export session history to .claw-cache (distillation of the dialogue of a strong model to activate another).
  *

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Dynamic ρ matrix dimension: 4 → 8 → 11 as capacity C grows.
  */

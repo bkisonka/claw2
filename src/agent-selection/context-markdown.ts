@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Context generator for the encoder model: Markdown from database data (dropped / winner).
  * Readable by both humans and models.

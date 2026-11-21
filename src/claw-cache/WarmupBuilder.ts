@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Constructing a preamble (warmup) for a request to LLM from the loaded cache.
  * Priority: activation/dialogue.jsonl (full dialogue up to peak_depth_turn),

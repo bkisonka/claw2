@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Persist visit_marker rows locally — gateway history stores only user/assistant.
  * Uses localStorage so markers survive app restart (sessionStorage did not).

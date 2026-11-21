@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Load assistant persona markdown (image/personality) for system prompt.
  * Ops/tools stay in system-prompt.ts; this file is user-editable for beta.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Append-only chat transcript (not affected by summarize).*/
 
 export interface TranscriptSearchHit {

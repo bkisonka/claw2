@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Idle policy for the shared ONNX embed daemon. */
 
 export const DEFAULT_EMBED_IDLE_MS = 60 * 60 * 1000;

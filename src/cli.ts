@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * CLI: user message or subcommand audit, agent-selection.
  * claw2 "message" - chat; claw2 audit [--json] - security audit;

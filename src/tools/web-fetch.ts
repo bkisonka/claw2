@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * web_fetch tool: GET by URL; HTML → readable text, then Content Boundary.
  * SSRF guard: every hop (initial URL and each redirect) is checked against

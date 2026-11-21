@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * xAI Grok Voice Realtime adapter (OpenAI-compatible WS, server-side API key).
  */

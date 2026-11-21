@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Shared ONNX embedding daemon (OpenAI-compatible).
  * First process to bind the port owns the model; others just call HTTP.

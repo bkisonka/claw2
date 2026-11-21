@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Individual desktop / single-user client: no login, no multi-user, no Postgres.
  * Hosted deployments keep AuthContext dual-mode when this returns false.

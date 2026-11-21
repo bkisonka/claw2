@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Claw2Config } from "../config/types.js";

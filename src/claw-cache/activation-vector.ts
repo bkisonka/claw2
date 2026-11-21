@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Chain of activation vectors (HSS ContextEncoder 64-dim) for .claw-cache.
  * vector.npy: float32 shape [N, 64] - one line per dialogue line.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Parent/subagent skill coding: N parallel candidates, scoped read/write/edit,
  * auto smoke run_agent, parent accepts via accept_skill.

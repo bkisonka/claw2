@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * PDOC v1 job client over Unix socket (POSIX) or named pipe (Windows).
  */

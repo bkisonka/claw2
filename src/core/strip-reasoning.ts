@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Strip model chain-of-thought markers from assistant content.
  * MiniMax-M3 uses <mm:think>…</mm:think> (often interleaved); plain <think> also appears.

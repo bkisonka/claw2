@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 type ClosableAudioContext = Pick<AudioContext, "state" | "close">;
 type StoppableRecorder = Pick<MediaRecorder, "state" | "stop" | "ondataavailable">;
 type StoppableMediaStream = Pick<MediaStream, "getTracks">;

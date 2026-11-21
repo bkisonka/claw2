@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { en, type MessageKey } from "./en";
 import { ru } from "./ru";
 import { readStoredLocale } from "./storage";

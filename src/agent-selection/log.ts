@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Logging of natural selection of skills (agentSelection).
  * Always stderr prefixed with [agent-selection]; with audit.logPath - duplicates key events.

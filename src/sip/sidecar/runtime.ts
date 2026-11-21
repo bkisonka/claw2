@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * SipSidecarRuntime: spawn + SMED health + call/media control.
  * Fail → caller falls back to Node SipStack (no throw from tryStart).

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Shared gallery helpers / image actions in chat. */
 
 export const IMAGE_DELETED_CELL_TYPE = "image_deleted";

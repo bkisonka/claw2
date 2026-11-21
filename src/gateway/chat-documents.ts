@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Chat documents: links /files/output|uploads/… from history + files with sessionId prefix.
  */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * IndexedDB storage: chats, messages (with attachment metadata), memory chunks.
  * Replaces the gateway's sqlite for the standalone mobile client.

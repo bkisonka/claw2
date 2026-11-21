@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Lightweight input "chaos" heuristic: contradictions, instruction flips, language mixing.
  * Complements ΔS from HSS — does not replace ρ, but correlates better with contradictory text.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Types for natural selection of agents (agent-selection).
  * Task = niche by taskId; version = one version of the agent code; run = one version run.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Security audit: configuration checks (sandbox, Content Boundary, memory, paths, auth, skills).
  */

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Locates (and, in dev setups, builds) the bundled egress preload
  * (dist/egress-preload.cjs) that skills receive via NODE_OPTIONS --require.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Wrapper over HSS (hss.js) for personality stabilization and orchestration.
  * Chronicle is persisted in Chroma (when configured); semantic-search entropy stays within bounds.

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: line/area chart → PNG + CHART_JSON for chat
 // Call: run_agent({script:"chart.js", stdin: JSON.stringify({title, data:[{time|label,value}], chartType:"line"|"area"})})
 // In: stdin=JSON (or argv[2]=path to JSON)

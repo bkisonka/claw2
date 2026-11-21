@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import pg from "pg";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";

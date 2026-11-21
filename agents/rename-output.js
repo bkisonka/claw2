@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 // Agent: Rename/copy output.docx → given name
 // Call: run_agent({script:"rename-output.js", args:["new-name.docx"]})
 // In: argv[2]=target file name

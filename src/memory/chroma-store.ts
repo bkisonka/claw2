@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Memory storage based on Chroma (persistent vector database).
  * Embeddings are calculated externally (embedding.ts); ready-made vectors are transferred here.

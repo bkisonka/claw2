@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * claw2 state directory: CLAW2_STATE_DIR or ~/.claw2 (desktop),
  * otherwise cwd/.claw2 (dev CLI without STATE_DIR).

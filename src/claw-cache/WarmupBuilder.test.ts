@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Unit checks for warmup building under the sharing hardening:
  * fail-closed semantics, filtered reporting, sentinel escaping.

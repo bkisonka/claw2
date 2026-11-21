@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Minimal NumPy .npy (v1.0) reader/writer for float32 C-order.
  * Needed for activation/vector.npy without dependency on numpy.

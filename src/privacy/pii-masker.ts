@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import type OpenAI from "openai";
 import { applyBuiltinRules, applyIdentityHeuristics } from "./rules-builtin.js";
 import { applyCustomRules, compileCustomRules, type CompiledCustomRule } from "./rules-custom.js";

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Tests for resolveLocalImageFile path allowlist.
  * Run: npx tsx src/tools/generate-image.test.ts

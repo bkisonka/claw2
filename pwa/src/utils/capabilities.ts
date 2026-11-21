@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Capability-note helpers for the provider card: notes is a comma-separated
  * free-form string (consumed by the router dispatcher prompt), edited in the

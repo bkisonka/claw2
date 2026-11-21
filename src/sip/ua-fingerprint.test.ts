@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 import { describe, expect, it } from "vitest";
 import type { Claw2Config } from "../config/types.js";
 import { sipUaFingerprint } from "./ua-fingerprint.js";

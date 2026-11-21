@@ -1,3 +1,8 @@
+/*
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (C) 2026 Vitaliy Bondar
+ */
+
 /* claw2 dark reference layout — grayscale palette */
 :root {
   --bg-page: #202022;

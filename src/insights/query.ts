@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /** Build a compact linker query from the user turn + optional W page meta. */
 export function buildInsightQuery(params: {
   userText: string;

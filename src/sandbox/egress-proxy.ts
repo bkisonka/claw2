@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Egress guard proxy for skills (sandbox.egress.mode: "guard", the default):
  * an HTTP/CONNECT proxy in front of the same SSRF rules as web_fetch

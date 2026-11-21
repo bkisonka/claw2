@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Prompt-injection containment, mobile mirror of the desktop content boundary:
  * everything fetched from the web (fetch_url, web_search, DDG fallback) is

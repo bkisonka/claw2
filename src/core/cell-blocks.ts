@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Parsing [CELL type="..."]...[/CELL] blocks in the model response for inline insertion into chat (calendars, charts, HTML).
  * Result: text with placeholders [CELL_0], [CELL_1], ... and an array of cells for substitution at the front.

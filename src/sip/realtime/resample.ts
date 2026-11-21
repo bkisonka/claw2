@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 Vitaliy Bondar
+
 /**
  * Resample helpers: SIP G.711 path (8 kHz) ↔ Realtime provider rates (e.g. 24 kHz).
  */
