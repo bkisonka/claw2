@@ -78,8 +78,8 @@ If you use a local model server on the host (for example Ollama on port
   before/after comparison (`orchestrator.hss.enabled`).
 - **Long-term memory.** The agent remembers facts between conversations and
   recalls the relevant ones before each answer. Memory is stored locally.
-- **Scheduler and reminders.** Skills can run on a schedule, in the classic
-  crontab notation.
+- **Reminders.** One-off or recurring reminders (daily, every 3 days or
+  weekly) are created in chat and delivered to Telegram when due.
 - **Web interface.** A full chat front-end with sessions, settings and
   attachments, served by the same container.
 - **A mobile web client.** A standalone installable web application (under
