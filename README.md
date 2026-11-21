@@ -2,17 +2,55 @@
 
 [English](README.md) · [Русский](README.ru.md)
 
-claw2 is a personal, chat-driven AI agent. It talks to the language-model
-provider of your choice, keeps conversations, files and long-term memory on
-your own machine, and extends itself with small skills — plain Node.js
-scripts that it can write and then run when a task calls for one. Security
-restrictions are enabled by default: the agent works inside a limited
-sandbox, touches only the directories you allow, and records its actions in
-an audit log.
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-built_in_wiki-informational.svg)](docs/wiki/en/Home.md)
 
-The software is distributed as source code for self-hosting. A Linux machine
-with Docker is all that is required; the distribution format is a single
-container that serves both the web interface and the API.
+**A personal AI agent you host yourself.** It works with the language-model
+provider of your choice — a cloud API or a local server such as Ollama or
+LM Studio — and keeps conversations, files and long-term memory on your own
+machine. What the built-in tools cannot do, it delegates to a skill: a
+plain Node.js script that the agent can write itself and run after your
+confirmation.
+
+Security is on by default: the agent works inside a limited sandbox,
+touches only the directories you allow, and records its actions in an
+audit log. Conversations live in a local SQLite database; no cloud service
+receives them — the only outbound traffic is the traffic you configure.
+
+The distribution format is source code for self-hosting: a Linux machine
+with Docker is all that is required, and a single container serves both
+the web interface and the API.
+
+## Quick start
+
+```bash
+git clone https://github.com/bkisonka/claw2 claw2
+cd claw2
+
+# 1. Environment: the model API key and the gateway access key.
+cp .env.example .env
+openssl rand -hex 24   # → CLAW2_GATEWAY_API_KEY
+nano .env
+
+# 2. Configuration: create the agent config from the example.
+cp .claw2/claw2.gateway.yaml.example .claw2/claw2.yaml
+nano .claw2/claw2.yaml
+
+# 3. Build and start.
+docker compose up -d --build
+```
+
+Open **http://localhost:8080** — the web interface of the agent; it asks
+for the gateway key on entry. Health state is reported at `GET /health`.
+
+By default the port is published on the loopback interface only. To reach
+the agent from other devices, change `127.0.0.1:8080:3000` in `compose.yml`
+to `8080:3000` — gateway authentication (on in the example config) is what
+protects the service once the port is reachable.
+
+If you use a local model server on the host (for example Ollama on port
+11434), the container reaches it at `http://host.docker.internal:11434/v1`
+— put that address into `llm.baseURL` in the config.
 
 ## What it offers
 
@@ -78,37 +116,6 @@ model provider and whatever the agent fetches on your behalf.
   local server such as LM Studio or Ollama.
 
 Building from source without Docker requires Node.js 20 or newer.
-
-## Quick start
-
-```bash
-git clone https://github.com/bkisonka/claw2 claw2
-cd claw2
-
-# 1. Environment: the model API key and the gateway access key.
-cp .env.example .env
-openssl rand -hex 24   # → CLAW2_GATEWAY_API_KEY
-nano .env
-
-# 2. Configuration: create the agent config from the example.
-cp .claw2/claw2.gateway.yaml.example .claw2/claw2.yaml
-nano .claw2/claw2.yaml
-
-# 3. Build and start.
-docker compose up -d --build
-```
-
-Open **http://localhost:8080** — the web interface of the agent; it asks
-for the gateway key on entry. Health state is reported at `GET /health`.
-
-By default the port is published on the loopback interface only. To reach
-the agent from other devices, change `127.0.0.1:8080:3000` in `compose.yml`
-to `8080:3000` — gateway authentication (on in the example config) is what
-protects the service once the port is reachable.
-
-If you use a local model server on the host (for example Ollama on port
-11434), the container reaches it at `http://host.docker.internal:11434/v1`
-— put that address into `llm.baseURL` in the config.
 
 ## Configuration
 
