@@ -553,6 +553,16 @@ export interface Claw2Config {
     };
     message?: { allowedWebhooks?: string[]; policy?: "allow_one" | "require_confirmation" | "deny_bulk" };
   };
+  /**
+   * Self-update support: periodic latest-release check and the host-side
+   * updater watcher (scripts/update.sh). check: false disables the outbound
+   * call to the release feed (api.github.com).
+   */
+  updates?: {
+    check?: boolean;
+    /** Release feed override (default: GitHub latest release). */
+    feedUrl?: string;
+  };
   audit?: { logPath?: string; logFormat?: "text" | "json" };
   security?: { lethalTrifecta?: { enabled?: boolean; action?: "warn" | "block" } };
   secrets?: { allowlist?: string[]; requireConfirmation?: boolean };

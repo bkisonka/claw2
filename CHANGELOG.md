@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **In-app update flow**: the gateway periodically checks the latest GitHub
+  release (`updates.check: false` disables it) and the cabinet shows a toast
+  when a newer version is available; an **Update** link next to *Help* opens
+  a dialog that runs the update with a progress bar when the host-side
+  watcher (`scripts/update.sh --install`) is installed, and otherwise shows
+  the copy-paste command and watches the restart.
 - **Rename a chat**: a "Rename" item in the sidebar chat menu (web) and a
   pencil action in the mobile chat list (PWA). Enter saves, Escape cancels.
 

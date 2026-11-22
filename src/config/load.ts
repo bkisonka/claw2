@@ -813,6 +813,7 @@ function mergeConfig(partial: Partial<Claw2Config>): Claw2Config {
     allowlist,
     skills,
     tools,
+    updates: partial.updates,
     audit,
     security,
     secrets,

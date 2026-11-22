@@ -8,11 +8,15 @@ import { ActivationCacheTab } from "../components/ActivationCacheTab";
 import { PrivacyTab } from "../components/PrivacyTab";
 import { SkillsTab } from "../components/SkillsTab";
 import { PersonaTab } from "../components/PersonaTab";
+import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import { UpdateDialog } from "../components/UpdateDialog";
+import { UpdateToast } from "../components/UpdateToast";
 import { isSingleUserClient } from "../lib/singleUser";
 import { useT, useI18n } from "../i18n";
 
 export function CabinetPage() {
+  const [updateOpen, setUpdateOpen] = useState(false);
   const location = useLocation();
   const pathname = location.pathname;
   const { authMode } = useAuth();
@@ -69,7 +73,17 @@ export function CabinetPage() {
         >
           {t("cabinet.wiki")}
         </a>
+        <button
+          type="button"
+          className="cabinet-wiki-link cabinet-update-link"
+          title={t("update.linkTitle")}
+          onClick={() => setUpdateOpen(true)}
+        >
+          {t("update.link")}
+        </button>
       </header>
+      <UpdateToast onOpenDialog={() => setUpdateOpen(true)} />
+      {updateOpen && <UpdateDialog onClose={() => setUpdateOpen(false)} />}
       <nav className="cabinet-tabs" aria-label={t("cabinet.tabsAria")}>
         <NavLink
           to="/cabinet/settings"

@@ -198,6 +198,23 @@ runs after the image changed (a container keeps the image it was created
 from). On versions without that check, remove it once after updating:
 `docker rm -f claw2-egress-sidecar`.
 
+### Automatic updates (optional)
+
+The cabinet checks for new releases by itself and shows a toast when one is
+available; the **Update** link next to *Help* opens the update dialog. To run
+the whole update from the browser (progress bar included), install the
+host-side watcher once:
+
+```bash
+./scripts/update.sh --install   # systemd user unit; or: nohup ./scripts/update.sh --watch &
+```
+
+The watcher polls the gateway, serves *Start the update* clicks, runs
+`git pull` + `docker compose up -d --build` + image prune on the host and
+reports progress back to the UI. It refuses to update a dirty working tree.
+The outbound release check goes to `api.github.com`; disable it with
+`updates.check: false` in the config.
+
 ## Skills
 
 Skills live in `agents/` as ordinary JavaScript files. The container mounts

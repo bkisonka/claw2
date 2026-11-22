@@ -40,6 +40,14 @@ import { assessLlmConfigured, resolveLlmApiKey } from "../config/llm-ready.js";
 import { toolSearch, formatSearchHitsMarkdown } from "../tools/search.js";
 import { cellsToMeta, resolveAssistantCells, contentForLlmHistory } from "../core/cell-blocks.js";
 import { deriveChatTitleFromRequest } from "../core/chat-title.js";
+import {
+  checkForUpdate,
+  gatewayVersion as gatewayVersionSafe,
+  getUpdateStatus,
+  reportUpdateProgress,
+  requestUpdate,
+  UPDATE_FEED_URL,
+} from "./update.js";
 import { collectGalleryImages, markImageDeletedInMessages, imageCellsFromUploads, isImagePath } from "./gallery.js";
 import {
   collectChatDocuments,
@@ -1293,6 +1301,51 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       return;
     }
 
+    // --- Self-update: latest-release check + host-updater coordination ---
+    if (req.method === "GET" && p === "/api/update/check") {
+      if (config.updates?.check === false) {
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ current: gatewayVersionSafe(), checksDisabled: true }));
+        return;
+      }
+      try {
+        const result = await checkForUpdate(config.updates?.feedUrl?.trim() || UPDATE_FEED_URL);
+        const status = getUpdateStatus();
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin, "Cache-Control": "no-store" });
+        res.end(JSON.stringify({ ...result, autoUpdate: status.autoUpdate }));
+      } catch (err) {
+        res.writeHead(502, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+    if (req.method === "GET" && p === "/api/update/status") {
+      const status = getUpdateStatus();
+      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin, "Cache-Control": "no-store" });
+      res.end(JSON.stringify(status));
+      return;
+    }
+    if (req.method === "POST" && p === "/api/update/request") {
+      requestUpdate();
+      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (req.method === "POST" && p === "/api/update/report") {
+      // The host-side updater (scripts/update.sh) reports progress; it runs on
+      // the operator's machine and authenticates with the gateway key.
+      try {
+        const body = await parseBody(req, 16 * 1024);
+        const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        const next = reportUpdateProgress(data);
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ ok: true, percent: next.percent, step: next.step }));
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
     if (req.method === "GET" && p === "/api/files-token") {
       const requestUrl = new URL(req.url ?? "", "http://localhost");
       const path = filesReadPath(requestUrl.searchParams.get("path") ?? "");

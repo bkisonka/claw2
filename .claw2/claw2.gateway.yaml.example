@@ -97,6 +97,15 @@ skills:
     - save-docx.js
     - rename-output.js
     - chart.js
+# Self-update: the gateway periodically checks the latest GitHub release
+# (api.github.com) and the web UI shows a toast + an "Update" link in the
+# cabinet. Install the host-side watcher once
+# (./scripts/update.sh --install) and "Start the update" runs
+# git pull + docker compose up --build with a progress bar in the UI.
+# updates:
+#   check: false   # disable the outbound release check entirely
+#   feedUrl: https://api.github.com/repos/bkisonka/claw2/releases/latest
+
 sandbox:
   # Hard skill sandbox — on by default in this delivery (the compose stack
   # ships the restricted docker API proxy): every skill runs as a one-off
