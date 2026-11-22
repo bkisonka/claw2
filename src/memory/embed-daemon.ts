@@ -135,6 +135,39 @@ export function sharedEmbedBaseURL(host = SHARED_EMBED_HOST, port = SHARED_EMBED
   return `http://${host}:${port}/v1`;
 }
 
+export interface SharedEmbedHealthInfo {
+  ok?: boolean;
+  model?: string;
+  dim?: number;
+}
+
+/** True when a healthy daemon serves exactly the wanted model with the wanted dim. */
+export function embedDaemonMatches(
+  info: SharedEmbedHealthInfo | null,
+  model: string,
+  dim: number
+): boolean {
+  return Boolean(info?.ok) && info?.model === model && Number(info?.dim) === dim;
+}
+
+export async function sharedEmbedHealthInfo(
+  host = SHARED_EMBED_HOST,
+  port = SHARED_EMBED_PORT,
+  timeoutMs = 400,
+): Promise<SharedEmbedHealthInfo | null> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch(`http://${host}:${port}/health`, { signal: ac.signal });
+    if (!res.ok) return null;
+    return (await res.json()) as SharedEmbedHealthInfo;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 export async function sharedEmbedHealthOk(
   host = SHARED_EMBED_HOST,
   port = SHARED_EMBED_PORT,

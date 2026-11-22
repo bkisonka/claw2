@@ -117,7 +117,7 @@ function extractVector(output: unknown, expectedDim: number): number[] {
 async function getLocalEmbedding(config: Claw2Config, text: string): Promise<number[]> {
   const { ensureSharedEmbedDaemon, sharedEmbedBaseURL, SHARED_EMBED_MODEL } =
     await import("./ensure-shared-embed.js");
-  const baseURL = await ensureSharedEmbedDaemon();
+  const baseURL = await ensureSharedEmbedDaemon(config);
   const model = resolveLocalEmbeddingModel(config) || SHARED_EMBED_MODEL;
   const client = new OpenAI({
     apiKey: "local",
@@ -187,7 +187,7 @@ export async function warmEmbedding(config: Claw2Config, client?: OpenAI): Promi
     const provider = resolveEmbeddingProvider(config);
     if (provider === "local") {
       const { ensureSharedEmbedDaemon, SHARED_EMBED_MODEL } = await import("./ensure-shared-embed.js");
-      const base = await ensureSharedEmbedDaemon();
+      const base = await ensureSharedEmbedDaemon(config);
       const c = new OpenAI({ apiKey: "local", baseURL: base, timeout: EMBEDDING_REQUEST_TIMEOUT_MS });
       const vec = await getHttpEmbedding(
         c,

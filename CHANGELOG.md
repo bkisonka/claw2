@@ -3,6 +3,19 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Local embeddings no longer break with a stale daemon**: the shared ONNX
+  embed daemon is now validated on reuse — its model and dimension must match
+  the current config, otherwise it is stopped and respawned (a leftover
+  daemon from another model silently fed the store wrong-dim vectors:
+  "Embedding dim mismatch: got N, expected 384"). `memory.embeddingModel`
+  from the config now reaches the spawned daemon. In compose the model cache
+  lives in the mounted `.claw2/models` volume — no re-download from
+  HuggingFace after every rebuild.
+
 ## [0.2.6] - 2026-11-22
 
 ### Added

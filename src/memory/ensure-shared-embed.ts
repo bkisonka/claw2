@@ -5,16 +5,22 @@ import { spawn } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Claw2Config } from "../config/types.js";
 import {
   SHARED_EMBED_CACHE,
+  SHARED_EMBED_DIM,
   SHARED_EMBED_HOST,
   SHARED_EMBED_MODEL,
   SHARED_EMBED_PID_PATH,
   SHARED_EMBED_PORT,
+  embedDaemonMatches,
   requestEmbedDaemonShutdown,
   sharedEmbedBaseURL,
+  sharedEmbedHealthInfo,
   sharedEmbedHealthOk,
 } from "./embed-daemon.js";
+import { resolveEmbeddingDim } from "./sqlite-db.js";
+import { resolveLocalEmbeddingModel } from "./embedding.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -101,7 +107,7 @@ async function terminatePid(pid: number): Promise<void> {
   clearEmbedPid();
 }
 
-function spawnDaemon(): void {
+function spawnDaemon(model: string, dim: number): void {
   const { cmd, args, cwd } = resolveDaemonEntry();
   const child = spawn(cmd, args, {
     cwd,
@@ -111,42 +117,58 @@ function spawnDaemon(): void {
       ...process.env,
       CLAW2_EMBED_HOST: SHARED_EMBED_HOST,
       CLAW2_EMBED_PORT: String(SHARED_EMBED_PORT),
-      CLAW2_EMBED_MODEL: SHARED_EMBED_MODEL,
+      CLAW2_EMBED_MODEL: model,
       CLAW2_EMBED_CACHE: SHARED_EMBED_CACHE,
       CLAW2_EMBED_PID_PATH: SHARED_EMBED_PID_PATH,
+      CLAW2_EMBED_DIM: String(dim),
     },
   });
   child.unref();
   console.error(
-    `[embed] spawning shared daemon on ${SHARED_EMBED_HOST}:${SHARED_EMBED_PORT} (pid≈${child.pid ?? "?"})`,
+    `[embed] spawning shared daemon on ${SHARED_EMBED_HOST}:${SHARED_EMBED_PORT} (model=${model} dim=${dim} pid≈${child.pid ?? "?"})`,
   );
 }
 
 /**
- * Ensure the shared ONNX embed daemon is up. Safe to call after idle exit / Quit restart:
- * health miss → spawn a new process.
+ * Ensure the shared ONNX embed daemon is up AND serves the model the current
+ * config expects with the expected dim. Safe to call after idle exit / Quit
+ * restart: health miss → spawn. A healthy daemon left over from an earlier
+ * model/config (e.g. a different embeddingDim or embeddingModel) is stopped
+ * and respawned — reusing it silently fed the store wrong-dimension vectors
+ * ("Embedding dim mismatch: got N, expected 384").
  */
-export async function ensureSharedEmbedDaemon(opts?: {
-  timeoutMs?: number;
-}): Promise<string> {
+export async function ensureSharedEmbedDaemon(
+  config?: Claw2Config,
+  opts?: { timeoutMs?: number }
+): Promise<string> {
   if (ensuring) return ensuring;
   ensuring = (async () => {
     const base = sharedEmbedBaseURL();
-    if (await sharedEmbedHealthOk()) {
-      console.error(`[embed] reusing shared daemon at ${base}`);
-      return base;
+    const wantModel = config ? resolveLocalEmbeddingModel(config) : SHARED_EMBED_MODEL;
+    const wantDim = config ? resolveEmbeddingDim(config) : Number(SHARED_EMBED_DIM || 384);
+    const info = await sharedEmbedHealthInfo();
+    if (info) {
+      if (embedDaemonMatches(info, wantModel, wantDim)) {
+        console.error(`[embed] reusing shared daemon at ${base} (model=${info.model} dim=${info.dim})`);
+        return base;
+      }
+      console.error(
+        `[embed] shared daemon serves model=${info.model} dim=${info.dim}, want model=${wantModel} dim=${wantDim} — restarting`,
+      );
+      await stopSharedEmbedDaemon();
     }
-    spawnDaemon();
+    spawnDaemon(wantModel, wantDim);
     const deadline = Date.now() + (opts?.timeoutMs ?? 90_000);
     while (Date.now() < deadline) {
-      if (await sharedEmbedHealthOk(SHARED_EMBED_HOST, SHARED_EMBED_PORT, 800)) {
-        console.error(`[embed] shared daemon ready at ${base}`);
+      const ready = await sharedEmbedHealthInfo(SHARED_EMBED_HOST, SHARED_EMBED_PORT, 800);
+      if (embedDaemonMatches(ready, wantModel, wantDim)) {
+        console.error(`[embed] shared daemon ready at ${base} (model=${wantModel} dim=${wantDim})`);
         return base;
       }
       await new Promise((r) => setTimeout(r, 400));
     }
     throw new Error(
-      `Shared embed daemon did not become ready at ${base} within timeout`,
+      `Shared embed daemon did not become ready at ${base} (model=${wantModel} dim=${wantDim}) within timeout`,
     );
   })();
   try {

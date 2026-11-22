@@ -13,6 +13,13 @@ llm:
 memory:
   enabled: false
   embeddingModel: text-embedding-3-small
+  # Local embeddings instead of the LLM provider's HTTP API: the gateway
+  # spawns an ONNX daemon with Xenova/bge-small-en-v1.5 (384 dims; downloads
+  # once into .claw2/models — a mounted volume in compose). To use it, set:
+  #   backend: sqlite
+  #   embeddingProvider: local
+  # Swapping the model? Set embeddingDim to its dimension — vector tables
+  # are recreated on dim change (stored memories re-index on next use).
   maxChunks: 500
   maxRecallChunks: 5
 

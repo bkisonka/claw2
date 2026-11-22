@@ -24,6 +24,11 @@ services:
     env_file: .env
     environment:
       - NODE_ENV=production
+      # Local embeddings: cache the ONNX model in the mounted .claw2 volume —
+      # without this it re-downloads from HuggingFace after every rebuild.
+      # Локальные эмбеддинги: ONNX-модель кэшируется в смонтированном томе
+      # .claw2 — иначе после каждой пересборки она заново скачивается.
+      - CLAW2_EMBED_CACHE=/app/.claw2/models
       # Hard skill sandbox (sibling containers): talk to the host docker via
       # the validating API guard, and map container paths to host paths for
       # sibling binds (${PWD} = the directory you run compose from).
