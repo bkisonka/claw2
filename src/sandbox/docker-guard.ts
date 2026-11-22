@@ -26,6 +26,7 @@
  * beyond the internal control network.
  */
 import http from "node:http";
+import net from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 const DOCKER_METHODS = new Set(["GET", "POST", "DELETE", "HEAD"]);
@@ -51,6 +52,47 @@ function isEgressNetwork(name: unknown): name is EgressNetwork {
 }
 
 /**
+ * Containers THIS guard created (IDs captured from create responses). After
+ * `POST /containers/create` the docker CLI addresses the container by the
+ * returned 64-hex ID for start/wait/attach/delete — a name-only policy 403s
+ * the very next CLI call and the skill sandbox cannot run at all. Registered
+ * IDs are unguessable and refer only to containers whose create body passed
+ * validation; foreign containers (their IDs are never registered) stay
+ * unreachable. Entries expire: skill runs are short, and the sidecar is
+ * addressed by name after startup.
+ */
+const CREATED_ID_RE = /^[0-9a-f]{64}$/;
+const CREATED_TTL_MS = 60 * 60 * 1000;
+const createdIds = new Map<string, number>();
+
+function rememberCreatedId(id: unknown): void {
+  if (typeof id === "string" && CREATED_ID_RE.test(id)) {
+    for (const [known, at] of createdIds) {
+      if (Date.now() - at > CREATED_TTL_MS) createdIds.delete(known);
+    }
+    createdIds.set(id, Date.now());
+  }
+}
+
+function forgetCreatedId(segment: string): void {
+  createdIds.delete(segment);
+}
+
+/** Container-scoped ops the CLI issues by returned ID after a create. */
+const ID_SCOPED_OPS: Partial<Record<string, RegExp>> = {
+  GET: /^\/containers\/([^/]+)\/(json|logs)$/,
+  POST: /^\/containers\/([^/]+)\/(start|wait|kill|attach)$/,
+  DELETE: /^\/containers\/([^/]+)$/,
+};
+
+function isAllowedByRegistry(method: string, path: string): boolean {
+  const re = ID_SCOPED_OPS[method];
+  if (!re) return false;
+  const id = re.exec(path)?.[1];
+  return id !== undefined && createdIds.has(id);
+}
+
+/**
  * Endpoints the claw2 skill sandbox legitimately uses via the docker CLI
  * (docker version/run/rm/kill/logs/network inspect/create, container
  * inspect/start/wait/attach). Anything else — exec, build, volume, swarm,
@@ -63,6 +105,7 @@ const ALLOWED_ENDPOINTS: { method: string; re: RegExp }[] = [
   { method: "GET", re: new RegExp(`^\\/images\\/${IMG_SEG}\\/json$`) },
   { method: "POST", re: /^\/images\/create$/ },
   { method: "POST", re: /^\/containers\/create$/ },
+  { method: "GET", re: /^\/containers\/json$/ },
   { method: "GET", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/json$`) },
   { method: "GET", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/logs$`) },
   { method: "POST", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/(start|wait|kill|attach)$`) },
@@ -238,7 +281,15 @@ export function validateContainerCreateBody(
     if (isNonEmptyArray(hc[key])) return { ok: false, error: `${key} is not allowed` };
   }
   const logConfig = hc.LogConfig as { Type?: unknown } | undefined;
-  if (logConfig && typeof logConfig.Type === "string" && !["json-file", "local", "none"].includes(logConfig.Type)) {
+  // The CLI always sends LogConfig; Type "" means "daemon default driver"
+  // (operator-owned). Only an EXPLICIT non-local driver is caller-chosen log
+  // exfiltration and is refused.
+  if (
+    logConfig &&
+    typeof logConfig.Type === "string" &&
+    logConfig.Type !== "" &&
+    !["json-file", "local", "none"].includes(logConfig.Type)
+  ) {
     return { ok: false, error: "LogConfig remote drivers are not allowed" };
   }
   // Tmpfs entries must be noexec and must not shadow the rootfs (a writable
@@ -278,6 +329,34 @@ export function validateContainerCreateBody(
 }
 
 const MAX_CREATE_BODY_BYTES = 256 * 1024;
+
+/**
+ * Hop-by-hop/framing headers must never be copied from the daemon's response
+ * onto the proxied one: Node re-frames the body itself (chunked when the
+ * stream has no length). Forwarding the daemon's own Transfer-Encoding on a
+ * keep-alive connection corrupts the framing for HTTP clients — the docker
+ * CLI's wait long-poll (200 headers now, body on container exit) wedges the
+ * run exactly there.
+ */
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+function responseHeadersFor(raw: http.IncomingHttpHeaders): http.OutgoingHttpHeaders {
+  const out: http.OutgoingHttpHeaders = {};
+  for (const [name, value] of Object.entries(raw)) {
+    if (HOP_BY_HOP.has(name) || name === "date") continue;
+    out[name] = value;
+  }
+  return out;
+}
 
 function jsonError(res: ServerResponse, status: number, message: string): void {
   const payload = JSON.stringify({ message });
@@ -349,7 +428,10 @@ function inspectEgressNetwork(socketPath: string, name: EgressNetwork): Promise<
       res.on("error", () => resolve({ ok: false, error: `cannot read docker network ${name}` }));
       res.on("end", () => {
         try {
-          resolve(validateEgressNetworkInfo(JSON.parse(Buffer.concat(chunks).toString("utf-8")), name));
+          // The daemon answers /networks/{name} with a one-element array.
+          const parsed = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          const info = Array.isArray(parsed) ? parsed[0] : parsed;
+          resolve(validateEgressNetworkInfo(info, name));
         } catch {
           resolve({ ok: false, error: `invalid inspect response for docker network ${name}` });
         }
@@ -374,7 +456,10 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
     // When the body was consumed for validation it MUST be re-sent explicitly:
     // piping the already-ended IncomingMessage forwards zero bytes and the
     // daemon waits for a body that never arrives (hangs the docker CLI).
-    bodyBuffer?: Buffer
+    bodyBuffer?: Buffer,
+    // For /containers/create: capture the daemon's response to register the
+    // returned container ID (the CLI addresses it for start/wait/attach).
+    captureCreateResponse = false
   ): void => {
     const preq = http.request(
       {
@@ -384,8 +469,37 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         headers: { ...req.headers, host: "docker" },
       },
       (pres) => {
-        res.writeHead(pres.statusCode ?? 502, pres.headers);
-        pres.pipe(res);
+        if (process.env.DOCKER_GUARD_LOG) {
+          console.error(`[guard-res] ${req.method} ${normalizePath(targetPath).split("?")[0]} → ${pres.statusCode}`);
+        }
+        if (!captureCreateResponse) {
+          res.writeHead(pres.statusCode ?? 502, responseHeadersFor(pres.headers));
+          // Long-poll responses (containers/{id}/wait) send headers now and
+          // the body only when the container exits; without an explicit flush
+          // Node holds the head until a first body chunk — the docker CLI
+          // blocks on the wait headers and never sends start.
+          res.flushHeaders();
+          pres.pipe(res);
+          return;
+        }
+        const chunks: Buffer[] = [];
+        pres.on("data", (c: Buffer) => chunks.push(c));
+        pres.on("end", () => {
+          const buffer = Buffer.concat(chunks);
+          try {
+            rememberCreatedId((JSON.parse(buffer.toString("utf-8")) as { Id?: unknown }).Id);
+          } catch {
+            /* unparsable create response — nothing to register */
+          }
+          const headers = responseHeadersFor(pres.headers);
+          delete headers["content-length"];
+          res.writeHead(pres.statusCode ?? 502, headers);
+          res.end(buffer);
+        });
+        pres.on("error", () => {
+          if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ message: "docker guard upstream error: create response lost" }));
+        });
       }
     );
     preq.on("error", (err) => {
@@ -398,16 +512,66 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
     else req.pipe(preq);
   };
 
-  return http.createServer((req, res) => {
+  const server = http.createServer((req, res) => {
     const method = (req.method ?? "GET").toUpperCase();
     const rawUrl = req.url ?? "/";
     const path = normalizePath(rawUrl);
+    if (process.env.DOCKER_GUARD_LOG) console.error(`[guard-req] ${method} ${path}`);
 
-    if (!isAllowedDockerEndpoint(method, rawUrl)) {
+    // The CLI lists containers to pre-flight name conflicts before create.
+    // Answer with ONLY the guard's own claw2 containers — foreign containers
+    // (co-tenant databases, the proxy itself) stay invisible through the
+    // guard even on this aggregate route.
+    if (method === "GET" && path === "/containers/json") {
+      const preq = http.request(
+        { socketPath, path: rawUrl, method, headers: { ...req.headers, host: "docker" } },
+        (pres) => {
+          const chunks: Buffer[] = [];
+          let total = 0;
+          let oversized = false;
+          pres.on("data", (c: Buffer) => {
+            total += c.length;
+            if (total > MAX_CREATE_BODY_BYTES) oversized = true;
+            else chunks.push(c);
+          });
+          pres.on("end", () => {
+            res.writeHead(200, { "Content-Type": "application/json" });
+            if (oversized) return res.end("[]");
+            try {
+              const listed = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+              const mine = (Array.isArray(listed) ? listed : []).filter((c) => {
+                const name = String((c as { Names?: string[] }).Names?.[0] ?? "").replace(/^\//, "");
+                return name.startsWith("claw2") && name !== selfName;
+              });
+              res.end(JSON.stringify(mine));
+            } catch {
+              res.end("[]");
+            }
+          });
+          pres.on("error", () => {
+            if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ message: "docker guard upstream error: container list lost" }));
+          });
+        }
+      );
+      preq.on("error", () => {
+        if (!res.headersSent) res.writeHead(502, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ message: "docker guard upstream error: container list unavailable" }));
+      });
+      preq.end();
+      return;
+    }
+
+    if (!isAllowedDockerEndpoint(method, rawUrl) && !isAllowedByRegistry(method, path)) {
       opts.onReject?.(`endpoint ${method} ${path}`);
       jsonError(res, 403, "docker guard: endpoint not allowed");
       return;
     }
+
+    // A removed container leaves the registry: later calls by that ID 403
+    // again (the daemon may keep running a killed-but-not-removed container).
+    const removedId = method === "DELETE" ? ID_SCOPED_OPS.DELETE?.exec(path)?.[1] : undefined;
+    if (removedId) res.on("close", () => forgetCreatedId(removedId));
 
     // Self-protection: the gateway must not be able to kill/rm/inspect its
     // own guard (a removed guard does not come back on restart policy).
@@ -479,7 +643,7 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         }
         // Re-send the buffered body — headers alone (with their Content-Length)
         // would hang the daemon forever.
-        if (!res.destroyed) forward(req, res, rawUrl, buffer);
+        if (!res.destroyed) forward(req, res, rawUrl, buffer, path === "/containers/create");
       });
       req.on("error", () => {
         if (!aborted && !res.headersSent) jsonError(res, 400, "docker guard: request error");
@@ -489,6 +653,54 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
 
     forward(req, res, rawUrl);
   });
+
+  // `docker run -i` streams stdio through POST /containers/{id}/attach with
+  // Connection: Upgrade — a plain HTTP proxy cannot carry it. Relay the
+  // hijacked TCP stream to the daemon socket, still enforcing the same
+  // endpoint policy (attach only, on a claw2-named or guard-created ID).
+  server.on("upgrade", (req: IncomingMessage, socket: net.Socket, head: Buffer) => {
+    const method = (req.method ?? "GET").toUpperCase();
+    const rawUrl = req.url ?? "/";
+    const path = normalizePath(rawUrl);
+    const target = /^\/containers\/([^/?]+)/.exec(path)?.[1];
+    const attach = /\/containers\/[^/]+\/attach$/.test(path);
+    if (
+      !attach ||
+      !DOCKER_METHODS.has(method) ||
+      target === selfName ||
+      (!isAllowedDockerEndpoint(method, rawUrl) && !isAllowedByRegistry(method, path))
+    ) {
+      opts.onReject?.(`upgrade ${method} ${path}`);
+      socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+    const daemon = net.connect(socketPath);
+    const teardown = () => {
+      daemon.destroy();
+      socket.destroy();
+    };
+    daemon.on("connect", () => {
+      let raw = `${req.method} ${rawUrl} HTTP/1.1\r\n`;
+      for (const [name, value] of Object.entries(req.headers)) {
+        if (name === "host" || name === "connection" || name === "upgrade") continue;
+        raw += `${name}: ${Array.isArray(value) ? value.join(", ") : value}\r\n`;
+      }
+      raw += "Host: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n";
+      daemon.write(raw);
+      if (head.length > 0) daemon.write(head);
+      socket.pipe(daemon);
+      daemon.pipe(socket);
+      socket.setNoDelay(true);
+      daemon.setNoDelay(true);
+    });
+    daemon.on("error", teardown);
+    socket.on("error", teardown);
+    socket.on("close", () => daemon.destroy());
+    daemon.on("close", () => socket.destroy());
+  });
+
+  return server;
 }
 
 /** CLI entry: node dist/sandbox/docker-guard-cli.js */
