@@ -344,11 +344,21 @@ function warnVisionNoSecretOnce(config: Claw2Config): void {
   else console.warn(`${msg} (vision is disabled in config — is the client misconfigured?)`);
 }
 
-function mergeConfigKeepingSecrets(
+export function mergeConfigKeepingSecrets(
   existing: Record<string, unknown>,
   incoming: Record<string, unknown>
 ): Record<string, unknown> {
   const out = { ...incoming };
+  // memory.chroma only matters for backend "chroma" — but GET /api/config
+  // serves it filled with defaults, so every UI save round-trips a zombie
+  // section into sqlite/memory configs. Drop it when the backend differs.
+  {
+    const mem = out.memory as Record<string, unknown> | undefined;
+    if (mem && typeof mem === "object" && mem.backend !== "chroma" && "chroma" in mem) {
+      const { chroma: _drop, ...rest } = mem;
+      out.memory = rest;
+    }
+  }
   if (existing.gateway && typeof existing.gateway === "object" && out.gateway && typeof out.gateway === "object") {
     const exAuth = (existing.gateway as Record<string, unknown>).auth as Record<string, unknown> | undefined;
     const inAuth = (out.gateway as Record<string, unknown>).auth as Record<string, unknown> | undefined;

@@ -3,6 +3,20 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Embedding dim mismatches now name their source**: on any dimension
+  mismatch the log prints the provider (local/http), the baseURL the vector
+  came from (embedding endpoint or the main LLM client), the model name,
+  the `CLAW2_MEMORY_EMBEDDING_PROVIDER` env override and the loaded config
+  path — no more guessing which layer produced a wrong-dim vector.
+- **The zombie `memory.chroma` section no longer persists**: GET /api/config
+  serves it filled with defaults, so every UI save round-tripped the section
+  into sqlite/memory configs. Saving now drops `memory.chroma` when the
+  backend is not chroma (covered by config-merge.test.ts).
+
 ## [0.2.8] - 2026-11-22
 
 ### Fixed

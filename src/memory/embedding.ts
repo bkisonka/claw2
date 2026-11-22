@@ -186,10 +186,34 @@ export async function getEmbedding(
   text: string
 ): Promise<number[]> {
   const provider = resolveEmbeddingProvider(config);
-  if (provider === "local") {
-    return getLocalEmbedding(config, text);
+  const vec =
+    provider === "local"
+      ? await getLocalEmbedding(config, text)
+      : await getHttpEmbedding(client, config, text);
+  const expected = resolveEmbeddingDim(config);
+  if (vec.length !== expected) {
+    // Every fact needed to pin a dim mismatch: who produced the vector and
+    // what the store expects. The store's insert error carries no origin.
+    let configPath = "(unknown)";
+    try {
+      const { getConfigPath } = await import("../config/load.js");
+      configPath = getConfigPath();
+    } catch {
+      /* diagnostics only */
+    }
+    console.error(
+      `[embed] dim mismatch: provider=${provider} got=${vec.length} expected=${expected}` +
+        (provider === "http"
+          ? ` baseURL=${config.memory?.embeddingBaseURL?.trim() || "(main LLM client)"}` +
+            ` llm.baseURL=${config.llm?.baseURL?.trim() || "(default)"}`
+          : "") +
+        ` model=${config.memory?.embeddingModel?.trim() || process.env.CLAW2_MEMORY_EMBEDDING_MODEL?.trim() || "(default)"}` +
+        ` env.provider=${process.env.CLAW2_MEMORY_EMBEDDING_PROVIDER?.trim() || "-"}` +
+        ` config=${configPath}` +
+        ` — align memory.embeddingDim with the embedding source or fix the source`
+    );
   }
-  return getHttpEmbedding(client, config, text);
+  return vec;
 }
 
 /** Smoke: ensure local model loads (or HTTP reachable). */
