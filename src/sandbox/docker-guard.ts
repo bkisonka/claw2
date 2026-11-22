@@ -30,8 +30,17 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 const DOCKER_METHODS = new Set(["GET", "POST", "DELETE", "HEAD"]);
 
-/** {id} segments accept docker names/ids (hex, uuid, name, name.uuid). */
+/**
+ * {id} segments: docker names/ids — AND claw2 ownership. The sandbox only
+ * ever touches containers named claw2-agent-… / claw2-egress-… and networks
+ * claw2-…; restricting the id segment keeps a compromised gateway from
+ * killing, reading logs of, or attaching to OTHER containers on the host
+ * (co-tenant databases, the proxy itself...).
+ */
 const SEG = "[A-Za-z0-9][A-Za-z0-9_.-]*";
+/** Image references carry registry/repo:tag (node:20-alpine, ghcr.io/x/y:z). */
+const IMG_SEG = "[A-Za-z0-9][A-Za-z0-9_./:-]*";
+const CLAW2_SEG = "claw2[A-Za-z0-9_.-]*";
 
 /**
  * Endpoints the claw2 skill sandbox legitimately uses via the docker CLI
@@ -42,18 +51,18 @@ const SEG = "[A-Za-z0-9][A-Za-z0-9_.-]*";
 const ALLOWED_ENDPOINTS: { method: string; re: RegExp }[] = [
   { method: "GET", re: /^\/_ping$/ },
   { method: "GET", re: /^\/version$/ },
-  { method: "GET", re: new RegExp(`^\\/images\\/${SEG}\\/json$`) },
+  { method: "GET", re: new RegExp(`^\\/images\\/${IMG_SEG}\\/json$`) },
   { method: "POST", re: /^\/images\/create$/ },
   { method: "POST", re: /^\/containers\/create$/ },
-  { method: "GET", re: new RegExp(`^\\/containers\\/${SEG}\\/json$`) },
-  { method: "GET", re: new RegExp(`^\\/containers\\/${SEG}\\/logs$`) },
-  { method: "POST", re: new RegExp(`^\\/containers\\/${SEG}\\/(start|wait|kill|attach)$`) },
-  { method: "DELETE", re: new RegExp(`^\\/containers\\/${SEG}$`) },
+  { method: "GET", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/json$`) },
+  { method: "GET", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/logs$`) },
+  { method: "POST", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/(start|wait|kill|attach)$`) },
+  { method: "DELETE", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}$`) },
   { method: "GET", re: /^\/networks$/ },
-  { method: "GET", re: new RegExp(`^\\/networks\\/${SEG}$`) },
+  { method: "GET", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}$`) },
   { method: "POST", re: /^\/networks\/create$/ },
-  { method: "POST", re: new RegExp(`^\\/networks\\/${SEG}\\/(connect|disconnect)$`) },
-  { method: "DELETE", re: new RegExp(`^\\/networks\\/${SEG}$`) },
+  { method: "POST", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}\\/(connect|disconnect)$`) },
+  { method: "DELETE", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}$`) },
 ];
 
 /** Strip the docker API version prefix (/v1.47/containers/... → /containers/...). */
@@ -178,6 +187,27 @@ export interface DockerGuardServerOptions {
   onReject?: (detail: string) => void;
 }
 
+/**
+ * Body checks for the remaining sandbox POSTs: networks must be claw2-owned
+ * and may only connect claw2-owned containers.
+ */
+export function validateNetworkCreateBody(body: unknown): ContainerCreateCheck {
+  const name = (body as { Name?: unknown } | null)?.Name;
+  if (typeof name !== "string" || !name.startsWith("claw2")) {
+    return { ok: false, error: "network name must start with 'claw2'" };
+  }
+  return { ok: true };
+}
+
+export function validateNetworkConnectBody(body: unknown): ContainerCreateCheck {
+  if (!body || typeof body !== "object") return { ok: true };
+  const container = (body as { Container?: unknown }).Container;
+  if (typeof container === "string" && !container.startsWith("claw2")) {
+    return { ok: false, error: "connect target must be a claw2 container" };
+  }
+  return { ok: true };
+}
+
 export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): http.Server {
   const socketPath = opts.socketPath ?? "/var/run/docker.sock";
   const allowedBindSrc = (opts.allowedBindSrc ?? [])
@@ -221,7 +251,16 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
       return;
     }
 
-    if (method === "POST" && path === "/containers/create") {
+    const guardKind =
+      method === "POST" && path === "/containers/create"
+        ? ("create" as const)
+        : method === "POST" && path === "/networks/create"
+          ? ("network-create" as const)
+          : method === "POST" && /^\/networks\/claw2[A-Za-z0-9_.-]*\/(connect|disconnect)$/.test(path)
+            ? ("network-connect" as const)
+            : null;
+
+    if (guardKind) {
       const chunks: Buffer[] = [];
       let total = 0;
       let aborted = false;
@@ -231,7 +270,7 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         if (total > MAX_CREATE_BODY_BYTES) {
           aborted = true;
           req.destroy();
-          opts.onReject?.("containers/create body too large");
+          opts.onReject?.(`${path} body too large`);
           jsonError(res, 413, "docker guard: body too large");
           return;
         }
@@ -243,13 +282,18 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         try {
           body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
         } catch {
-          opts.onReject?.("containers/create invalid JSON");
+          opts.onReject?.(`${path} invalid JSON`);
           jsonError(res, 400, "docker guard: invalid JSON body");
           return;
         }
-        const check = validateContainerCreateBody(body, allowedBindSrc);
+        const check =
+          guardKind === "create"
+            ? validateContainerCreateBody(body, allowedBindSrc)
+            : guardKind === "network-create"
+              ? validateNetworkCreateBody(body)
+              : validateNetworkConnectBody(body);
         if (!check.ok) {
-          opts.onReject?.(`containers/create rejected: ${check.error}`);
+          opts.onReject?.(`${path} rejected: ${check.error}`);
           jsonError(res, 403, `docker guard: ${check.error}`);
           return;
         }

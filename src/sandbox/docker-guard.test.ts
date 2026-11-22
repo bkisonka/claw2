@@ -7,7 +7,12 @@
  * Run: npx tsx src/sandbox/docker-guard.test.ts
  */
 import assert from "node:assert/strict";
-import { isAllowedDockerEndpoint, validateContainerCreateBody } from "./docker-guard.js";
+import {
+  isAllowedDockerEndpoint,
+  validateContainerCreateBody,
+  validateNetworkCreateBody,
+  validateNetworkConnectBody,
+} from "./docker-guard.js";
 
 const ROOTS = ["/host/claw2/agents", "/host/claw2/data"];
 
@@ -27,10 +32,17 @@ const hardened = {
 assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/_ping"), true);
 assert.equal(isAllowedDockerEndpoint("GET", "/version"), true);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/create"), true);
-assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/containers/abc123/json"), true);
-assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/abc123/wait"), true);
-assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/containers/abc123"), true);
-assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/abc123/exec"), false, "exec must be denied");
+assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/containers/claw2-agent-x/json"), true);
+assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/claw2-agent-x/wait"), true);
+assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/containers/claw2-agent-x"), true);
+assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/images/node:20-alpine/json"), true, "image ref with tag");
+assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/images/ghcr.io/x/y:z/json"), true, "registry image ref");
+assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/claw2-agent-x/exec"), false, "exec must be denied");
+// Foreign containers/networks are out of scope even via allowed endpoints:
+assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/postgres-1/kill"), false, "foreign container kill denied");
+assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/containers/claw2-egress-sidecar/logs"), true);
+assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/networks/claw2-skill-egress"), true);
+assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/networks/bridge"), false, "foreign network denied");
 assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/volumes"), false);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/images/claw2:latest/push"), false);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/swarm/init"), false);
@@ -38,6 +50,12 @@ assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/secrets"), false);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/networks/create"), true);
 assert.equal(isAllowedDockerEndpoint("PUT", "/containers/create"), false);
 assert.equal(isAllowedDockerEndpoint("GET", "/containers/../../etc/passwd"), false);
+
+// Network name scoping
+assert.deepEqual(validateNetworkCreateBody({ Name: "claw2-skill-egress" }), { ok: true });
+assert.equal(validateNetworkCreateBody({ Name: "host-net" }).ok, false);
+assert.equal(validateNetworkConnectBody({ Container: "claw2-agent-x" }).ok, true);
+assert.equal(validateNetworkConnectBody({ Container: "postgres" }).ok, false, "foreign connect target denied");
 
 // Container create validation
 {
