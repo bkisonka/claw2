@@ -25,9 +25,9 @@ services:
     environment:
       - NODE_ENV=production
       # Hard skill sandbox (sibling containers): talk to the host docker via
-      # the restricted API proxy, and map container paths to host paths for
+      # the validating API guard, and map container paths to host paths for
       # sibling binds (${PWD} = the directory you run compose from).
-      - DOCKER_HOST=tcp://docker-proxy:2375
+      - DOCKER_HOST=tcp://docker-guard:2375
       - CLAW2_SIBLING_HOST_ROOT=${PWD}
     volumes:
       - ./.claw2:/app/.claw2
@@ -55,7 +55,7 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     depends_on:
-      - docker-proxy
+      - docker-guard
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 30s
@@ -63,25 +63,33 @@ services:
       retries: 3
       start_period: 15s
 
-  # Restricted docker API proxy: the gateway's docker CLI may manage skill
-  # sandbox containers/networks and nothing else — no mounts of arbitrary
-  # host paths, no daemon info beyond version, no swarm/volumes/images-push.
-  # Ограниченный прокси docker API: docker CLI шлюза управляет только
-  # контейнерами/сетями песочницы навыков — остальное запрещено.
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy
-    container_name: claw2-docker-proxy
+  # Validating docker API guard (our own code, claw2 image): an endpoint
+  # allowlist AND structural validation of every container creation — the
+  # hardening profile is mandatory (cap-drop ALL, no-new-privileges,
+  # read-only rootfs), privilege widening is rejected, bind sources must sit
+  # inside the compose sandbox roots (${PWD}/agents, ${PWD}/data) with targets
+  # under /app. A generic socket-proxy with CONTAINERS=1+POST=1 would still
+  # admit a privileged host-mounting container create — this one does not.
+  # Валидирующий guard docker API (наш код, образ claw2): allowlist endpoint'ов
+  # и структурная валидация каждого создания контейнера — профиль изоляции
+  # обязателен, расширение привилегий отклоняется, источники bind'ов — только
+  # внутри корней песочницы compose и только под /app в контейнере.
+  docker-guard:
+    image: claw2:latest
+    build: .
+    container_name: claw2-docker-guard
+    # Run the guard entry directly as root (no entrypoint drop): the node user
+    # cannot read the root-owned docker.sock. The guard speaks ONLY to that
+    # socket — no app data, no outbound network beyond sandbox-control.
+    user: "0"
+    entrypoint: ["node"]
+    command: ["dist/sandbox/docker-guard-cli.js"]
     environment:
-      # Deny by default; allow only what the skill sandbox needs. No exec:
-      # sidecar readiness is the container's own HEALTHCHECK, inspected via
-      # `docker inspect`.
-      - CONTAINERS=1
-      - IMAGES=1
-      - INFO=1
-      - NETWORKS=1
-      - SYSTEM=1
-      - LOGS=1
-      - POST=1
+      - DOCKER_GUARD_PORT=2375
+      - DOCKER_GUARD_SOCKET=/var/run/docker.sock
+      # Sandbox bind roots: skill containers may only mount host paths from
+      # the compose working directory's agents/ and data/ trees.
+      - CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC=${PWD}/agents:${PWD}/data
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
