@@ -12,6 +12,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Add a fork tree to a project in one action**: when the chat being added
+  belongs to a fork tree, the sidebar asks whether to add the whole tree or
+  only the selected chat.
 - **Attachment indicators in the chat list**: chats carrying images and/or
   documents show small image/document icons next to the title (web sidebar
   and the mobile chat list). Flags come from stored messages and the

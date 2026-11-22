@@ -191,6 +191,9 @@ export const en = {
   "sidebar.exportMd": "Export to MD",
   "sidebar.exportClawCache": "Export to .claw-cache",
   "sidebar.addToProject": "Add to project",
+  "sidebar.addToProjectScopeTitle": "Add to \"{name}\":",
+  "sidebar.addToProjectWholeTree": "Whole fork tree ({count} chats)",
+  "sidebar.addToProjectOnlyChat": "Only this chat",
   "sidebar.removeFromProject": "Remove from project",
   "sidebar.deleteEmptyProjectConfirm":
     "Project “{name}” has no chats left. Delete the project itself?",

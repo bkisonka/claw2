@@ -912,11 +912,14 @@ export function AuthenticatedArea() {
     }
   }, [currentChatId, reclaimComposerFocus, handleAbortSession]);
 
-  const handleChatProjectChange = useCallback(async (chatId: string, projectId: string | null) => {
+  const handleChatProjectChange = useCallback(async (chatId: string, projectId: string | null, ids?: string[]) => {
+    // ids = the whole fork tree when the user chose "add the whole tree".
+    const targetIds = ids?.length ? ids : [chatId];
+    const idSet = new Set(targetIds);
     try {
-      await updateChatProject(chatId, projectId);
+      await Promise.all(targetIds.map((id) => updateChatProject(id, projectId)));
       setChats((prev) =>
-        prev.map((c) => (c.id === chatId ? { ...c, projectId: projectId ?? undefined } : c))
+        prev.map((c) => (idSet.has(c.id) ? { ...c, projectId: projectId ?? undefined } : c))
       );
     } catch {
       // ignore

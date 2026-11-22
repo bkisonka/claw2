@@ -76,3 +76,44 @@ export function compareChatItems(a: ChatItem, b: ChatItem): number {
   if (fav) return fav;
   return b.updatedAt - a.updatedAt;
 }
+
+type ForkNode = Pick<ChatItem, "id" | "forkedFrom">;
+
+/** True when the chat is part of a fork tree in the given list (has a fork parent or fork children). */
+export function isInForkTree(chats: ForkNode[], chatId: string): boolean {
+  const ids = new Set(chats.map((c) => c.id));
+  const chat = chats.find((c) => c.id === chatId);
+  if (!chat) return false;
+  if (chat.forkedFrom && ids.has(chat.forkedFrom)) return true;
+  return chats.some((c) => c.forkedFrom === chatId && ids.has(c.id));
+}
+
+/** All ids of the fork tree the chat belongs to: root ancestor plus every descendant. */
+export function forkTreeIds(chats: ForkNode[], chatId: string): string[] {
+  const byId = new Map(chats.map((c) => [c.id, c] as const));
+  let root = byId.get(chatId);
+  if (!root) return [chatId];
+  const seen = new Set<string>([chatId]);
+  while (root.forkedFrom && byId.has(root.forkedFrom) && !seen.has(root.forkedFrom)) {
+    seen.add(root.forkedFrom);
+    root = byId.get(root.forkedFrom)!;
+  }
+  const children = new Map<string, string[]>();
+  for (const c of chats) {
+    if (!c.forkedFrom) continue;
+    const list = children.get(c.forkedFrom) ?? [];
+    list.push(c.id);
+    children.set(c.forkedFrom, list);
+  }
+  const out: string[] = [];
+  const guard = new Set<string>();
+  const stack = [root.id];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (guard.has(id)) continue;
+    guard.add(id);
+    out.push(id);
+    for (const child of children.get(id) ?? []) stack.push(child);
+  }
+  return out;
+}

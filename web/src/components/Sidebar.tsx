@@ -11,7 +11,7 @@ import { fetchChatAssetsSummary } from "../api/chat";
 import { fetchSidebar, clickSidebarItem, type DynamicSidebarItem, type DynamicSidebarState } from "../api/sidebar";
 import { getConfig } from "../api/config";
 import type { ChatItem } from "../store/chatList";
-import { compareChatItems } from "../store/chatList";
+import { compareChatItems, forkTreeIds, isInForkTree } from "../store/chatList";
 import { useAuth } from "../context/AuthContext";
 import { useT } from "../i18n";
 import { restoreShellFocus } from "../desktop/shellFocus";
@@ -114,7 +114,7 @@ interface SidebarProps {
   onExportChat?: (chatId: string) => void;
   onExportClawCache?: (chatId: string) => void;
   onDuplicateChat?: (chatId: string, opts?: { upToCount?: number; title?: string }) => Promise<string | null>;
-  onChatProjectChange?: (chatId: string, projectId: string | null) => void;
+  onChatProjectChange?: (chatId: string, projectId: string | null, ids?: string[]) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
   onRenameChat?: (chatId: string, title: string) => void | Promise<void>;
@@ -179,6 +179,8 @@ export function Sidebar({
   /** Chat whose title is being renamed inline (sidebar menu → Rename). */
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  /** Add-to-project scope choice for a chat that belongs to a fork tree. */
+  const [projectScope, setProjectScope] = useState<{ chatId: string; projectId: string; projectName: string } | null>(null);
   const [addToProjectChatId, setAddToProjectChatId] = useState<string | null>(null);
   const [menuPlacement, setMenuPlacement] = useState<{
     top?: number;
@@ -451,6 +453,7 @@ export function Sidebar({
   const closeMenu = () => {
     setOpenMenuId(null);
     setAddToProjectChatId(null);
+    setProjectScope(null);
     setMenuPlacement(null);
     menuAnchorRef.current = null;
   };
@@ -610,19 +613,59 @@ export function Sidebar({
             </button>
             {addToProjectChatId === chat.id && projects.length > 0 && (
               <div className="layout-sidebar-chat-item-submenu">
-                {projects.map((project) => (
-                  <button
-                    key={project.id}
-                    type="button"
-                    className="layout-sidebar-chat-item-menu-btn"
-                    onClick={() => {
-                      onChatProjectChange?.(chat.id, project.id);
-                      closeMenu();
-                    }}
-                  >
-                    {project.name}
-                  </button>
-                ))}
+                {projectScope?.chatId === chat.id ? (
+                  <>
+                    <div className="layout-sidebar-chat-item-menu-hint">
+                      {t("sidebar.addToProjectScopeTitle", { name: projectScope.projectName })}
+                    </div>
+                    <button
+                      type="button"
+                      className="layout-sidebar-chat-item-menu-btn"
+                      onClick={() => {
+                        onChatProjectChange?.(chat.id, projectScope.projectId, forkTreeIds(chats, chat.id));
+                        closeMenu();
+                      }}
+                    >
+                      {t("sidebar.addToProjectWholeTree", { count: forkTreeIds(chats, chat.id).length })}
+                    </button>
+                    <button
+                      type="button"
+                      className="layout-sidebar-chat-item-menu-btn"
+                      onClick={() => {
+                        onChatProjectChange?.(chat.id, projectScope.projectId);
+                        closeMenu();
+                      }}
+                    >
+                      {t("sidebar.addToProjectOnlyChat")}
+                    </button>
+                    <button
+                      type="button"
+                      className="layout-sidebar-chat-item-menu-btn"
+                      onClick={() => setProjectScope(null)}
+                    >
+                      {t("common.cancel")}
+                    </button>
+                  </>
+                ) : (
+                  projects.map((project) => (
+                    <button
+                      key={project.id}
+                      type="button"
+                      className="layout-sidebar-chat-item-menu-btn"
+                      onClick={() => {
+                        // A chat from a fork tree: ask whether to add the whole tree or just this chat.
+                        if (isInForkTree(chats, chat.id)) {
+                          setProjectScope({ chatId: chat.id, projectId: project.id, projectName: project.name });
+                          return;
+                        }
+                        onChatProjectChange?.(chat.id, project.id);
+                        closeMenu();
+                      }}
+                    >
+                      {project.name}
+                    </button>
+                  ))
+                )}
               </div>
             )}
           </div>

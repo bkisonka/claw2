@@ -193,6 +193,9 @@ export const ru: Record<MessageKey, string> = {
   "sidebar.exportMd": "Экспорт в MD",
   "sidebar.exportClawCache": "Экспорт в .claw-cache",
   "sidebar.addToProject": "Добавить в проект",
+  "sidebar.addToProjectScopeTitle": "Добавить в «{name}»:",
+  "sidebar.addToProjectWholeTree": "Всё дерево чатов ({count})",
+  "sidebar.addToProjectOnlyChat": "Только этот чат",
   "sidebar.removeFromProject": "Удалить из проекта",
   "sidebar.deleteEmptyProjectConfirm":
     "В проекте «{name}» больше нет чатов. Удалить сам проект?",

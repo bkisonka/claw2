@@ -59,7 +59,7 @@ interface LayoutProps {
   onExportChat?: (chatId: string) => void;
   onExportClawCache?: (chatId: string) => void;
   onDuplicateChat?: (chatId: string, opts?: { upToCount?: number; title?: string }) => Promise<string | null>;
-  onChatProjectChange?: (chatId: string, projectId: string | null) => void;
+  onChatProjectChange?: (chatId: string, projectId: string | null, ids?: string[]) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
   onRenameChat?: (chatId: string, title: string) => void | Promise<void>;

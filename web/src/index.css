@@ -3714,3 +3714,12 @@ body {
   color: var(--text-secondary);
   opacity: 0.85;
 }
+
+
+/* Scope-choice caption inside the Add-to-project submenu. */
+.layout-sidebar-chat-item-menu-hint {
+  padding: 0.35rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  white-space: normal;
+}
