@@ -2193,16 +2193,28 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           // Sidebar attachment indicators: image cells / document references in
           // messages, plus session-prefixed files on disk (uploads the user
           // attached, files the agent saved — they are not always quoted in text).
+          // Forked chats also inherit their ancestors' files: the documents
+          // panel shows them, so the icon must light up the same way.
           const refs = chatRepo.attachmentRefsByChat(userId);
+          const byId = new Map(chats.map((c) => [c.id, c]));
+          const idsWithAncestors = new Map<string, string[]>();
+          for (const chat of chats) {
+            const ids = [chat.id];
+            let cursor = chat.forked_from_chat_id ?? null;
+            for (let depth = 0; cursor && depth < 10; depth++) {
+              ids.push(cursor);
+              cursor = byId.get(cursor)?.forked_from_chat_id ?? null;
+            }
+            idsWithAncestors.set(chat.id, ids);
+          }
           const diskFlags = new Map<string, { images: boolean; docs: boolean }>();
           const markDisk = (name: string) => {
             for (const chat of chats) {
-              if (!name.startsWith(chat.id)) continue;
+              if (!(idsWithAncestors.get(chat.id) ?? []).some((id) => name.startsWith(id))) continue;
               const cur = diskFlags.get(chat.id) ?? { images: false, docs: false };
               if (isImagePath(name)) cur.images = true;
               else if (isDocumentPath(name)) cur.docs = true;
               diskFlags.set(chat.id, cur);
-              break;
             }
           };
           for (const dir of [outputDir, uploadsDir]) {

@@ -3,7 +3,8 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { forkTreeIds, isInForkTree, upsertChatRowStable, type ChatItem } from "./chatList";
+import { forkTreeIds, isInForkTree, serverChatToItem, upsertChatRowStable, type ChatItem } from "./chatList";
+import type { ChatListItemApi } from "../api/chat";
 
 const tree = [
   { id: "a", forkedFrom: null },
@@ -62,5 +63,34 @@ describe("stable upsert during generation", () => {
     assert.deepEqual(list.map((c) => c.id), ["fresh", "a", "b"]);
     list = upsertChatRowStable(list, { ...list[0]!, updatedAt: 101 });
     assert.deepEqual(list.map((c) => c.id), ["fresh", "a", "b"]);
+  });
+});
+
+describe("server row merge keeps attachment flags", () => {
+  const apiRow = (over: Partial<ChatListItemApi> = {}): ChatListItemApi => ({
+    id: "c1",
+    title: "Server title",
+    updated_at: 5,
+    ...over,
+  });
+
+  it("copies hasImages/hasDocs from the server row", () => {
+    const item = serverChatToItem(apiRow({ hasDocs: true }), undefined, null);
+    assert.equal(item.id, "c1");
+    assert.equal(item.hasDocs, true);
+    assert.equal(item.hasImages, undefined);
+  });
+
+  it("keeps previous flags when the server omits them (search mode)", () => {
+    const old: ChatItem = { id: "c1", title: "t", updatedAt: 1, messages: [], hasImages: true };
+    const item = serverChatToItem(apiRow(), old, null);
+    assert.equal(item.hasImages, true);
+    assert.equal(item.hasDocs, undefined);
+  });
+
+  it("server flags win over stale local ones", () => {
+    const old: ChatItem = { id: "c1", title: "t", updatedAt: 1, messages: [], hasDocs: true };
+    const item = serverChatToItem(apiRow({ hasDocs: false }), old, null);
+    assert.equal(item.hasDocs, false, "explicit server false clears the stale flag");
   });
 });

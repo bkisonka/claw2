@@ -3,6 +3,7 @@
 
 /** Chat message (compatible with Chat.tsx). */
 import { t } from "../i18n";
+import type { ChatListItemApi } from "../api/chat";
 import { deriveChatTitleFromRequest } from "../../../src/core/chat-title";
 
 export interface StoredMessage {
@@ -44,6 +45,39 @@ export function makeChatTitle(messages: StoredMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
   if (!firstUser?.content?.trim()) return t("chat.listNewChat");
   return deriveChatTitleFromRequest(firstUser.content, t("chat.listNewChat"));
+}
+
+/**
+ * Merge one server chat-list row into the local ChatItem: server fields win,
+ * local-only state survives (cached messages, derived title), and the
+ * attachment flags (hasImages/hasDocs) come across — dropping them here kept
+ * the sidebar indicators permanently off while the chats panel showed the
+ * files. Server omits the flags in search mode; then the previous value
+ * sticks.
+ */
+export function serverChatToItem(
+  c: ChatListItemApi,
+  old: ChatItem | undefined,
+  pageKey: string | null | undefined
+): ChatItem {
+  return {
+    id: c.id,
+    title: (old?.title || "").trim() || c.title,
+    updatedAt: c.updated_at,
+    messages: old?.messages ?? [],
+    projectId: c.project_id ?? undefined,
+    browserPageKey: pageKey ?? null,
+    model:
+      typeof c.model === "string" && c.model.trim()
+        ? c.model.trim()
+        : old?.model?.trim() || null,
+    pinned: typeof c.pinned === "boolean" ? c.pinned : !!old?.pinned,
+    favorited: typeof c.favorited === "boolean" ? c.favorited : !!old?.favorited,
+    forkedFrom: c.forked_from_chat_id ?? null,
+    hasImages: c.hasImages ?? old?.hasImages,
+    hasDocs: c.hasDocs ?? old?.hasDocs,
+    historyEvicted: old?.historyEvicted,
+  };
 }
 
 /**

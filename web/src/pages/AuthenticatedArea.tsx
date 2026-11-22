@@ -31,7 +31,7 @@ import {
 import { browserSearch } from "../api/browserSearch";
 import { getConfig } from "../api/config";
 import { fetchProjectList, deleteProject, type ProjectListItemApi } from "../api/project";
-import { type ChatItem, compareChatItems, resolveListTitle, upsertChatRowStable } from "../store/chatList";
+import { type ChatItem, compareChatItems, resolveListTitle, serverChatToItem, upsertChatRowStable } from "../store/chatList";
 import {
   evictChatHistories,
   selectInactiveHistoryEvictions,
@@ -543,22 +543,7 @@ export function AuthenticatedArea() {
                 old?.browserPageKey ||
                 undefined;
               // Unified chat: keep human/list title — do not rename to every surfed page.
-              return {
-                id: c.id,
-                title: (old?.title || "").trim() || c.title,
-                updatedAt: c.updated_at,
-                messages: old?.messages ?? [],
-                projectId: c.project_id ?? undefined,
-                browserPageKey: pageKey ?? null,
-                model:
-                  typeof c.model === "string" && c.model.trim()
-                    ? c.model.trim()
-                    : old?.model?.trim() || null,
-                pinned: typeof c.pinned === "boolean" ? c.pinned : !!old?.pinned,
-                favorited: typeof c.favorited === "boolean" ? c.favorited : !!old?.favorited,
-                forkedFrom: c.forked_from_chat_id ?? null,
-                historyEvicted: old?.historyEvicted,
-              };
+              return serverChatToItem(c, old, pageKey);
             });
             pageKeyIndexRef.current = index;
             savePageKeyIndex(index);

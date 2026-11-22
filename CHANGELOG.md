@@ -3,6 +3,21 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Sidebar attachment indicators never showed (web)**: the server computed
+  `hasImages`/`hasDocs` and the sidebar rendered them, but the chat-list
+  merge into the local store dropped both fields — a chat could carry
+  documents (the chat's documents panel listed them) with no icon in front
+  of it. The merge now lives in one tested helper (`serverChatToItem`).
+- **Attachment flags missed two document sources the chat panel counts**:
+  messages referencing files by bare relative paths (`uploads/notes.txt`
+  without the `/files/` prefix) were filtered out by the SQL prefilter, and
+  forked chats did not inherit their ancestors' session-prefixed files from
+  the disk scan. Both now light the icon, matching the documents panel.
+
 ## [0.2.4] - 2026-11-22
 
 ### Fixed

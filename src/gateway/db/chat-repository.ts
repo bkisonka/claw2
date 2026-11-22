@@ -391,7 +391,9 @@ export class SqliteChatRepository implements ChatRepository {
       .prepare(
         `SELECT m.chat_id AS chatId, m.content AS content, m.meta AS meta
          FROM messages m JOIN chats c ON c.id = m.chat_id AND c.user_id = ?
-         WHERE m.content LIKE '%/files/%' OR m.meta LIKE '%/files/%' OR m.meta LIKE '%"type":"image"%'`
+         WHERE m.content LIKE '%/files/%' OR m.meta LIKE '%/files/%' OR m.meta LIKE '%"type":"image"%'
+            OR m.content LIKE '%output/%' OR m.content LIKE '%uploads/%'
+            OR m.meta LIKE '%output/%' OR m.meta LIKE '%uploads/%'`
       )
       .all(userId) as Array<{ chatId: string; content: string | null; meta: string | null }>;
     const flags = new Map<string, { images: boolean; docs: boolean }>();
