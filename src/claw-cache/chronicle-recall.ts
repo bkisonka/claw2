@@ -17,6 +17,7 @@ import {
 import { hssLog } from "./hss-log.js";
 import { isHssEnabled } from "./hss-stabilizer.js";
 import { sanitizeForChroniclePrompt } from "./prompt-leak-sanitize.js";
+import { formatDayLocal } from "../core/format-date.js";
 
 export interface ChronicleRecallResult {
   hits: ChronicleRecallHit[];
@@ -30,7 +31,7 @@ function formatChronicleHit(hit: ChronicleRecallHit, index: number): string {
   const sim = hit.similarity.toFixed(3);
   // Date from the entry timestamp: versions of a session fact are ordered
   // visibly, the same convention as vector memory hits.
-  const day = Number.isFinite(hit.timestamp) ? new Date(hit.timestamp).toISOString().slice(0, 10) : "";
+  const day = Number.isFinite(hit.timestamp) ? formatDayLocal(hit.timestamp) : "";
   const dated = day ? `${day} · ` : "";
   const text = sanitizeForChroniclePrompt(hit.context);
   return `[${index + 1}] (importance=${imp}, source=${src}, sim=${sim}${pin}) ${dated}${text}`;

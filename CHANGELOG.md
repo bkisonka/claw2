@@ -3,6 +3,18 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Dates in memory and chronicle follow the deployment timezone**: both
+  renderings used toISOString() — always UTC — so a fact saved just after
+  Moscow midnight was dated "yesterday" even with TZ=Europe/Moscow in .env.
+  A shared formatDayLocal (TZ env / system localtime) now feeds the memory
+  hits, the chronicle recall block and chronicle_search results
+  (which also gained the date line). TZ=UTC on the same instant renders the
+  old value — covered by tests.
+
 ## [0.2.11] - 2026-11-22
 
 ### Added

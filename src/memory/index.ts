@@ -10,6 +10,7 @@ import { auditLog } from "../audit/log.js";
 import { getEmbedding } from "./embedding.js";
 import { sanitizeForMemory, type MemorySource } from "./sanitize.js";
 import { InMemoryStore, type IMemoryStore, type MemoryChunk } from "./store.js";
+import { formatDayLocal } from "../core/format-date.js";
 import { ChromaStore } from "./chroma-store.js";
 import { SqliteVecStore } from "./sqlite-vec-store.js";
 import { closeMemorySqlite } from "./sqlite-db.js";
@@ -220,7 +221,7 @@ export function formatMemoryHit(
   index?: number,
   now: number = Date.now()
 ): string {
-  const day = (ts: number) => new Date(ts).toISOString().slice(0, 10);
+  const day = (ts: number) => formatDayLocal(ts);
   const num = typeof index === "number" ? `[${index}] ` : "";
   const id = chunk.id ? ` · id=${chunk.id}` : "";
   let when = "unknown-date";

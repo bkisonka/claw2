@@ -20,6 +20,7 @@ import { closeMemorySqlite, embeddingToMatchParam, openMemorySqlite } from "./sq
 import { SqliteVecStore } from "./sqlite-vec-store.js";
 import { InMemoryStore } from "./store.js";
 import { formatMemoryHit } from "./index.js";
+import { formatDayLocal } from "../core/format-date.js";
 
 const tempDirs: string[] = [];
 
@@ -161,12 +162,15 @@ const embB = [1, 0.1, 0, 0];
 }
 
 {
-  // Rendering: date + id in every hit the model sees.
+  // Rendering: date + id in every hit the model sees; dates are LOCAL
+  // (TZ env / system), never toISOString-UTC — a Moscow-midnight fact must
+  // not read as yesterday.
+  const localTs = new Date("2026-11-22T10:00:00Z").getTime();
   const hit = formatMemoryHit(
-    { text: "встреча в пятницу", source: "user", id: "mem_123", createdAt: new Date("2026-11-22T10:00:00Z").getTime() },
+    { text: "встреча в пятницу", source: "user", id: "mem_123", createdAt: localTs },
     1
   );
-  assert.equal(hit, "[1] (user) 2026-11-22 · id=mem_123 · встреча в пятницу");
+  assert.equal(hit, `[1] (user) ${formatDayLocal(localTs)} · id=mem_123 · встреча в пятницу`);
   const plain = formatMemoryHit({ text: "без id", source: "internal" });
   assert.equal(plain, "(internal) unknown-date · без id");
 }
@@ -182,10 +186,10 @@ const embB = [1, 0.1, 0, 0];
   // Fresh fact, never verified: just its date.
   assert.equal(
     formatMemoryHit({ text: "x", source: "user", createdAt: now - 1000 }, 1, now),
-    "[1] (user) " + new Date(now - 1000).toISOString().slice(0, 10) + " · x"
+    "[1] (user) " + formatDayLocal(now - 1000) + " · x"
   );
   // Old fact, never verified: the system demands a re-check.
-  const oldDay = new Date(now - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const oldDay = formatDayLocal(now - 40 * 24 * 3600 * 1000);
   assert.equal(
     formatMemoryHit({ text: "x", source: "user", createdAt: now - 40 * 24 * 3600 * 1000 }, 1, now),
     `[1] (user) не проверено с ${oldDay} — перепроверь (memory_touch) · x`
@@ -203,7 +207,7 @@ const embB = [1, 0.1, 0, 0];
   assert.equal(hits.length, 1);
   assert.ok(typeof hits[0]?.verifiedAt === "number" && hits[0]!.verifiedAt! >= now, "verifiedAt surfaced in recall");
   assert.ok(
-    formatMemoryHit(hits[0]!, 1, now).startsWith(`[1] (user) проверено ${new Date(now).toISOString().slice(0, 10)}`),
+    formatMemoryHit(hits[0]!, 1, now).startsWith(`[1] (user) проверено ${formatDayLocal(now)}`),
     "verified fact renders its verification date"
   );
   closeMemorySqlite();

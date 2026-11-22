@@ -17,6 +17,7 @@ import { computeTaskId } from "../agent-selection/task-id.js";
 import { runCodeSkill, acceptSkill } from "../coding/run-code-skill.js";
 import { selectionLog } from "../agent-selection/log.js";
 import { formatMemoryHit, memoryRecall, memoryRetire, memoryTouch, memoryWrite } from "../memory/index.js";
+import { formatDayLocal } from "../core/format-date.js";
 import { createClient, chat, summarizeWithLlm, normalizeToolCalls, isGenerateImageToolEnabled } from "./llm.js";
 import { isPhoneCallToolEnabled } from "../config/sip.js";
 import { toolPhoneCall } from "../tools/phone-call.js";
@@ -1327,7 +1328,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               ? hits
                   .map(
                     (h, i) =>
-                      `[${i + 1}] (importance=${h.importance.toFixed(2)}, source=${h.source}, sim=${h.similarity.toFixed(3)}${h.pinned ? ", pinned" : ""}) ${sanitizeForChroniclePrompt(h.context)}`
+                      `[${i + 1}] (importance=${h.importance.toFixed(2)}, source=${h.source}, sim=${h.similarity.toFixed(3)}${h.pinned ? ", pinned" : ""}) ${formatDayLocal(h.timestamp)} · ${sanitizeForChroniclePrompt(h.context)}`
                   )
                   .join("\n\n")
               : "No relevant chronicle entries in this session.";
