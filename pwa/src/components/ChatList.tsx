@@ -79,7 +79,15 @@ export function ChatList({ chats, currentId, loading, error, onSelect, onDelete,
   const forkChildren = buildForkChildren(chats);
   const titles = new Map(chats.map((c) => [c.id, c.title] as const));
 
-  const renderRow = (c: ChatListItemApi, depth: number, parentTitle?: string): ReactElement => {
+  const renderRow = (
+    c: ChatListItemApi,
+    depth: number,
+    parentTitle?: string,
+    seen: ReadonlySet<string> = new Set()
+  ): ReactElement => {
+    // Lineage is acyclic by construction; cap depth and re-visits anyway —
+    // a corrupt store must not hang the list.
+    if (depth > 10 || seen.has(c.id)) return <li key={`cycle-${c.id}`} hidden />;
     const title = c.title || "Без названия";
     const children = forkChildren.get(c.id) ?? [];
     const rowTitle = parentTitle ? `${title} (ответвлён от «${parentTitle}»)` : title;
@@ -148,7 +156,7 @@ export function ChatList({ chats, currentId, loading, error, onSelect, onDelete,
         {children.length > 0 && (
           <ul className="tg-chat-fork-children">
             {children.map((child) =>
-              renderRow(child, depth + 1, titles.get(c.id) ?? title)
+              renderRow(child, depth + 1, titles.get(c.id) ?? title, new Set(seen).add(c.id))
             )}
           </ul>
         )}

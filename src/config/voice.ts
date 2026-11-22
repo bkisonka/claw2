@@ -103,6 +103,10 @@ export function resolveSttModel(config: Claw2Config): string {
 }
 
 export function resolveSttApiKey(config: Claw2Config): string {
+  if (config.voice?.sttNoOperatorFallback === true) {
+    // Tenant guard: the user pointed STT at their own endpoint — their key or none.
+    return config.voice?.sttApiKey?.trim() || "";
+  }
   return (
     config.voice?.sttApiKey?.trim() ||
     process.env.CLAW2_VOICE_STT_API_KEY?.trim() ||
@@ -120,6 +124,9 @@ export function resolveTtsModel(config: Claw2Config): string {
 }
 
 export function resolveTtsApiKey(config: Claw2Config): string {
+  if (config.voice?.ttsNoOperatorFallback === true) {
+    return config.voice?.ttsApiKey?.trim() || "";
+  }
   return (
     config.voice?.ttsApiKey?.trim() ||
     process.env.CLAW2_VOICE_TTS_API_KEY?.trim() ||

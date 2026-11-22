@@ -52,6 +52,11 @@ export interface Claw2Config {
     model: string;
     apiKey?: string;
     baseURL?: string;
+    /**
+     * Tenant guard (hosted mode): never fall back to the operator's env key.
+     * Deny-only — a user can set it, but that only strips credentials.
+     */
+    noOperatorApiKeyFallback?: boolean;
     enableThinking?: boolean;
     systemPromptMode?: "full" | "compact";
     maxTokens?: number;
@@ -352,6 +357,8 @@ export interface Claw2Config {
     sttUrl?: string;
     sttModel?: string;
     sttApiKey?: string;
+    /** Tenant guard (hosted mode): never fall back to the operator's env keys. Deny-only. */
+    sttNoOperatorFallback?: boolean;
     /** true = local voice service; false = OpenAI-compatible.*/
     sttLocal?: boolean;
     /**
@@ -361,6 +368,8 @@ export interface Claw2Config {
     ttsUrl?: string;
     ttsModel?: string;
     ttsApiKey?: string;
+    /** Tenant guard (hosted mode): never fall back to the operator's env keys. Deny-only. */
+    ttsNoOperatorFallback?: boolean;
     /** true = local voice service; false = OpenAI-compatible.*/
     ttsLocal?: boolean;
     /** TTS voice (OpenAI-compatible `voice` or local engine speaker).*/

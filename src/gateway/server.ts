@@ -34,7 +34,7 @@ import {
   type InsightOffer,
   type InsightReasonCode,
 } from "../insights/index.js";
-import { assessLlmConfigured } from "../config/llm-ready.js";
+import { assessLlmConfigured, resolveLlmApiKey } from "../config/llm-ready.js";
 import { toolSearch, formatSearchHitsMarkdown } from "../tools/search.js";
 import { cellsToMeta, resolveAssistantCells, contentForLlmHistory } from "../core/cell-blocks.js";
 import { deriveChatTitleFromRequest } from "../core/chat-title.js";
@@ -146,6 +146,7 @@ function maskSecrets(obj: unknown): unknown {
       k === "accessToken" ||
       k === "databaseUrl" ||
       k === "embeddingApiKey" ||
+      k === "recognizeSecret" ||
       k === "sdApiKey" ||
       k === "sttApiKey" ||
       k === "ttsApiKey" ||
@@ -221,10 +222,35 @@ function getEffectiveConfig(
   if (!allowed || Object.keys(allowed).length === 0) {
     return fileConfig;
   }
-  return deepMergeConfig(
+  const merged = deepMergeConfig(
     fileConfig as unknown as Record<string, unknown>,
     allowed
   ) as unknown as Claw2Config;
+  applyTenantSecretGuards(merged, allowed as Partial<Claw2Config>);
+  return merged;
+}
+
+/**
+ * Hosted-mode credential isolation: when a tenant points a server-side fetch
+ * (LLM provider, STT/TTS) at their own endpoint, the operator's inherited/env
+ * key must not ride along — otherwise every request exfiltrates it. The flags
+ * set here are deny-only (a tenant can set them, but that only strips keys).
+ */
+function applyTenantSecretGuards(merged: Claw2Config, overrides: Partial<Claw2Config>): void {
+  if (!isRegistrationIntended(merged)) return;
+  const llm = overrides.llm as Record<string, unknown> | undefined;
+  if (llm && typeof llm.baseURL === "string" && llm.baseURL.trim() && !("apiKey" in llm)) {
+    (merged.llm as { noOperatorApiKeyFallback?: boolean }).noOperatorApiKeyFallback = true;
+  }
+  const voice = overrides.voice as Record<string, unknown> | undefined;
+  if (voice) {
+    if (typeof voice.sttUrl === "string" && voice.sttUrl.trim() && !("sttApiKey" in voice)) {
+      (merged.voice as { sttNoOperatorFallback?: boolean }).sttNoOperatorFallback = true;
+    }
+    if (typeof voice.ttsUrl === "string" && voice.ttsUrl.trim() && !("ttsApiKey" in voice)) {
+      (merged.voice as { ttsNoOperatorFallback?: boolean }).ttsNoOperatorFallback = true;
+    }
+  }
 }
 
 /** User_config cache in memory (TTL 60 s), so as not to go to PostgreSQL for every chat request.*/
@@ -608,6 +634,28 @@ function isRegistrationMode(config: Claw2Config): boolean {
 }
 
 /**
+ * True when an operator INTENDS hosted mode (registrationEnabled + databaseUrl)
+ * but the setup is incomplete (sessionSecret missing/short) — isRegistrationMode
+ * returns false then and the JWT gate would silently disappear. The pipeline
+ * fails closed on this half-configured state instead (registrationGateActive).
+ */
+function isRegistrationIntended(config: Claw2Config): boolean {
+  if (process.env.CLAW2_DESKTOP === "1") return false;
+  return !!(
+    config.gateway?.auth?.registrationEnabled &&
+    config.gateway?.databaseUrl?.trim()
+  );
+}
+
+/** Operator logins allowed to approve skills / restart / drive remote access. Empty list = nobody. */
+function isRegistrationAdmin(config: Claw2Config, userLogin: string): boolean {
+  const admins = (config.gateway?.auth?.admins ?? [])
+    .map((a) => a.trim().toLowerCase())
+    .filter(Boolean);
+  return !!userLogin && admins.includes(userLogin.trim().toLowerCase());
+}
+
+/**
  * Auth endpoints stay public for any method (register/login/logout are POST).
  * UI-shell pages are public only for GET/HEAD: the page HTML must load before
  * the browser can ask for credentials, but a state-changing request to those
@@ -707,15 +755,6 @@ function isUiShellPath(path: string): boolean {
   if (path.startsWith("/assets/") || path.startsWith("/pwa")) return true;
   if (/^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
   return false;
-}
-
-function getAuthUserId(config: Claw2Config, req: IncomingMessage): { userId: string; login: string } | null {
-  const token = getBearerToken(req);
-  if (!token) return null;
-  const secret = config.gateway?.auth?.sessionSecret;
-  if (!secret) return null;
-  const payload = verifyToken(token, secret);
-  return payload ? { userId: payload.userId, login: payload.login } : null;
 }
 
 /** Cached account state for token verification (TTL 60 s — one DB hit per minute per user). */
@@ -891,7 +930,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": corsOrigin,
         "Access-Control-Allow-Methods": "POST, GET, PUT, PATCH, DELETE, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization, X-Session-Id, X-User-Id, X-Access-Token",
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization, X-Session-Id, X-Access-Token",
         Vary: "Origin",
       });
       res.end();
@@ -999,6 +1038,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         if (email && (await repo.checkEmailExists(email))) {
+          authRateLimiter.failure(regKey);
           res.writeHead(409, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "email already taken" }));
           return;
@@ -1019,9 +1059,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const fullMsg = cause ? `${msg}: ${cause}` : msg;
         console.error("[gateway] register failed:", fullMsg, err);
         if (!res.headersSent) {
+          // Generic client text: raw DB errors leak infrastructure details.
           res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({
-            error: fullMsg,
+            error: "Registration is temporarily unavailable",
             hint: /ECONNREFUSED|connect|ENOTFOUND|timeout|getaddrinfo/i.test(fullMsg)
               ? "Check the gateway.databaseUrl in .claw2/claw2.yaml on the server: the host should be postgres:5432 (not localhost). And that the postgres container is running (docker compose ps)."
               : undefined,
@@ -1156,11 +1197,24 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         const user = await repo.findById(payload.userId);
+        const pwdKey = `pwd:${payload.userId}`;
+        const pwdCheck = authRateLimiter.attempt(pwdKey);
+        if (!pwdCheck.allowed) {
+          res.writeHead(429, {
+            "Content-Type": JSON_TYPE,
+            "Access-Control-Allow-Origin": corsOrigin,
+            "Retry-After": String(pwdCheck.retryAfterSec ?? 60),
+          });
+          res.end(JSON.stringify({ error: "Too many attempts; try again later" }));
+          return;
+        }
         if (!user || !(await repo.verifyPassword(user, current))) {
+          authRateLimiter.failure(pwdKey);
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "Invalid current password" }));
           return;
         }
+        authRateLimiter.success(pwdKey);
         await repo.updatePassword(payload.userId, newPwd);
         invalidateUserAuthState(payload.userId);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -1175,7 +1229,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     // --- Require JWT for protected paths when registration mode ---
     let userId: string = "default";
     let userLogin = "";
-    if (isRegistrationMode(config)) {
+    // Fail closed: an operator who set registrationEnabled + databaseUrl but
+    // botched the sessionSecret must not silently get an open gateway
+    // (isRegistrationMode would return false and the JWT gate vanish).
+    const registrationGateActive = isRegistrationMode(config) || isRegistrationIntended(config);
+    if (registrationGateActive) {
       const authPayload = await verifyAuthIdentity(config, req);
       if (!isAuthPublicPath(req.method ?? "GET", p) && !authPayload) {
         res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -2846,6 +2904,14 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
 
     if (req.method === "POST" && p === "/api/agents") {
       try {
+        // Writing executable skill code is an operator decision in hosted mode
+        // (same policy as /allow): an ordinary tenant must not be able to mint
+        // skills, whatever the allowlist default is.
+        if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+          res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Forbidden: skill authoring requires gateway.auth.admins" }));
+          return;
+        }
         const ctx = await resolveWritableConfigContext();
         if (!ctx) {
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -3172,7 +3238,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             // RAW form (loadConfigRaw): the UI edits and stores the operator's
             // portable 127.0.0.1 form; loopback→host.docker.internal mapping
             // happens only in loadConfig for runtime consumers.
-            payload = maskSecrets(loadConfigRaw(getConfigPath())) as Record<string, unknown>;
+            // Hosted mode: the tenant template is policy-filtered too — the
+            // operator's file config must not leak sandbox/channel topology.
+            payload = maskSecrets(
+              applyUserConfigPolicy(loadConfigRaw(getConfigPath()) as Record<string, unknown>) ?? {}
+            ) as Record<string, unknown>;
             source = "file";
           }
         } else {
@@ -3285,6 +3355,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "POST" && p === "/api/remote-access/ddns/update") {
+      if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden: operator action requires gateway.auth.admins" }));
+        return;
+      }
       try {
         if (isRegistrationMode(config) && userId === "default") {
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -3305,6 +3380,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "POST" && p === "/api/remote-access/cert/issue") {
+      if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden: operator action requires gateway.auth.admins" }));
+        return;
+      }
       try {
         if (isRegistrationMode(config) && userId === "default") {
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -3325,6 +3405,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "POST" && p === "/api/remote-access/https/open") {
+      if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden: operator action requires gateway.auth.admins" }));
+        return;
+      }
       try {
         if (isRegistrationMode(config) && userId === "default") {
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -3345,6 +3430,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "POST" && p === "/api/remote-access/https/close") {
+      if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden: operator action requires gateway.auth.admins" }));
+        return;
+      }
       try {
         if (isRegistrationMode(config) && userId === "default") {
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -3482,6 +3572,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "POST" && p === "/api/restart") {
+      if (isRegistrationIntended(config) && !isRegistrationAdmin(config, userLogin)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden: operator action requires gateway.auth.admins" }));
+        return;
+      }
       auditLog(config, { type: "restart_requested" });
       res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
       res.end(JSON.stringify({ ok: true }));
@@ -3635,10 +3730,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
         const llm = effective.llm;
         const baseURL = (llm?.baseURL?.trim() || process.env.OPENAI_BASE_URL?.trim() || "").replace(/\/+$/, "");
-        const apiKey =
-          llm?.apiKey?.trim() ||
-          process.env.OPENAI_API_KEY?.trim() ||
-          "";
+        // resolveLlmApiKey honors the tenant guard (noOperatorApiKeyFallback):
+        // a user-pointed provider never receives the operator's env key here.
+        const apiKey = resolveLlmApiKey(effective);
         if (!baseURL) {
           res.writeHead(503, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "LLM baseURL not configured", models: [], current: llm?.model ?? "" }));
@@ -3908,12 +4002,63 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       const sessionId = typeof req.url === "string" ? new URL(req.url, "http://localhost").searchParams.get("sessionId") ?? "" : "";
       const uploads: { path: string; name: string }[] = [];
       const output: { path: string; name: string }[] = [];
+      // Hosted mode: this endpoint lists disk files by name prefix, which leaks
+      // other tenants' session ids / outputs. Scope it to sessions the caller
+      // owns. Single-key mode keeps the original behavior (one owner anyway).
+      if (isRegistrationIntended(config)) {
+        const chatRepo = getChatRepository();
+        const ownedPrefixes = chatRepo
+          ? chatRepo
+              .listChats(userId)
+              .filter((c) => !sessionId.trim() || c.id === sessionId.trim())
+              .map((c) => `${c.id}-`)
+          : [];
+        if (ownedPrefixes.length > 0) {
+          if (existsSync(uploadsDir)) {
+            try {
+              const names = readdirSync(uploadsDir);
+              for (const name of names) {
+                if (!ownedPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+                uploads.push({ path: `uploads/${name}`, name });
+              }
+            } catch {
+              // ignore
+            }
+          }
+          if (existsSync(outputDir)) {
+            try {
+              const names = readdirSync(outputDir);
+              const withStat = names
+                .filter((name) => ownedPrefixes.some((prefix) => name.startsWith(prefix)))
+                .map((name) => {
+                  const full = join(outputDir, name);
+                  try {
+                    const st = statSync(full);
+                    return st.isFile() ? { name, mtime: st.mtimeMs } : null;
+                  } catch {
+                    return null;
+                  }
+                })
+                .filter((x): x is { name: string; mtime: number } => x !== null);
+              withStat.sort((a, b) => b.mtime - a.mtime);
+              for (const { name } of withStat.slice(0, SESSION_FILES_OUTPUT_MAX)) {
+                output.push({ path: `output/${name}`, name });
+              }
+            } catch {
+              // ignore
+            }
+          }
+        }
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ uploads, output }));
+        return;
+      }
       if (sessionId.trim()) {
         if (existsSync(uploadsDir)) {
           try {
             const names = readdirSync(uploadsDir);
             for (const name of names) {
-              if (!name.startsWith(sessionId + "-")) continue;
+              if (!name.startsWith(sessionId.trim() + "-")) continue;
               uploads.push({ path: `uploads/${name}`, name });
             }
           } catch {
@@ -3995,6 +4140,14 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end(JSON.stringify({ error: "Chats DB not configured (gateway.chatsDbPath)" }));
         return;
       }
+      // Hosted mode: the disk scan below lists files by session-id PREFIX —
+      // without an ownership check any tenant could enumerate another tenant's
+      // files by guessing their session id. Single-key mode keeps one owner.
+      if (isRegistrationIntended(config) && !chatRepo.chatExists(sessionId, userId)) {
+        res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Forbidden" }));
+        return;
+      }
       try {
         const messages = chatRepo.getChatHistory(sessionId, userId);
         const images = collectGalleryImages(messages).filter((img) => {
@@ -4072,6 +4225,18 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       }
       const url = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
       const sessionId = url.searchParams.get("session_id")?.trim() ?? "";
+      // Hosted mode: deletion is tied to an owned chat (the web client always
+      // passes session_id). Without an owned session the delete is refused —
+      // /files cannot carry per-user auth itself (browser <img>/downloads send
+      // no headers), so this is the boundary that matters for destructive ops.
+      if (isRegistrationIntended(config)) {
+        const chatRepo = getChatRepository();
+        if (!sessionId || !chatRepo || !chatRepo.chatExists(sessionId, userId)) {
+          res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Forbidden" }));
+          return;
+        }
+      }
       try {
         // We delete the file in both primary and legacy (if both exist).
         const roots = [agentsDir, resolve(process.cwd(), "agents")];

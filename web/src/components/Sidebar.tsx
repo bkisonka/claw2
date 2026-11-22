@@ -697,13 +697,18 @@ export function Sidebar({
     chat: ChatItem,
     childrenMap: Map<string, ChatItem[]>,
     depth: number,
-    parentTitle?: string
+    parentTitle?: string,
+    seen: ReadonlySet<string> = new Set()
   ): ReactNode => {
+    // Defense in depth: the lineage is acyclic by construction (fresh server
+    // ids + acyclic graft), but a corrupt DB must not hang the renderer.
+    if (depth > 10 || seen.has(chat.id)) return null;
     const children = childrenMap.get(chat.id) ?? [];
     const expanded = !collapsedForkIds.has(chat.id);
+    const childSeen = new Set(seen).add(chat.id);
     const childNodes =
       expanded && children.length > 0
-        ? children.map((child) => renderForkSubtree(child, childrenMap, depth + 1, chat.title))
+        ? children.map((child) => renderForkSubtree(child, childrenMap, depth + 1, chat.title, childSeen))
         : null;
     return (
       <div

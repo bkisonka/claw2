@@ -354,7 +354,9 @@ export async function duplicateChat(
     (db) =>
       new Promise<void>((resolve, reject) => {
         const t = db.transaction(["chats", "messages"], "readwrite");
-        t.objectStore("chats").put(fork);
+        // `add`, not `put`: a colliding id must FAIL like the server's PK
+        // conflict does — an upsert would silently overwrite an existing chat.
+        t.objectStore("chats").add(fork);
         if (upTo !== 0) {
           const req = t.objectStore("messages").index("chatId").openCursor(IDBKeyRange.only(chatId));
           let copied = 0;

@@ -7,6 +7,12 @@ export interface SessionMessage {
   meta?: string;
 }
 
+/** Server-side title bound: the UI caps input length, the API must too
+ * (a multi-megabyte title used to be stored verbatim and re-rendered). */
+const CHAT_TITLE_MAX_CHARS = 300;
+const capTitle = (title: string | null | undefined): string =>
+  (title ?? "").trim().slice(0, CHAT_TITLE_MAX_CHARS);
+
 export interface ChatListItem {
   id: string;
   title: string;
@@ -142,6 +148,8 @@ export interface ChatRepository {
   ): string | null;
   /** forked_from_chat_id of the chat (or null). Used to walk the fork chain upward.*/
   getForkParent(chatId: string, userId: string): string | null;
+  /** True only when the chat exists AND belongs to the user (hosted-mode file scoping).*/
+  chatExists(chatId: string, userId: string): boolean;
   /** Delete the chat and all its messages. Children forks are re-attached to the deleted chat's parent (graft). Returns true if the chat belonged to the user and was deleted.*/
   deleteChat(chatId: string, userId: string): boolean;
   /** Link the chat to a project or unlink it (projectId === null). Returns true if the chat is found and belongs to user.*/
@@ -291,7 +299,7 @@ export class SqliteChatRepository implements ChatRepository {
     if (existing) {
       // The title is fixed during creation; We don’t overwrite it later with someone else’s message.
       const keepTitle = (existing.title ?? "").trim();
-      const nextTitle = keepTitle || (title !== undefined ? title : "") || keepTitle;
+      const nextTitle = keepTitle || capTitle(title) || keepTitle;
       const nextPageKey =
         browserPageKey !== undefined
           ? browserPageKey
@@ -315,12 +323,12 @@ export class SqliteChatRepository implements ChatRepository {
       .prepare(
         "INSERT INTO chats (id, user_id, project_id, title, browser_page_key, updated_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
       )
-      .run(sessionId, userId, projectId ?? null, title ?? "", browserPageKey ?? null, now, now);
+      .run(sessionId, userId, projectId ?? null, capTitle(title), browserPageKey ?? null, now, now);
     return now;
   }
 
   updateChatTitle(chatId: string, userId: string, title: string): boolean {
-    const next = title.trim();
+    const next = capTitle(title);
     if (!next) return false;
     const now = Date.now();
     const r = this.db
@@ -930,7 +938,7 @@ export class SqliteChatRepository implements ChatRepository {
     if (!src) return null;
     const id = newChatId.trim();
     if (!id) return null;
-    const title = opts?.title != null && opts.title.trim() ? opts.title.trim() : src.title;
+    const title = capTitle(opts?.title) || src.title.slice(0, CHAT_TITLE_MAX_CHARS);
     const upTo =
       typeof opts?.upToCount === "number" && Number.isFinite(opts.upToCount)
         ? Math.max(0, Math.floor(opts.upToCount))
@@ -986,6 +994,12 @@ export class SqliteChatRepository implements ChatRepository {
       .prepare("SELECT forked_from_chat_id FROM chats WHERE id = ? AND user_id = ?")
       .get(chatId, userId) as { forked_from_chat_id?: string | null } | undefined;
     return row?.forked_from_chat_id ?? null;
+  }
+
+  chatExists(chatId: string, userId: string): boolean {
+    return !!this.db
+      .prepare("SELECT 1 FROM chats WHERE id = ? AND user_id = ?")
+      .get(chatId, userId);
   }
 
   updateChatProject(chatId: string, userId: string, projectId: string | null): boolean {

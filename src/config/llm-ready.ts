@@ -11,6 +11,11 @@ export function resolveLlmBaseURL(config: Claw2Config): string {
 }
 
 export function resolveLlmApiKey(config: Claw2Config): string {
+  if (config.llm?.noOperatorApiKeyFallback === true) {
+    // Tenant guard: the user pointed the provider at their own endpoint —
+    // their key or none; the operator's env key must never ride along.
+    return config.llm?.apiKey?.trim() || "";
+  }
   return config.llm?.apiKey?.trim() || process.env.OPENAI_API_KEY?.trim() || "";
 }
 
