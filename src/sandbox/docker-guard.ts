@@ -98,11 +98,17 @@ function checkBind(
   const opts = parts.slice(2).join(":");
   if (!src.startsWith("/")) return `bind source must be absolute: "${bind}"`;
   if (src.includes("..")) return `bind source must not contain "..": "${bind}"`;
+  if (dst.includes("..")) return `bind target must not contain "..": "${bind}"`;
   if (!dst.startsWith("/app/") && dst !== "/sidecar.cjs") {
     return `bind target must be /app/** or /sidecar.cjs: "${bind}"`;
   }
+  // Docker mounts a bind WITHOUT options read-write; read-write is reserved
+  // for the sandbox output mount (dst === /app/output) — anything else that
+  // omitss opts (or explicitly carries rw) is rejected.
   const ro = opts === "" || opts.split(",").includes("ro");
-  if (!ro) return `binds must be read-only or the sandbox output mount: "${bind}"`;
+  if (!ro && dst !== "/app/output") {
+    return `binds must be read-only except the /app/output mount: "${bind}"`;
+  }
   if (
     !allowedSrcPrefixes.some((p) => {
       const root = p.endsWith("/") ? p : p + "/";
@@ -112,6 +118,11 @@ function checkBind(
     return `bind source "${src}" is outside the allowed sandbox roots`;
   }
   return null;
+}
+
+/** Reject namespace-sharing via another container (netns/shm/pid). */
+function isContainerNamespaceValue(v: unknown): boolean {
+  return typeof v === "string" && (v.startsWith("container:") || v === "host" || v.startsWith("ns:"));
 }
 
 /**
@@ -127,6 +138,14 @@ export function validateContainerCreateBody(
   const b = body as Record<string, unknown>;
   const hc = (b.HostConfig ?? {}) as Record<string, unknown>;
 
+  // Container identity: sandbox containers are claw2-named (name is also
+  // spoofable via ?name= — see the endpoint guard; a non-claw2 name would
+  // squat co-tenant names on the daemon).
+  const name = typeof b.Name === "string" ? b.Name : "";
+  if (name && !name.startsWith("claw2")) {
+    return { ok: false, error: "container name must start with 'claw2'" };
+  }
+
   // Mandatory hardening profile (both gateway-created containers set these).
   const capDrop = Array.isArray(hc.CapDrop) ? (hc.CapDrop as string[]).map((s) => String(s).toUpperCase()) : [];
   if (!capDrop.includes("ALL")) return { ok: false, error: "CapDrop=[ALL] is required" };
@@ -141,13 +160,35 @@ export function validateContainerCreateBody(
   if (isNonEmptyArray(hc.CapAdd)) return { ok: false, error: "CapAdd is not allowed" };
   if (isNonEmptyArray(hc.Devices) || isNonEmptyArray(b.Devices)) return { ok: false, error: "devices are not allowed" };
   for (const key of ["PidnsMode", "IpcMode", "UsernsMode", "NetworkMode"]) {
-    const v = hc[key];
-    if (typeof v === "string" && (v === "host" || v.startsWith("ns:"))) {
-      return { ok: false, error: `${key}=host is not allowed` };
+    if (isContainerNamespaceValue(hc[key])) {
+      return { ok: false, error: `${key} namespace sharing (host/container:*) is not allowed` };
     }
   }
-  if (hc.AutoRemove === true && hc.RestartPolicy && (hc.RestartPolicy as Record<string, unknown>).Name) {
-    return { ok: false, error: "restart policy is not allowed" };
+  // Restart policies keep containers alive outside the operator's control.
+  const restartName = (hc.RestartPolicy as { Name?: unknown } | undefined)?.Name;
+  if (typeof restartName === "string" && restartName && restartName !== "no") {
+    return { ok: false, error: "restart policies are not allowed" };
+  }
+  if (typeof hc.OomScoreAdj === "number" && hc.OomScoreAdj < 0) {
+    return { ok: false, error: "OomScoreAdj < 0 is not allowed" };
+  }
+  for (const key of ["DeviceCgroupRules", "DeviceRequests", "GroupAdd", "Ulimits", "CgroupParent", "Dns", "DnsSearch", "DnsOptions", "ExtraHosts", "VolumesFrom"]) {
+    if (isNonEmptyArray(hc[key])) return { ok: false, error: `${key} is not allowed` };
+  }
+  const logConfig = hc.LogConfig as { Type?: unknown } | undefined;
+  if (logConfig && typeof logConfig.Type === "string" && !["json-file", "local", "none"].includes(logConfig.Type)) {
+    return { ok: false, error: "LogConfig remote drivers are not allowed" };
+  }
+  // Tmpfs entries must be noexec and must not shadow the rootfs (a writable
+  // exec tmpfs on "/" defeats ReadonlyRootfs).
+  const tmpfs = hc.Tmpfs;
+  if (tmpfs && typeof tmpfs === "object") {
+    for (const [target, mountOpts] of Object.entries(tmpfs as Record<string, unknown>)) {
+      if (target === "/") return { ok: false, error: "tmpfs over / is not allowed" };
+      if (typeof mountOpts === "string" && !mountOpts.split(",").includes("noexec")) {
+        return { ok: false, error: `tmpfs on ${target} must be noexec` };
+      }
+    }
   }
   // PortBindings/ExposedPorts are objects keyed by "port/proto", not arrays.
   const portBindings = hc.PortBindings;
@@ -161,6 +202,22 @@ export function validateContainerCreateBody(
   const sysctls = hc.Sysctls;
   if (sysctls && typeof sysctls === "object" && Object.keys(sysctls).length > 0) {
     return { ok: false, error: "sysctls are not allowed" };
+  }
+  // Networks at create time: the docker CLI sends NetworkingConfig for multi
+  // --network runs. Every endpoint must be a claw2-scoped network — a bridge /
+  // co-tenant / control network here would bypass the --internal egress
+  // isolation (and could put a sandbox container onto sandbox-control).
+  const networking = b.NetworkingConfig as { EndpointsConfig?: unknown } | undefined;
+  const endpoints = networking?.EndpointsConfig;
+  if (endpoints && typeof endpoints === "object") {
+    const names = Array.isArray(endpoints)
+      ? (endpoints as { Network?: unknown }[]).map((e) => e?.Network)
+      : Object.keys(endpoints as Record<string, unknown>);
+    for (const net of names) {
+      if (typeof net !== "string" || !net.startsWith("claw2")) {
+        return { ok: false, error: `network attachment "${String(net)}" must be a claw2 network` };
+      }
+    }
   }
 
   // Binds: source inside the declared sandbox roots, target under /app.
@@ -183,18 +240,25 @@ function jsonError(res: ServerResponse, status: number, message: string): void {
 export interface DockerGuardServerOptions {
   socketPath?: string;
   allowedBindSrc?: string[];
+  /** Own container name: container-scoped operations targeting it are refused (anti self-removal). */
+  selfName?: string;
   /** Guard-side rejection hook (audit/console). */
   onReject?: (detail: string) => void;
 }
 
 /**
  * Body checks for the remaining sandbox POSTs: networks must be claw2-owned
- * and may only connect claw2-owned containers.
+ * bridge networks and may only connect claw2-owned containers.
  */
 export function validateNetworkCreateBody(body: unknown): ContainerCreateCheck {
-  const name = (body as { Name?: unknown } | null)?.Name;
-  if (typeof name !== "string" || !name.startsWith("claw2")) {
+  const b = (body ?? {}) as { Name?: unknown; Driver?: unknown };
+  if (typeof b.Name !== "string" || !b.Name.startsWith("claw2")) {
     return { ok: false, error: "network name must start with 'claw2'" };
+  }
+  // macvlan/host drivers put the network on a host interface — the sandbox
+  // contract is plain bridge networks only.
+  if (typeof b.Driver === "string" && b.Driver !== "bridge") {
+    return { ok: false, error: `network driver "${b.Driver}" is not allowed` };
   }
   return { ok: true };
 }
@@ -210,6 +274,7 @@ export function validateNetworkConnectBody(body: unknown): ContainerCreateCheck 
 
 export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): http.Server {
   const socketPath = opts.socketPath ?? "/var/run/docker.sock";
+  const selfName = opts.selfName?.trim() || "claw2-docker-guard";
   const allowedBindSrc = (opts.allowedBindSrc ?? [])
     .map((p) => p.trim())
     .filter(Boolean);
@@ -217,7 +282,11 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
   const forward = (
     req: IncomingMessage,
     res: ServerResponse,
-    targetPath: string
+    targetPath: string,
+    // When the body was consumed for validation it MUST be re-sent explicitly:
+    // piping the already-ended IncomingMessage forwards zero bytes and the
+    // daemon waits for a body that never arrives (hangs the docker CLI).
+    bodyBuffer?: Buffer
   ): void => {
     const preq = http.request(
       {
@@ -237,7 +306,8 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
       }
       res.end(JSON.stringify({ message: `docker guard upstream error: ${err.message}` }));
     });
-    req.pipe(preq);
+    if (bodyBuffer != null) preq.end(bodyBuffer);
+    else req.pipe(preq);
   };
 
   return http.createServer((req, res) => {
@@ -249,6 +319,26 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
       opts.onReject?.(`endpoint ${method} ${path}`);
       jsonError(res, 403, "docker guard: endpoint not allowed");
       return;
+    }
+
+    // Self-protection: the gateway must not be able to kill/rm/inspect its
+    // own guard (a removed guard does not come back on restart policy).
+    const containerScope = /^\/containers\/([^/]+)(\/|$)/.exec(path);
+    if (containerScope && containerScope[1] === selfName) {
+      opts.onReject?.(`self-targeted container op ${method} ${path}`);
+      jsonError(res, 403, "docker guard: self-targeted operations are not allowed");
+      return;
+    }
+
+    // docker load streams an arbitrary image from the request body — outside
+    // the sandbox contract (pulls via ?fromImage= stay allowed).
+    if (method === "POST" && path === "/images/create") {
+      const q = new URL(rawUrl, "http://guard.local").searchParams;
+      if (q.get("fromSrc") != null) {
+        opts.onReject?.("images/create fromSrc (docker load)");
+        jsonError(res, 403, "docker guard: docker load is not allowed");
+        return;
+      }
     }
 
     const guardKind =
@@ -297,7 +387,9 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
           jsonError(res, 403, `docker guard: ${check.error}`);
           return;
         }
-        forward(req, res, rawUrl);
+        // Re-send the buffered body — headers alone (with their Content-Length)
+        // would hang the daemon forever.
+        forward(req, res, rawUrl, Buffer.concat(chunks));
       });
       req.on("error", () => {
         if (!aborted && !res.headersSent) jsonError(res, 400, "docker guard: request error");
@@ -313,6 +405,7 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
 export function startDockerGuardFromEnv(): void {
   const port = Number(process.env.DOCKER_GUARD_PORT ?? 2375) || 2375;
   const socketPath = process.env.DOCKER_GUARD_SOCKET?.trim() || "/var/run/docker.sock";
+  const selfName = process.env.CLAW2_DOCKER_GUARD_SELF_NAME?.trim() || "claw2-docker-guard";
   const allowedBindSrc = (process.env.CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC ?? "")
     .split(":")
     .map((p) => p.trim())
@@ -320,6 +413,7 @@ export function startDockerGuardFromEnv(): void {
   const server = createDockerGuardServer({
     socketPath,
     allowedBindSrc,
+    selfName,
     onReject: (detail) => console.error(`[docker-guard] rejected: ${detail}`),
   });
   server.listen(port, "0.0.0.0", () => {

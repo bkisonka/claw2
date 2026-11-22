@@ -87,6 +87,8 @@ services:
     environment:
       - DOCKER_GUARD_PORT=2375
       - DOCKER_GUARD_SOCKET=/var/run/docker.sock
+      # Anti self-removal: container-scoped API ops on this name are refused.
+      - CLAW2_DOCKER_GUARD_SELF_NAME=claw2-docker-guard
       # Sandbox bind roots: skill containers may only mount host paths from
       # the compose working directory's agents/ and data/ trees.
       - CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC=${PWD}/agents:${PWD}/data
