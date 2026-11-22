@@ -12,6 +12,7 @@ import type { PwaView } from "./components/TabBar";
 import {
   deleteChat,
   duplicateChat,
+  renameChat,
   exportChatToMarkdown,
   fetchChatHistory,
   fetchChatList,
@@ -243,6 +244,10 @@ export default function App() {
           onSelect={(id) => void openChat(id)}
           onDelete={(id) => void handleDelete(id)}
           onDuplicate={(id, title) => void handleDuplicate(id, title)}
+          onRename={(id, title) => {
+            setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title } : c)));
+            void renameChat(id, title).catch(() => void refreshChats());
+          }}
           onExport={(id, title) => {
             void exportChatToMarkdown(id, title).catch((e) =>
               window.alert(`Не удалось экспортировать чат: ${e instanceof Error ? e.message : String(e)}`)

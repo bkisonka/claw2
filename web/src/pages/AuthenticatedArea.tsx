@@ -26,11 +26,12 @@ import {
   updateChatFavorited,
   touchChat,
   exportChatClawCache,
+  renameChat,
 } from "../api/chat";
 import { browserSearch } from "../api/browserSearch";
 import { getConfig } from "../api/config";
 import { fetchProjectList, deleteProject, type ProjectListItemApi } from "../api/project";
-import { type ChatItem, compareChatItems } from "../store/chatList";
+import { type ChatItem, compareChatItems, resolveListTitle } from "../store/chatList";
 import {
   evictChatHistories,
   selectInactiveHistoryEvictions,
@@ -367,7 +368,7 @@ export function AuthenticatedArea() {
         const copy = [...prev];
         const idx = copy.findIndex((c) => c.id === sessionId);
         const existing = idx >= 0 ? copy[idx] : undefined;
-        const listTitle = (existing?.title || "").trim() || title;
+        const listTitle = resolveListTitle(existing?.title, title);
         const item: ChatItem = {
           id: sessionId,
           title: listTitle,
@@ -378,6 +379,9 @@ export function AuthenticatedArea() {
           model: existing?.model ?? null,
           pinned: existing?.pinned,
           favorited: existing?.favorited,
+          titleManual: existing?.titleManual,
+          hasImages: existing?.hasImages,
+          hasDocs: existing?.hasDocs,
           historyEvicted: false,
         };
         if (idx >= 0) copy[idx] = item;
@@ -827,7 +831,7 @@ export function AuthenticatedArea() {
       const copy = [...prev];
       const idx = copy.findIndex((c) => c.id === sessionId);
       const existing = idx >= 0 ? copy[idx] : undefined;
-      const listTitle = (existing?.title || "").trim() || title;
+      const listTitle = resolveListTitle(existing?.title, title);
       const item: ChatItem = {
         id: sessionId,
         title: listTitle,
@@ -838,6 +842,9 @@ export function AuthenticatedArea() {
         model: existing?.model ?? null,
         pinned: existing?.pinned,
         favorited: existing?.favorited,
+        titleManual: existing?.titleManual,
+        hasImages: existing?.hasImages,
+        hasDocs: existing?.hasDocs,
         historyEvicted: false,
       };
       if (idx >= 0) copy[idx] = item;
@@ -953,6 +960,19 @@ export function AuthenticatedArea() {
       );
     }
   }, []);
+
+  const handleRenameChat = useCallback(async (chatId: string, title: string) => {
+    const id = chatId.trim();
+    const next = title.trim().slice(0, 300);
+    if (!id || !next) return;
+    const previous = chats.find((c) => c.id === id)?.title ?? "";
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: next, titleManual: true } : c)));
+    try {
+      await renameChat(id, next);
+    } catch {
+      setChats((prev) => prev.map((c) => (c.id === id ? { ...c, title: previous || next } : c)));
+    }
+  }, [chats]);
 
   const handleExportChat = useCallback(async (chatId: string) => {
     const chat = chats.find((c) => c.id === chatId);
@@ -1271,6 +1291,7 @@ export function AuthenticatedArea() {
     onChatProjectChange: handleChatProjectChange,
     onChatPinnedChange: handleChatPinnedChange,
     onChatFavoritedChange: handleChatFavoritedChange,
+    onRenameChat: handleRenameChat,
     onDynamicPrompt: (text: string) => {
       setSearchQuery("");
       setSeedPrompt(text);

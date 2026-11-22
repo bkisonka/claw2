@@ -484,6 +484,35 @@ export async function renameChat(chatId: string, title: string): Promise<void> {
  * listed here: since v4 their payloads live in the files store and surface
  * through listFiles().
  */
+/** Per-chat attachment indicators (non-deleted attachedFiles across all messages). */
+export async function attachmentFlagsByChat(): Promise<Map<string, { images: boolean; docs: boolean }>> {
+  const flags = new Map<string, { images: boolean; docs: boolean }>();
+  await openDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const req = db.transaction("messages", "readonly").objectStore("messages").openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) {
+            resolve();
+            return;
+          }
+          const m = cursor.value as StoredMessage & { chatId: string };
+          for (const f of m.attachedFiles ?? []) {
+            if (f.deleted) continue;
+            const cur = flags.get(m.chatId) ?? { images: false, docs: false };
+            if ((f.mimeType ?? "").startsWith("image/")) cur.images = true;
+            else cur.docs = true;
+            flags.set(m.chatId, cur);
+          }
+          cursor.continue();
+        };
+        req.onerror = () => reject(req.error);
+      })
+  );
+  return flags;
+}
+
 export async function chatFiles(
   chatId: string
 ): Promise<{ name: string; mimeType?: string; fileId: string }[]> {

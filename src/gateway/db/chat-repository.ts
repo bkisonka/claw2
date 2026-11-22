@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
+import { textHasDocumentRef } from "../chat-documents.js";
+
 export interface SessionMessage {
   role: "user" | "assistant";
   content: string;
@@ -31,6 +33,12 @@ export interface ChatListItem {
   favorited?: boolean;
   /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
   forked_from_chat_id?: string | null;
+  /** 1 = the title was set manually (rename); automatic titling must not overwrite it. */
+  titleManual?: boolean;
+  /** The chat has image attachments (sidebar indicator). */
+  hasImages?: boolean;
+  /** The chat has document attachments (sidebar indicator). */
+  hasDocs?: boolean;
 }
 
 export interface ProjectListItem {
@@ -72,6 +80,12 @@ export interface ChatRepository {
   ): number;
   /** Overwrite chat title (browser page title). */
   updateChatTitle(chatId: string, userId: string, title: string): boolean;
+  /** Rename the chat from the UI: sets the title and marks it manual (auto-titling must not overwrite it). */
+  renameChatTitle(chatId: string, userId: string, title: string): boolean;
+  /** True when the chat title was set manually. */
+  isTitleManual(chatId: string, userId: string): boolean;
+  /** Per-chat attachment indicators from stored messages (image cells, /files/ document references). */
+  attachmentRefsByChat(userId: string): Map<string, { images: boolean; docs: boolean }>;
   /** Bind chat to a normalized browser page URL. */
   updateChatBrowserPageKey(chatId: string, userId: string, pageKey: string | null): boolean;
   /** Per-chat LLM model; null clears override (use settings default). */
@@ -269,6 +283,9 @@ function mapChatListRow(r: {
   pinned?: number | null;
   favorited?: number | null;
   forked_from_chat_id?: string | null;
+  title_manual?: number | null;
+  hasImages?: boolean;
+  hasDocs?: boolean;
 }): ChatListItem {
   return {
     id: r.id,
@@ -280,6 +297,9 @@ function mapChatListRow(r: {
     pinned: Number(r.pinned ?? 0) === 1,
     favorited: Number(r.favorited ?? 0) === 1,
     forked_from_chat_id: r.forked_from_chat_id ?? null,
+    titleManual: Number(r.title_manual ?? 0) === 1,
+    ...(r.hasImages ? { hasImages: true } : {}),
+    ...(r.hasDocs ? { hasDocs: true } : {}),
   };
 }
 
@@ -346,6 +366,46 @@ export class SqliteChatRepository implements ChatRepository {
       .prepare("UPDATE chats SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?")
       .run(next, now, chatId, userId);
     return r.changes > 0;
+  }
+
+  renameChatTitle(chatId: string, userId: string, title: string): boolean {
+    const next = capTitle(title);
+    if (!next) return false;
+    const r = this.db
+      .prepare(
+        "UPDATE chats SET title = ?, title_manual = 1, updated_at = ? WHERE id = ? AND user_id = ?"
+      )
+      .run(next, Date.now(), chatId, userId);
+    return r.changes > 0;
+  }
+
+  isTitleManual(chatId: string, userId: string): boolean {
+    const row = this.db
+      .prepare("SELECT title_manual FROM chats WHERE id = ? AND user_id = ?")
+      .get(chatId, userId) as { title_manual?: number | null } | undefined;
+    return Number(row?.title_manual ?? 0) === 1;
+  }
+
+  attachmentRefsByChat(userId: string): Map<string, { images: boolean; docs: boolean }> {
+    const rows = this.db
+      .prepare(
+        `SELECT m.chat_id AS chatId, m.content AS content, m.meta AS meta
+         FROM messages m JOIN chats c ON c.id = m.chat_id AND c.user_id = ?
+         WHERE m.content LIKE '%/files/%' OR m.meta LIKE '%/files/%' OR m.meta LIKE '%"type":"image"%'`
+      )
+      .all(userId) as Array<{ chatId: string; content: string | null; meta: string | null }>;
+    const flags = new Map<string, { images: boolean; docs: boolean }>();
+    const mark = (id: string, images?: boolean, docs?: boolean) => {
+      const cur = flags.get(id) ?? { images: false, docs: false };
+      flags.set(id, { images: cur.images || !!images, docs: cur.docs || !!docs });
+    };
+    for (const r of rows) {
+      if (r.meta?.includes('"type":"image"')) mark(r.chatId, true);
+      const text = `${r.content ?? ""}
+${r.meta ?? ""}`;
+      if (textHasDocumentRef(text)) mark(r.chatId, undefined, true);
+    }
+    return flags;
   }
 
   updateChatBrowserPageKey(chatId: string, userId: string, pageKey: string | null): boolean {
@@ -524,10 +584,10 @@ export class SqliteChatRepository implements ChatRepository {
     const hasProject = projectId !== undefined && projectId !== null && projectId !== "";
     const stmt = hasProject
       ? this.db.prepare(
-          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id FROM chats WHERE user_id = ? AND project_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
+          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id, title_manual FROM chats WHERE user_id = ? AND project_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
         )
       : this.db.prepare(
-          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id FROM chats WHERE user_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
+          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id, title_manual FROM chats WHERE user_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
         );
     const rows = (hasProject ? stmt.all(userId, projectId) : stmt.all(userId)) as Array<{
       id: string;
@@ -539,6 +599,7 @@ export class SqliteChatRepository implements ChatRepository {
       pinned?: number | null;
       favorited?: number | null;
       forked_from_chat_id?: string | null;
+      title_manual?: number | null;
     }>;
     return rows.map((r) => mapChatListRow(r));
   }

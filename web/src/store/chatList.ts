@@ -29,6 +29,12 @@ export interface ChatItem {
   favorited?: boolean;
   /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
   forkedFrom?: string | null;
+  /** Title was renamed manually: auto-titling is suppressed. */
+  titleManual?: boolean;
+  /** The chat has image attachments (sidebar indicator). */
+  hasImages?: boolean;
+  /** The chat has document attachments (sidebar indicator). */
+  hasDocs?: boolean;
   /** Transcript payload was dropped from memory and must be reloaded before display. */
   historyEvicted?: boolean;
 }
@@ -38,6 +44,28 @@ export function makeChatTitle(messages: StoredMessage[]): string {
   const firstUser = messages.find((m) => m.role === "user");
   if (!firstUser?.content?.trim()) return t("chat.listNewChat");
   return deriveChatTitleFromRequest(firstUser.content, t("chat.listNewChat"));
+}
+
+/**
+ * The localized "New chat" placeholder (i18n key chat.listNewChat) is not a
+ * real title: rows are created with it — e.g. when a per-chat model override
+ * is set before the first message — and it must give way to the derived or
+ * loaded title later. Locale-independent on purpose (no t() at call time).
+ */
+const PLACEHOLDER_TITLES = new Set(["New chat", "Новый чат"]);
+
+export function isPlaceholderChatTitle(title: string | null | undefined): boolean {
+  const trimmed = (title ?? "").trim();
+  return trimmed === "" || PLACEHOLDER_TITLES.has(trimmed);
+}
+
+/** Sidebar title: a real existing title wins; placeholders accept the new one. */
+export function resolveListTitle(existing: string | null | undefined, incoming: string): string {
+  if (isPlaceholderChatTitle(existing)) {
+    const next = incoming.trim();
+    return next && !PLACEHOLDER_TITLES.has(next) ? next : (existing ?? "").trim() || incoming.trim();
+  }
+  return (existing ?? "").trim();
 }
 
 /** pinned → favorited → updatedAt DESC */

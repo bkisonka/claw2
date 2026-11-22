@@ -16,7 +16,9 @@ import {
   getForkChildrenIds,
   getHistory,
   getPromptContext,
+  attachmentFlagsByChat,
   listChats,
+  renameChat as dbRenameChat,
   setPromptContext,
   type StoredMessage,
 } from "../engine/db";
@@ -45,6 +47,10 @@ export interface ChatListItemApi {
   updated_at: number;
   /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
   forked_from_chat_id?: string | null;
+  /** The chat has image attachments (list indicator). */
+  hasImages?: boolean;
+  /** The chat has document attachments (list indicator). */
+  hasDocs?: boolean;
 }
 
 export interface HistoryMessageApi {
@@ -88,14 +94,26 @@ export interface ChatDocumentItem {
 }
 
 export async function fetchChatList(q?: string): Promise<ChatListItemApi[]> {
-  const all = await listChats(q);
-  return all.map((c) => ({ ...c, forked_from_chat_id: c.forkedFrom ?? null }));
+  const [all, flags] = await Promise.all([listChats(q), attachmentFlagsByChat()]);
+  return all.map((c) => ({
+    ...c,
+    forked_from_chat_id: c.forkedFrom ?? null,
+    ...(flags.get(c.id) ?? {}),
+  }));
 }
 
 /**
  * Fork a chat: full duplicate when upToCount is omitted, or a branch carrying
  * only the first upToCount messages (fork-from-message). Files stay shared.
  */
+/** Rename a chat (list action). Returns the stored title. */
+export async function renameChat(sessionId: string, title: string): Promise<string> {
+  const capped = title.trim().slice(0, 60);
+  if (!capped) throw new Error("Название не может быть пустым");
+  await dbRenameChat(sessionId, capped);
+  return capped;
+}
+
 export async function duplicateChat(
   sessionId: string,
   opts?: { upToCount?: number; title?: string }

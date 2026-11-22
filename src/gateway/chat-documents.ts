@@ -66,6 +66,13 @@ function scanTextForDocs(text: string, out: ChatDocumentItem[], seen: Set<string
   }
 }
 
+/** True if the text references at least one document file (/files/… or a bare output/uploads path with a document extension). */
+export function textHasDocumentRef(text: string): boolean {
+  const out: ChatDocumentItem[] = [];
+  scanTextForDocs(text ?? "", out, new Set());
+  return out.length > 0;
+}
+
 /** Unique documents mentioned in chat messages.*/
 export function collectChatDocuments(messages: SessionMessage[]): ChatDocumentItem[] {
   const seen = new Set<string>();

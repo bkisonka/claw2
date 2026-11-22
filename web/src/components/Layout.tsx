@@ -62,6 +62,7 @@ interface LayoutProps {
   onChatProjectChange?: (chatId: string, projectId: string | null) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
+  onRenameChat?: (chatId: string, title: string) => void | Promise<void>;
   onDynamicPrompt?: (text: string) => void;
   sidebarRefreshKey?: number;
   mainSurface?: "chat" | "web";
@@ -91,6 +92,7 @@ export function Layout({
   onChatProjectChange,
   onChatPinnedChange,
   onChatFavoritedChange,
+  onRenameChat,
   onDynamicPrompt,
   sidebarRefreshKey,
   mainSurface = "chat",
@@ -210,6 +212,7 @@ export function Layout({
         onChatProjectChange={onChatProjectChange}
         onChatPinnedChange={onChatPinnedChange}
         onChatFavoritedChange={onChatFavoritedChange}
+        onRenameChat={onRenameChat}
         onDynamicPrompt={onDynamicPrompt}
         sidebarRefreshKey={sidebarRefreshKey}
         mainSurface={mainSurface}

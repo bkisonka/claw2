@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import type { ReactElement } from "react";
 import type { ChatListItemApi } from "../api/chat";
-import { IconDownload, IconFork, IconTrash } from "./icons";
+import { IconDownload, IconEdit, IconFile, IconFork, IconImage, IconTrash } from "./icons";
 
 interface ChatListProps {
   chats: ChatListItemApi[];
@@ -15,6 +15,7 @@ interface ChatListProps {
   onDelete: (id: string) => void;
   onExport: (id: string, title: string) => void;
   onDuplicate: (id: string, title: string) => void;
+  onRename: (id: string, title: string) => void;
 }
 
 function formatUpdated(ts: number): string {
@@ -67,14 +68,23 @@ function buildForkChildren(chats: ChatListItemApi[]): Map<string, ChatListItemAp
   return map;
 }
 
-export function ChatList({ chats, currentId, loading, error, onSelect, onDelete, onExport, onDuplicate }: ChatListProps) {
+export function ChatList({ chats, currentId, loading, error, onSelect, onDelete, onExport, onDuplicate, onRename }: ChatListProps) {
   /** Two-step inline delete confirmation (window.confirm is out of place on a wide pane). */
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  /** Inline rename: id of the chat being renamed + draft text. */
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   useEffect(() => {
     if (!confirmId) return;
     const t = window.setTimeout(() => setConfirmId(null), 4000);
     return () => window.clearTimeout(t);
   }, [confirmId]);
+
+  const commitRename = (id: string, previous: string) => {
+    setRenameId(null);
+    const next = renameDraft.trim().slice(0, 60);
+    if (next && next !== previous) onRename(id, next);
+  };
 
   const forkChildren = buildForkChildren(chats);
   const titles = new Map(chats.map((c) => [c.id, c.title] as const));
@@ -105,11 +115,49 @@ export function ChatList({ chats, currentId, loading, error, onSelect, onDelete,
             </span>
             <span className="tg-chat-row-text">
               <span className="tg-chat-row-top">
-                <span className="tg-chat-row-title">{title}</span>
+                {renameId === c.id ? (
+                <input
+                  className="tg-chat-row-rename"
+                  value={renameDraft}
+                  maxLength={60}
+                  autoFocus
+                  aria-label="Новое название чата"
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { e.preventDefault(); commitRename(c.id, title); }
+                    else if (e.key === "Escape") { e.preventDefault(); setRenameId(null); }
+                  }}
+                  onBlur={() => commitRename(c.id, title)}
+                />
+              ) : (
+                <>
+                  <span className="tg-chat-row-title">{title}</span>
+                  {c.hasImages ? <span className="tg-chat-attach-ico" title="В чате есть изображения"><IconImage size={13} /></span> : null}
+                  {c.hasDocs ? <span className="tg-chat-attach-ico" title="В чате есть документы"><IconFile size={13} /></span> : null}
+                </>
+              )}
                 <span className="tg-chat-row-time">{formatUpdated(c.updated_at)}</span>
               </span>
               <span className="tg-chat-row-preview">Чат claw2</span>
             </span>
+          </button>
+          <button
+            type="button"
+            className="tg-chat-row-action"
+            title="Переименовать чат"
+            aria-label={`Переименовать чат «${title}»`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (renameId === c.id) setRenameId(null);
+              else {
+                setRenameDraft(title);
+                setRenameId(c.id);
+                setConfirmId(null);
+              }
+            }}
+          >
+            <IconEdit size={18} />
           </button>
           <button
             type="button"

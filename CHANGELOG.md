@@ -3,6 +3,35 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Rename a chat**: a "Rename" item in the sidebar chat menu (web) and a
+  pencil action in the mobile chat list (PWA). Enter saves, Escape cancels.
+
+### Added
+
+- **Attachment indicators in the chat list**: chats carrying images and/or
+  documents show small image/document icons next to the title (web sidebar
+  and the mobile chat list). Flags come from stored messages and the
+  session-prefixed files on disk.
+
+### Fixed
+
+- New chats showed the "New chat" placeholder in the sidebar instead of the
+  derived title when a per-chat model override had created the row first; the
+  placeholder now gives way to the derived/loaded title.
+- **A manually renamed chat keeps its name**: the rename is recorded as
+  manual (new `title_manual` flag) and automatic titling — including the
+  browser page title a web-surface chat sends with every message — can no
+  longer overwrite it.
+
+### Docs
+
+- Quick start now says explicitly to paste the generated key into `.env` as
+  `CLAW2_GATEWAY_API_KEY`.
+
 ## [0.2.2] - 2026-11-22
 
 Follow-up to the 0.2.1 audit pass: personal-deployment hardening, chat-state

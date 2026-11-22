@@ -17,6 +17,12 @@ export interface ChatListItemApi {
   favorited?: boolean;
   /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
   forked_from_chat_id?: string | null;
+  /** Title was renamed manually: auto-titling is suppressed. */
+  titleManual?: boolean;
+  /** The chat has image attachments (sidebar indicator). */
+  hasImages?: boolean;
+  /** The chat has document attachments (sidebar indicator). */
+  hasDocs?: boolean;
 }
 
 /** Message from GET /chat/history. */
@@ -491,6 +497,21 @@ export async function updateChatBrowserPageKey(sessionId: string, pageKey: strin
 }
 
 /** Per-chat LLM model; pass null to clear override (use settings default). */
+/** Rename a chat from the sidebar menu. The server caps the length. */
+export async function renameChat(sessionId: string, title: string): Promise<string> {
+  const id = sessionId.trim();
+  const capped = title.trim().slice(0, 300);
+  if (!id || !capped) throw new Error("Title required");
+  const res = await fetch(apiBase + "/chat", {
+    method: "PATCH",
+    headers: chatHeaders(),
+    body: JSON.stringify({ session_id: id, title: capped }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return capped;
+}
+
 export async function updateChatModel(
   sessionId: string,
   model: string | null

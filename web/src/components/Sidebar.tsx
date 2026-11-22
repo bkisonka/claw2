@@ -117,6 +117,7 @@ interface SidebarProps {
   onChatProjectChange?: (chatId: string, projectId: string | null) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
+  onRenameChat?: (chatId: string, title: string) => void | Promise<void>;
   onToggle?: () => void;
   sidebarOpen?: boolean;
   onDynamicPrompt?: (text: string) => void;
@@ -151,6 +152,7 @@ export function Sidebar({
   onChatProjectChange,
   onChatPinnedChange,
   onChatFavoritedChange,
+  onRenameChat,
   onToggle,
   onDynamicPrompt,
   sidebarRefreshKey,
@@ -174,6 +176,9 @@ export function Sidebar({
   const prevHasDocumentsRef = useRef<boolean | null>(null);
   const skipAssetsPulseRef = useRef(true);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  /** Chat whose title is being renamed inline (sidebar menu → Rename). */
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const [addToProjectChatId, setAddToProjectChatId] = useState<string | null>(null);
   const [menuPlacement, setMenuPlacement] = useState<{
     top?: number;
@@ -450,6 +455,18 @@ export function Sidebar({
     menuAnchorRef.current = null;
   };
 
+  const startChatRename = (chat: ChatItem) => {
+    setRenameDraft(chat.title);
+    setRenamingChatId(chat.id);
+    closeMenu();
+  };
+
+  const commitChatRename = (chat: ChatItem) => {
+    setRenamingChatId(null);
+    const next = renameDraft.trim().slice(0, 300);
+    if (next && next !== chat.title) void onRenameChat?.(chat.id, next);
+  };
+
   const toggleChatMenu = (chatId: string, anchor: HTMLElement) => {
     if (openMenuId === chatId) {
       closeMenu();
@@ -503,6 +520,17 @@ export function Sidebar({
         }}
         role="menu"
       >
+        <button
+          type="button"
+          className="layout-sidebar-chat-item-menu-btn"
+          role="menuitem"
+          onClick={() => startChatRename(chat)}
+        >
+          <span className="layout-sidebar-chat-item-menu-icon shell-nav-ico" aria-hidden>
+            <IconEdit />
+          </span>
+          {t("sidebar.renameChat")}
+        </button>
         <button
           type="button"
           className="layout-sidebar-chat-item-menu-btn"
@@ -636,8 +664,39 @@ export function Sidebar({
       className={`layout-sidebar-chat-item-row${nested ? " layout-sidebar-chat-item-row-nested" : ""}${currentChatId === chat.id ? " layout-sidebar-chat-item-active" : ""}${openMenuId === chat.id ? " layout-sidebar-chat-item-row--menu-open" : ""}${streaming ? " layout-sidebar-chat-item-row--streaming" : ""}${attention ? " layout-sidebar-chat-item-row--attention" : ""}`}
       ref={openMenuId === chat.id ? menuRef : undefined}
     >
+      {renamingChatId === chat.id ? (
+        <input
+          className={`layout-sidebar-chat-item layout-sidebar-chat-item-rename${nested ? " layout-sidebar-chat-item-nested" : ""}`}
+          value={renameDraft}
+          onChange={(e) => setRenameDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitChatRename(chat);
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              setRenamingChatId(null);
+            }
+          }}
+          onBlur={() => commitChatRename(chat)}
+          onClick={(e) => e.stopPropagation()}
+          maxLength={300}
+          autoFocus
+          aria-label={t("sidebar.renameChat")}
+        />
+      ) : (
       <button type="button" className={`layout-sidebar-chat-item${nested ? " layout-sidebar-chat-item-nested" : ""}`} onClick={() => handleSelectChat(chat.id)} title={rowTitle}>
         <span className="layout-sidebar-chat-item-title">{chat.title}</span>
+        {chat.hasImages ? (
+          <span className="layout-sidebar-chat-item-badge layout-sidebar-chat-item-badge--attach" title={t("sidebar.chatHasImages")} aria-label={t("sidebar.chatHasImages")}>
+            <IconImage size={11} />
+          </span>
+        ) : null}
+        {chat.hasDocs ? (
+          <span className="layout-sidebar-chat-item-badge layout-sidebar-chat-item-badge--attach" title={t("sidebar.chatHasDocs")} aria-label={t("sidebar.chatHasDocs")}>
+            <IconFile size={11} />
+          </span>
+        ) : null}
         {chat.favorited ? (
           <span className="layout-sidebar-chat-item-badge layout-sidebar-chat-item-badge--star" title={t("sidebar.unfavorite")} aria-hidden>
             <IconStar size={11} filled />
@@ -658,6 +717,7 @@ export function Sidebar({
           </span>
         ) : null}
       </button>
+      )}
       {forkMeta && forkMeta.childCount > 0 ? (
         <button
           type="button"

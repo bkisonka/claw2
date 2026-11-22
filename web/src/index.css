@@ -2051,6 +2051,20 @@ body {
   color: var(--text-primary);
 }
 
+/* Inline rename input (sidebar menu → Rename): looks like the row it replaces. */
+.layout-sidebar-chat-item-rename {
+  width: 100%;
+  border: 1px solid var(--accent, #4c8dff);
+  border-radius: 8px 0 0 8px;
+  background: var(--bg-elevated, inherit);
+  color: var(--text-primary);
+  outline: none;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  cursor: text;
+}
+
 .layout-sidebar-chat-item-row.layout-sidebar-chat-item-active .layout-sidebar-chat-item {
   color: var(--text-primary);
 }
@@ -3692,4 +3706,11 @@ body {
 .gallery-btn-danger:hover:not(:disabled) {
   border-color: var(--danger, #c44);
   color: var(--danger, #c44);
+}
+
+
+/* Attachment indicators (image/document) next to the chat title. */
+.layout-sidebar-chat-item-badge--attach {
+  color: var(--text-secondary);
+  opacity: 0.85;
 }

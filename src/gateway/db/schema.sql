@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS chats (
   prompt_covered_count INTEGER NOT NULL DEFAULT 0,
   /** Fork lineage: id of the chat this one was duplicated/branched from; NULL = original. */
   forked_from_chat_id TEXT,
+  /** 1 = title set manually (rename): automatic titling must not overwrite it. */
+  title_manual INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );

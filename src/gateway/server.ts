@@ -1523,7 +1523,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           const browserPageKey = browserPageKeyRaw || undefined;
           chatRepo.ensureChat(sessionId, userId, title, projectIdFromBody, browserPageKey ?? null);
           // Browser page title may arrive after the first message was titled from the prompt.
-          if (preferredTitle) {
+          // A manually renamed chat keeps its name: auto-titling must not overwrite it.
+          if (preferredTitle && !chatRepo.isTitleManual(sessionId, userId)) {
             chatRepo.updateChatTitle(sessionId, userId, preferredTitle);
           }
           if (browserPageKey) {
@@ -2135,6 +2136,36 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       }
       try {
         const chats = searchQ ? chatRepo.searchChats(userId, searchQ) : chatRepo.listChats(userId, projectId);
+        if (!searchQ) {
+          // Sidebar attachment indicators: image cells / document references in
+          // messages, plus session-prefixed files on disk (uploads the user
+          // attached, files the agent saved — they are not always quoted in text).
+          const refs = chatRepo.attachmentRefsByChat(userId);
+          const diskFlags = new Map<string, { images: boolean; docs: boolean }>();
+          const markDisk = (name: string) => {
+            for (const chat of chats) {
+              if (!name.startsWith(chat.id)) continue;
+              const cur = diskFlags.get(chat.id) ?? { images: false, docs: false };
+              if (isImagePath(name)) cur.images = true;
+              else if (isDocumentPath(name)) cur.docs = true;
+              diskFlags.set(chat.id, cur);
+              break;
+            }
+          };
+          for (const dir of [outputDir, uploadsDir]) {
+            try {
+              for (const name of readdirSync(dir)) markDisk(name);
+            } catch {
+              /* directory missing — nothing on disk */
+            }
+          }
+          for (const chat of chats) {
+            const fromMessages = refs.get(chat.id);
+            const fromDisk = diskFlags.get(chat.id);
+            chat.hasImages = !!(fromMessages?.images || fromDisk?.images);
+            chat.hasDocs = !!(fromMessages?.docs || fromDisk?.docs);
+          }
+        }
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ chats }));
       } catch (err) {
@@ -2277,7 +2308,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
         let ok = true;
         if (title) {
-          ok = chatRepo.updateChatTitle(sessionId, userId, title) && ok;
+          // UI rename: marks the title manual so automatic titling never overwrites it.
+          ok = chatRepo.renameChatTitle(sessionId, userId, title) && ok;
         }
         if (browserPageKey !== undefined) {
           ok = chatRepo.updateChatBrowserPageKey(sessionId, userId, browserPageKey) && ok;
