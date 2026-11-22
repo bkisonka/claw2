@@ -40,6 +40,8 @@ export type ChatSummary = {
   promptContext?: { summary: string; coveredCount: number } | null;
   /** Router override: this chat is pinned to one provider (id), router skipped. */
   pinnedProviderId?: string;
+  /** Fork lineage: id of the chat this one was duplicated/branched from. */
+  forkedFrom?: string;
 };
 
 const DB_NAME = "claw2-mobile";
@@ -323,9 +325,122 @@ export async function getChat(chatId: string): Promise<ChatSummary | undefined> 
   return tx<ChatSummary | undefined>("chats", "readonly", (s) => s.get(chatId) as IDBRequest<ChatSummary>);
 }
 
+/**
+ * Fork a chat: copy of the summary (title can be overridden, pinned router
+ * inherit, forkedFrom set) + message history (full, or the first upToCount
+ * messages). Files stay shared — messages keep their /files/raw/<id> refs,
+ * the media lists of a fork include the ancestors' files (see fetchChatDocuments).
+ * Returns the new chat id, or null when the source chat does not exist.
+ */
+export async function duplicateChat(
+  chatId: string,
+  opts?: { newId?: string; title?: string | null; upToCount?: number }
+): Promise<string | null> {
+  const src = await getChat(chatId);
+  if (!src) return null;
+  const id = opts?.newId?.trim() || newId();
+  const upTo =
+    typeof opts?.upToCount === "number" && Number.isFinite(opts.upToCount)
+      ? Math.max(0, Math.floor(opts.upToCount))
+      : null;
+  const fork: ChatSummary = {
+    ...src,
+    id,
+    title: (opts?.title ?? "").trim() || src.title,
+    updated_at: Date.now(),
+    forkedFrom: chatId,
+  };
+  await openDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const t = db.transaction(["chats", "messages"], "readwrite");
+        t.objectStore("chats").put(fork);
+        if (upTo !== 0) {
+          const req = t.objectStore("messages").index("chatId").openCursor(IDBKeyRange.only(chatId));
+          let copied = 0;
+          req.onsuccess = () => {
+            const cursor = req.result;
+            if (!cursor) return;
+            if (upTo == null || copied < upTo) {
+              const m = cursor.value as StoredMessage;
+              const { id: _msgId, ...rest } = m;
+              t.objectStore("messages").add({ ...rest, chatId: id });
+              copied++;
+              cursor.continue();
+            }
+          };
+        }
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      })
+  );
+  return id;
+}
+
+/** forkedFrom of the chat (or undefined). */
+export async function getForkParent(chatId: string): Promise<string | undefined> {
+  return (await getChat(chatId))?.forkedFrom;
+}
+
+/** Direct fork children of the chat (ids). */
+export async function getForkChildrenIds(chatId: string): Promise<string[]> {
+  const all = (await tx<ChatSummary[]>("chats", "readonly", (s) => s.getAll() as IDBRequest<ChatSummary[]>)) ?? [];
+  return all.filter((c) => c.forkedFrom === chatId).map((c) => c.id);
+}
+
+/** Fork chain of ancestors, oldest last (walk forkedFrom upward, capped). */
+export async function getForkAncestorIds(chatId: string, maxDepth = 10): Promise<string[]> {
+  const out: string[] = [];
+  let cursor = chatId;
+  for (let i = 0; i < maxDepth; i++) {
+    const parent = await getForkParent(cursor);
+    if (!parent) break;
+    out.push(parent);
+    cursor = parent;
+  }
+  return out;
+}
+
 export async function deleteChat(chatId: string): Promise<void> {
-  await tx("chats", "readwrite", (s) => s.delete(chatId));
-  await deleteByIndex("messages", "chatId", chatId);
+  // Graft: fork children re-attach to the deleted chat's parent so the fork
+  // chain stays connected. Parent may be undefined (root) — the field drops.
+  const parent = await getForkParent(chatId);
+  await openDb().then(
+    (db) =>
+      new Promise<void>((resolve, reject) => {
+        const t = db.transaction(["chats", "messages"], "readwrite");
+        const chats = t.objectStore("chats");
+        const req = chats.index("updated_at").openCursor();
+        req.onsuccess = () => {
+          const cursor = req.result;
+          if (!cursor) return;
+          const c = cursor.value as ChatSummary;
+          if (c.forkedFrom === chatId) {
+            if (parent) cursor.update({ ...c, forkedFrom: parent });
+            else {
+              const { forkedFrom: _drop, ...rest } = c;
+              cursor.update(rest as ChatSummary);
+            }
+          }
+          cursor.continue();
+        };
+        chats.delete(chatId);
+        const msgs = t.objectStore("messages");
+        const mIdx = msgs.index("chatId");
+        const mReq = mIdx.openCursor(IDBKeyRange.only(chatId));
+        mReq.onsuccess = () => {
+          const cursor = mReq.result;
+          if (cursor) {
+            cursor.delete();
+            cursor.continue();
+          }
+        };
+        t.oncomplete = () => resolve();
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error);
+      })
+  );
 }
 
 export async function getPromptContext(chatId: string): Promise<ChatSummary["promptContext"]> {

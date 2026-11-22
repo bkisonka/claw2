@@ -195,6 +195,14 @@ interface ChatProps {
   /** History from the server; reapplied when sessionId changes. */
   initialMessages?: HistoryMessageApi[];
   historyKey?: string;
+  /** Fork lineage: id of the chat this one was branched from (banner above the log). */
+  forkedFrom?: string | null;
+  /** Resolved parent chat title for the fork banner; banner renders only when resolved. */
+  forkedFromTitle?: string | null;
+  /** Open the original chat (banner tap). */
+  onOpenForkParent?: () => void;
+  /** Fork from a message: create a new chat carrying the first upToCount messages. */
+  onForkFrom?: (upToCount: number) => void;
 }
 
 function historyToMessages(history: HistoryMessageApi[] | undefined): Message[] {
@@ -216,6 +224,10 @@ export function Chat({
   onChatListRefresh,
   initialMessages,
   historyKey,
+  forkedFrom,
+  forkedFromTitle,
+  onOpenForkParent,
+  onForkFrom,
 }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>(() => historyToMessages(initialMessages));
   const [input, setInput] = useState("");
@@ -831,6 +843,25 @@ export function Chat({
         });
       },
     });
+    // The local feed is 1:1 with the stored tape (no client-only rows), so the
+    // fork point is simply the message index + 1. Hidden mid-stream: the last
+    // assistant row is not persisted yet and the count would overcut.
+    if (onForkFrom && !loading) {
+      items.push({
+        type: "item",
+        id: "fork-from",
+        label: "Ответвить отсюда",
+        onClick: () => {
+          if (
+            !window.confirm(
+              "Ответвить чат? Новый чат с историей до этого сообщения появится в списке чатов."
+            )
+          )
+            return;
+          onForkFrom(i + 1);
+        },
+      });
+    }
     items.push({
       type: "item",
       id: "select-message",
@@ -874,6 +905,19 @@ export function Chat({
   return (
     <div className="chat-root">
       <div className="chat-log" ref={logRef}>
+        {forkedFrom && forkedFromTitle && (
+          <div className="chat-fork-banner">
+            <button
+              type="button"
+              className="chat-fork-banner-link"
+              onClick={() => onOpenForkParent?.()}
+              title="Открыть исходный чат"
+              aria-label={`Открыть исходный чат «${forkedFromTitle}»`}
+            >
+              Ответвлён от чата «{forkedFromTitle}»
+            </button>
+          </div>
+        )}
         {messages.length === 0 && (
           <div className="chat-welcome">
             <p className="chat-welcome-text">Готов. Напишите сообщение или прикрепите документ.</p>

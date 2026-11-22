@@ -11,6 +11,7 @@ import { LlmSetupScreen } from "./components/LlmSetupScreen";
 import type { PwaView } from "./components/TabBar";
 import {
   deleteChat,
+  duplicateChat,
   exportChatToMarkdown,
   fetchChatHistory,
   fetchChatList,
@@ -94,6 +95,26 @@ export default function App() {
       setRefreshTrigger((n) => n + 1);
     },
     [refreshHistory]
+  );
+
+  /** Fork a chat: full duplicate (fork button in the list) or a branch cut at a message. */
+  const handleDuplicate = useCallback(
+    async (id: string, title: string, upToCount?: number) => {
+      const question =
+        upToCount != null
+          ? `Ответвить чат «${title}»? Новый чат с историей до этого сообщения появится в списке чатов.`
+          : `Создать копию чата «${title}»?`;
+      if (!window.confirm(question)) return;
+      try {
+        const newId = await duplicateChat(id, { upToCount, title: `${title} (копия)` });
+        if (!newId) return;
+        await refreshChats();
+        await openChat(newId);
+      } catch (e) {
+        setChatsError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [refreshChats, openChat]
   );
 
   const newChat = useCallback(() => {
@@ -200,6 +221,7 @@ export default function App() {
   }
 
   const inStack = isStackView(view, wide);
+  const currentChat = sessionId ? chats.find((c) => c.id === sessionId) : null;
 
   return (
     <Layout
@@ -220,6 +242,7 @@ export default function App() {
           error={chatsError}
           onSelect={(id) => void openChat(id)}
           onDelete={(id) => void handleDelete(id)}
+          onDuplicate={(id, title) => void handleDuplicate(id, title)}
           onExport={(id, title) => {
             void exportChatToMarkdown(id, title).catch((e) =>
               window.alert(`Не удалось экспортировать чат: ${e instanceof Error ? e.message : String(e)}`)
@@ -254,6 +277,21 @@ export default function App() {
           onChatListRefresh={() => void refreshChats()}
           initialMessages={history}
           historyKey={historyKey}
+          forkedFrom={currentChat?.forked_from_chat_id ?? null}
+          forkedFromTitle={
+            currentChat?.forked_from_chat_id
+              ? chats.find((c) => c.id === currentChat.forked_from_chat_id)?.title ?? null
+              : null
+          }
+          onOpenForkParent={
+            currentChat?.forked_from_chat_id
+              ? () => void openChat(currentChat.forked_from_chat_id!)
+              : undefined
+          }
+          onForkFrom={(upToCount) => {
+            if (!sessionId) return;
+            void handleDuplicate(sessionId, currentChat?.title ?? "Чат", upToCount);
+          }}
         />
       </div>
       <div className="page-wrap" style={{ display: view === "images" ? "block" : "none" }}>

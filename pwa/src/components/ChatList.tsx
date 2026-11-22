@@ -2,8 +2,9 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 import { useEffect, useState } from "react";
+import type { ReactElement } from "react";
 import type { ChatListItemApi } from "../api/chat";
-import { IconDownload, IconTrash } from "./icons";
+import { IconDownload, IconFork, IconTrash } from "./icons";
 
 interface ChatListProps {
   chats: ChatListItemApi[];
@@ -13,6 +14,7 @@ interface ChatListProps {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   onExport: (id: string, title: string) => void;
+  onDuplicate: (id: string, title: string) => void;
 }
 
 function formatUpdated(ts: number): string {
@@ -51,7 +53,21 @@ function avatarGray(id: string): string {
   return `hsl(240 3% ${34 + (hueFromId(id) % 5) * 7}%)`;
 }
 
-export function ChatList({ chats, currentId, loading, error, onSelect, onDelete, onExport }: ChatListProps) {
+/** Group forked chats under their parent (only parents visible in the same list). */
+function buildForkChildren(chats: ChatListItemApi[]): Map<string, ChatListItemApi[]> {
+  const ids = new Set(chats.map((c) => c.id));
+  const map = new Map<string, ChatListItemApi[]>();
+  for (const c of chats) {
+    if (!c.forked_from_chat_id || !ids.has(c.forked_from_chat_id)) continue;
+    const children = map.get(c.forked_from_chat_id);
+    if (children) children.push(c);
+    else map.set(c.forked_from_chat_id, [c]);
+  }
+  for (const children of map.values()) children.sort((a, b) => a.updated_at - b.updated_at);
+  return map;
+}
+
+export function ChatList({ chats, currentId, loading, error, onSelect, onDelete, onExport, onDuplicate }: ChatListProps) {
   /** Two-step inline delete confirmation (window.confirm is out of place on a wide pane). */
   const [confirmId, setConfirmId] = useState<string | null>(null);
   useEffect(() => {
@@ -59,6 +75,88 @@ export function ChatList({ chats, currentId, loading, error, onSelect, onDelete,
     const t = window.setTimeout(() => setConfirmId(null), 4000);
     return () => window.clearTimeout(t);
   }, [confirmId]);
+
+  const forkChildren = buildForkChildren(chats);
+  const titles = new Map(chats.map((c) => [c.id, c.title] as const));
+
+  const renderRow = (c: ChatListItemApi, depth: number, parentTitle?: string): ReactElement => {
+    const title = c.title || "Без названия";
+    const children = forkChildren.get(c.id) ?? [];
+    const rowTitle = parentTitle ? `${title} (ответвлён от «${parentTitle}»)` : title;
+    return (
+      <li key={c.id} className={c.id === currentId ? "tg-chat-row active" : "tg-chat-row"}>
+        <div className={depth > 0 ? "tg-chat-fork-node tg-chat-fork-node--nested" : "tg-chat-fork-node"}>
+          <button
+            type="button"
+            className="tg-chat-row-main"
+            onClick={() => onSelect(c.id)}
+            title={rowTitle}
+          >
+            <span className="tg-avatar" style={{ background: avatarGray(c.id) }} aria-hidden>
+              {initials(title)}
+            </span>
+            <span className="tg-chat-row-text">
+              <span className="tg-chat-row-top">
+                <span className="tg-chat-row-title">{title}</span>
+                <span className="tg-chat-row-time">{formatUpdated(c.updated_at)}</span>
+              </span>
+              <span className="tg-chat-row-preview">Чат claw2</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="tg-chat-row-action"
+            title="Ответвить (дублировать) чат"
+            aria-label={`Создать копию чата «${title}»`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDuplicate(c.id, title);
+            }}
+          >
+            <IconFork size={18} />
+          </button>
+          <button
+            type="button"
+            className="tg-chat-row-action"
+            title="Экспорт в MD"
+            aria-label={`Экспортировать чат «${title}» в markdown`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onExport(c.id, title);
+            }}
+          >
+            <IconDownload size={18} />
+          </button>
+          <button
+            type="button"
+            className={confirmId === c.id ? "tg-chat-row-delete tg-chat-row-delete--confirm" : "tg-chat-row-delete"}
+            title={confirmId === c.id ? "Подтвердить удаление" : "Удалить"}
+            aria-label={confirmId === c.id ? "Подтвердить удаление чата" : "Удалить чат"}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirmId === c.id) {
+                setConfirmId(null);
+                onDelete(c.id);
+              } else {
+                setConfirmId(c.id);
+              }
+            }}
+          >
+            {confirmId === c.id ? <span className="tg-chat-delete-check">✓</span> : <IconTrash size={18} />}
+          </button>
+        </div>
+        {children.length > 0 && (
+          <ul className="tg-chat-fork-children">
+            {children.map((child) =>
+              renderRow(child, depth + 1, titles.get(c.id) ?? title)
+            )}
+          </ul>
+        )}
+      </li>
+    );
+  };
+
+  const topLevel = chats.filter((c) => !(c.forked_from_chat_id && forkChildren.has(c.forked_from_chat_id)));
 
   return (
     <div className="chats-view" aria-label="Список чатов">
@@ -70,60 +168,7 @@ export function ChatList({ chats, currentId, loading, error, onSelect, onDelete,
           <p className="chats-empty-sub">Нажмите + сверху, чтобы начать переписку</p>
         </div>
       )}
-      <ul className="chats-view-list">
-        {chats.map((c) => {
-          const title = c.title || "Без названия";
-          return (
-            <li key={c.id} className={c.id === currentId ? "tg-chat-row active" : "tg-chat-row"}>
-              <button type="button" className="tg-chat-row-main" onClick={() => onSelect(c.id)}>
-                <span
-                  className="tg-avatar"
-                  style={{ background: avatarGray(c.id) }}
-                  aria-hidden
-                >
-                  {initials(title)}
-                </span>
-                <span className="tg-chat-row-text">
-                  <span className="tg-chat-row-top">
-                    <span className="tg-chat-row-title">{title}</span>
-                    <span className="tg-chat-row-time">{formatUpdated(c.updated_at)}</span>
-                  </span>
-                  <span className="tg-chat-row-preview">Чат claw2</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                className="tg-chat-row-action"
-                title="Экспорт в MD"
-                aria-label={`Экспортировать чат «${title}» в markdown`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onExport(c.id, title);
-                }}
-              >
-                <IconDownload size={18} />
-              </button>
-              <button
-                type="button"
-                className={confirmId === c.id ? "tg-chat-row-delete tg-chat-row-delete--confirm" : "tg-chat-row-delete"}
-                title={confirmId === c.id ? "Подтвердить удаление" : "Удалить"}
-                aria-label={confirmId === c.id ? "Подтвердить удаление чата" : "Удалить чат"}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (confirmId === c.id) {
-                    setConfirmId(null);
-                    onDelete(c.id);
-                  } else {
-                    setConfirmId(c.id);
-                  }
-                }}
-              >
-                {confirmId === c.id ? <span className="tg-chat-delete-check">✓</span> : <IconTrash size={18} />}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <ul className="chats-view-list">{topLevel.map((c) => renderRow(c, 0))}</ul>
     </div>
   );
 }

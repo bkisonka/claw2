@@ -535,6 +535,38 @@ body {
   color: var(--error);
 }
 
+/* Fork tree in the chat list: nested forks under the parent with a connector line. */
+.tg-chat-fork-children {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-left: 1px solid var(--border);
+}
+
+.chat-fork-banner {
+  flex-shrink: 0;
+  padding: 0.35rem 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.5rem;
+}
+
+.chat-fork-banner-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.chat-fork-banner-link:active,
+.chat-fork-banner-link:hover {
+  color: var(--accent);
+}
+
 .tg-chat-delete-check {
   font-size: 1.05rem;
   font-weight: 700;

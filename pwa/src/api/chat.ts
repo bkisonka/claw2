@@ -9,8 +9,11 @@ import {
   appendMessage,
   chatFiles,
   deleteChat as dbDeleteChat,
+  duplicateChat as dbDuplicateChat,
   ensureChat,
   getChat,
+  getForkAncestorIds,
+  getForkChildrenIds,
   getHistory,
   getPromptContext,
   listChats,
@@ -40,6 +43,8 @@ export interface ChatListItemApi {
   id: string;
   title: string;
   updated_at: number;
+  /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
+  forked_from_chat_id?: string | null;
 }
 
 export interface HistoryMessageApi {
@@ -83,7 +88,22 @@ export interface ChatDocumentItem {
 }
 
 export async function fetchChatList(q?: string): Promise<ChatListItemApi[]> {
-  return listChats(q);
+  const all = await listChats(q);
+  return all.map((c) => ({ ...c, forked_from_chat_id: c.forkedFrom ?? null }));
+}
+
+/**
+ * Fork a chat: full duplicate when upToCount is omitted, or a branch carrying
+ * only the first upToCount messages (fork-from-message). Files stay shared.
+ */
+export async function duplicateChat(
+  sessionId: string,
+  opts?: { upToCount?: number; title?: string }
+): Promise<string | null> {
+  return dbDuplicateChat(sessionId, {
+    upToCount: opts?.upToCount,
+    title: opts?.title ?? null,
+  });
 }
 
 export async function fetchChatHistory(sessionId: string): Promise<HistoryMessageApi[]> {
@@ -102,8 +122,11 @@ export async function fetchChatHistory(sessionId: string): Promise<HistoryMessag
 }
 
 export async function deleteChat(sessionId: string): Promise<boolean> {
+  // Fork children keep referencing this chat's files (shared media) — skip the
+  // file purge when they survive the deletion (graft re-points them).
+  const children = await getForkChildrenIds(sessionId);
   await dbDeleteChat(sessionId);
-  await deleteFilesOfChat(sessionId);
+  if (children.length === 0) await deleteFilesOfChat(sessionId);
   return true;
 }
 
@@ -111,15 +134,31 @@ export async function fetchChatDocuments(sessionId: string): Promise<ChatDocumen
   // All binaries (agent files AND user attachments) live in the files store.
   // Attachments are listed from message metadata (original names, deletion
   // flag) but flagged non-deletable: they are part of the tape.
+  // Forked chats share files: ancestors' stored files surface here too, but
+  // only own-chat files are deletable (deleting an inherited file would break
+  // the original chat).
+  const ancestorIds = await getForkAncestorIds(sessionId);
   const stored = await listFiles(sessionId);
+  const ownIds = new Set(stored.map((f) => f.id));
+  for (const ancestorId of ancestorIds) {
+    stored.push(...(await listFiles(ancestorId)));
+  }
+  const seen = new Set<string>();
   const attachments = new Map((await chatFiles(sessionId)).map((f) => [f.fileId, f]));
-  return stored.map((f) => {
-    const att = attachments.get(f.id);
-    const name = att?.name ?? f.name;
-    const url = `/files/raw/${f.id}`;
-    const ext = (name.split(".").pop() ?? "").toLowerCase();
-    return { url, name, path: url, ext, deletable: !att };
-  });
+  return stored
+    .filter((f) => {
+      if (seen.has(f.id)) return false;
+      seen.add(f.id);
+      return true;
+    })
+    .map((f) => {
+      const att = attachments.get(f.id);
+      const name = att?.name ?? f.name;
+      const url = `/files/raw/${f.id}`;
+      const ext = (name.split(".").pop() ?? "").toLowerCase();
+      const own = ownIds.has(f.id);
+      return { url, name, path: url, ext, deletable: own && !att };
+    });
 }
 
 /** Resolve a stored-file reference (/files/raw/<id>) to a data: URL; pass through others. */
