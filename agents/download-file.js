@@ -13,14 +13,20 @@ const outputDir = process.env.OUTPUT_DIR || join(process.cwd(), "output");
 
 async function downloadFile(url, filename) {
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
     const arrayBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     await mkdir(outputDir, { recursive: true });
-    const fileName = filename || basename(new URL(url).pathname) || "download";
+    // Derive the name from the URL when not given: no more extension-less
+    // "download" files. Query-string noise stripped; dotted/extension kept.
+    let fileName = filename || decodeURIComponent(basename(new URL(url).pathname)).replace(/[^\w.\-]+/g, "_");
+    if (!fileName || fileName === "." || fileName === "..") {
+      const ext = (response.headers.get("content-type") ?? "").split(";")[0].trim().split("/").pop();
+      fileName = `download-${Date.now()}${ext && /^[a-z0-9]{1,5}$/i.test(ext) ? "." + ext : ".bin"}`;
+    }
     const filePath = join(outputDir, fileName);
     await writeFile(filePath, buffer);
     // Path relative to agents/ for the user: output/file_name

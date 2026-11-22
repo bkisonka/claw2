@@ -63,7 +63,12 @@ function transliterate(str) {
 
 function httpsGet(url) {
   return new Promise((resolve, reject) => {
-    https.get(url, (res) => {
+    const req = https.get(url, { timeout: 15_000 }, (res) => {
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        res.resume();
+        reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+        return;
+      }
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -73,7 +78,11 @@ function httpsGet(url) {
           reject(new Error(`Failed to parse JSON: ${e.message}`));
         }
       });
-    }).on('error', reject);
+    });
+    req.on('timeout', () => {
+      req.destroy(new Error('Request timeout'));
+    });
+    req.on('error', reject);
   });
 }
 
@@ -140,8 +149,13 @@ async function getWeatherForecast() {
       city: name,
       forecasts,
     };
-    
-    console.log(JSON.stringify(result, null, 2));
+
+    // The header promises "forecast as text" — text it is.
+    const lines = [`Weather in ${result.city}, 3 days:`];
+    for (const f of forecasts) {
+      lines.push(`${f.date} ${f.day}: ${f.emoji} ${f.condition}, ${f.tempMin}…${f.tempMax}°C, wind ${f.windKph} km/h, humidity ${f.humidity}%`);
+    }
+    console.log(lines.join('\n'));
   } catch (error) {
     console.error(`Error: ${error.message}`);
     process.exit(1);

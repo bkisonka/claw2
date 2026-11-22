@@ -94,15 +94,13 @@ skills:
     - fetch-json.js
     - download-file.js
     - surf.js
-    - save-article.js
-    - ya-search.js
+    - web-search.js
     - weather.js
     - extract-pdf.js
     - docx.js
     - excel-reader.js
     - ocr.js
     - save-docx.js
-    - rename-output.js
     - chart.js
 # Self-update: the gateway periodically checks the latest GitHub release
 # (api.github.com) and the web UI shows a toast + an "Update" link in the

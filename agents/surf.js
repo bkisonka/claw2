@@ -18,7 +18,9 @@ const MAX_URLS = 10;
 const TIMEOUT_MS = 20000;
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_HTML_PARSE_BYTES = 512 * 1024;
-const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; rv:109.0) Gecko/20100101 Firefox/115.0";
+// No custom UA: some hosts (news.ycombinator.com → HTTP 419) throttle
+// "real" browser UAs from scripted clients, while the default fetch UA passes.
+const USER_AGENT = undefined;
 
 function parseUrl(s) {
   try {

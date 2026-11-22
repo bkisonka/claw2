@@ -62,7 +62,11 @@ function processText(text) {
   const outputDir = process.env.OUTPUT_DIR
     ? join(process.env.OUTPUT_DIR)
     : join(__dirname, "output");
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  // Local-time filename (YYYY-MM-DDTHH-mm-ss): UTC names read a day off
+  // around midnight (TZ env / system localtime decides "today").
+  const now = new Date();
+  const p2d = (n) => String(n).padStart(2, "0");
+  const timestamp = `${now.getFullYear()}-${p2d(now.getMonth() + 1)}-${p2d(now.getDate())}T${p2d(now.getHours())}-${p2d(now.getMinutes())}-${p2d(now.getSeconds())}`;
   const fileName = `output_${timestamp}.docx`;
   const outputPath = join(outputDir, fileName);
 

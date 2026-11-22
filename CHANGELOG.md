@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **save-article.js, rename-output.js**: the first was hardcoded to one
+  read-only path (EROFS, arguments ignored), the second looked for
+  `agents/output/output.docx` that nothing ever creates. Both superseded by
+  save-docx.js; allowlist and the config example updated.
+
+### Fixed
+
+- **ocr.js works again**: Node's Worker requires a local script path, so the
+  CDN worker URL failed on every image. Pinned tesseract assets (worker,
+  core wasm, lang data) now download once into a persistent cache under the
+  output volume (with retries) and load as local files.
+- **The search skill tells the truth and searches**: ya-search.js is now
+  web-search.js — a keyless fallback chain (DDG lite → DDG POST → Wikipedia
+  API) with bot-check detection, the used engine reported on stderr, and an
+  honest header pointing production setups to the gateway `search` tool
+  (Tavily/SearXNG).
+- **Contract fixes**: download-file.js derives the file name from the URL
+  (no more extension-less `download`) with a timeout; weather.js prints the
+  forecast as text per its header and its HTTP layer gained a timeout and
+  status check; surf.js dropped the fake Firefox User-Agent (HTTP 419 from
+  news.ycombinator.com — the default UA passes); save-docx.js names files
+  with the local timestamp instead of UTC.
+
 ### Fixed
 
 - **Dates in memory and chronicle follow the deployment timezone**: both
