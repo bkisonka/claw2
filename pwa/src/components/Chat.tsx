@@ -24,7 +24,7 @@ import { isStoredFileUrl, resolveStoredFileUrl } from "../engine/files";
 import { sanitizeCellHtml } from "../engine/cells";
 import { useNearViewport } from "../lib/useNearViewport";
 import { ChartCell } from "./ChartCell";
-import { IconAttach, IconCamera, IconMic, IconSend, IconVideo } from "./icons";
+import { IconAttach, IconCamera, IconEdit, IconMic, IconSend, IconTrash, IconVideo } from "./icons";
 
 /**
  * Renders Markdown in assistant messages. memo is the energy/perf anchor of
@@ -233,6 +233,13 @@ export function Chat({
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  /** Сообщения, отправленные во время генерации: очередь (FIFO), «форсаж» прыгает вперёд. */
+  const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
+  const forcedQueuedRef = useRef<string | null>(null);
+  useEffect(() => {
+    setQueued([]);
+    forcedQueuedRef.current = null;
+  }, [sessionId]);
   const [error, setError] = useState<string | null>(null);
   const [lastRunId, setLastRunId] = useState<number | null>(null);
   const [ratingSent, setRatingSent] = useState(false);
@@ -501,7 +508,53 @@ export function Chat({
     e.preventDefault();
     const text = input.trim();
     if (!text && files.length === 0) return;
+    if (loading) {
+      // Генерация идёт: текст — в очередь; вложения в очередь не ставятся.
+      if (!text || files.length > 0) return;
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `q-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setQueued((prev) => [...prev, { id, text }]);
+      setInput("");
+      return;
+    }
     void send(text, [...files]);
+  };
+
+  /**
+   * Разгрузка очереди: когда ход завершился (финал, ошибка или стоп) —
+   * отправить следующее сообщение; форсированное («⚡») идёт вперёд головы.
+   */
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    const was = prevLoadingRef.current;
+    prevLoadingRef.current = loading;
+    if (loading || !was || queued.length === 0) return;
+    const forcedId = forcedQueuedRef.current;
+    forcedQueuedRef.current = null;
+    let index = 0;
+    if (forcedId) {
+      const found = queued.findIndex((m) => m.id === forcedId);
+      if (found >= 0) index = found;
+    }
+    const item = queued[index];
+    if (!item) return;
+    setQueued((prev) => prev.filter((m) => m.id !== item.id));
+    void sendRef.current(item.text, []);
+  }, [loading, queued]);
+
+  /** ⚡ в очереди: прервать генерацию и отправить это сообщение сейчас. */
+  const forceQueued = (id: string) => {
+    if (loading) {
+      forcedQueuedRef.current = id;
+      abortControllerRef.current?.abort();
+      return;
+    }
+    const item = queued.find((m) => m.id === id);
+    if (!item) return;
+    setQueued((prev) => prev.filter((m) => m.id !== id));
+    void sendRef.current(item.text, []);
   };
 
   const handleOcr = () => {
@@ -986,6 +1039,47 @@ export function Chat({
         </div>
       )}
       <form ref={formRef} className="chat-form" onSubmit={handleSubmit}>
+        {queued.length > 0 && (
+          <div className="chat-queue" role="list" aria-label="Сообщения в очереди">
+            {queued.map((m, i) => (
+              <div key={m.id} className="chat-queue-item" role="listitem" aria-label={`Сообщение в очереди ${i + 1}`}>
+                <span className="chat-queue-item-n">{i + 1}</span>
+                <span className="chat-queue-item-text" title={m.text}>{m.text}</span>
+                <button
+                  type="button"
+                  className="chat-queue-item-btn chat-queue-item-btn--force"
+                  onClick={() => forceQueued(m.id)}
+                  title="Отправить сейчас (прервать ответ)"
+                  aria-label="Отправить сейчас, прервав ответ"
+                >
+                  ⚡
+                </button>
+                <button
+                  type="button"
+                  className="chat-queue-item-btn"
+                  onClick={() => {
+                    setQueued((prev) => prev.filter((x) => x.id !== m.id));
+                    setInput((cur) => (cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${m.text}\n\n` : `${m.text}\n\n`));
+                    textareaRef.current?.focus();
+                  }}
+                  title="Править"
+                  aria-label="Править"
+                >
+                  <IconEdit size={13} />
+                </button>
+                <button
+                  type="button"
+                  className="chat-queue-item-btn"
+                  onClick={() => setQueued((prev) => prev.filter((x) => x.id !== m.id))}
+                  title="Убрать из очереди"
+                  aria-label="Убрать из очереди"
+                >
+                  <IconTrash size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {attachOpen && (
           <div className="chat-attach-sheet" role="dialog" aria-label="Вложение">
             <button
@@ -1096,8 +1190,16 @@ export function Chat({
                 formRef.current?.requestSubmit();
               }
             }}
-            placeholder={pttActive ? "Говорите…" : pttBusy ? "Распознаю…" : "Сообщение"}
-            disabled={loading || pttBusy}
+            placeholder={
+              loading
+                ? "Продолжайте печатать, чтобы поставить сообщение в очередь"
+                : pttActive
+                  ? "Говорите…"
+                  : pttBusy
+                    ? "Распознаю…"
+                    : "Сообщение"
+            }
+            disabled={pttBusy}
             rows={1}
             aria-label="Сообщение"
             enterKeyHint="send"
@@ -1116,15 +1218,27 @@ export function Chat({
               </button>
             )}
             {loading ? (
-              <button
-                type="button"
-                className="chat-submit chat-submit-stop"
-                onClick={() => abortControllerRef.current?.abort()}
-                title="Остановить"
-                aria-label="Остановить"
-              >
-                <span className="chat-submit-stop-icon" />
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="chat-submit chat-submit-stop"
+                  onClick={() => abortControllerRef.current?.abort()}
+                  title="Остановить"
+                  aria-label="Остановить"
+                >
+                  <span className="chat-submit-stop-icon" />
+                </button>
+                {input.trim() ? (
+                  <button
+                    type="submit"
+                    className="chat-submit"
+                    title="Поставить в очередь"
+                    aria-label="Поставить в очередь"
+                  >
+                    <IconSend size={20} />
+                  </button>
+                ) : null}
+              </>
             ) : input.trim() || files.length > 0 ? (
               <button
                 type="submit"

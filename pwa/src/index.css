@@ -1002,6 +1002,73 @@ body {
 /* Floating frosted composer dock (desktop chat language): the feed scrolls
    behind it, glass = our #1a1a1c at 55% + blur. Anchored inside .chat-root,
    so in the fold layout it stays within the detail pane. */
+/* Очередь сообщений, отправленных во время генерации. */
+.chat-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.chat-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  padding: 0.3rem 0.45rem;
+  min-height: 34px;
+}
+
+.chat-queue-item-n {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--accent, #7b66ff);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.chat-queue-item-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.chat-queue-item-btn {
+  flex-shrink: 0;
+  min-width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chat-queue-item-btn:active,
+.chat-queue-item-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+.chat-queue-item-btn--force {
+  color: var(--accent, #7b66ff);
+}
+
 .chat-form {
   position: absolute;
   left: 0.65rem;
