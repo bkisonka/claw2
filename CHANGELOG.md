@@ -3,6 +3,25 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Upgrading from 0.2.2 no longer breaks the chat list**: 0.2.3 shipped the
+  `title_manual` column in schema.sql but forgot the ALTER migration, so an
+  existing database made the gateway fail with
+  `SqliteError: no such column: title_manual` on the first chat-list query.
+  `initDb` now adds the column on upgrade.
+
+### Added
+
+- **Schema-upgrade guard**: a convergence test upgrades a database built from
+  `schema.baseline.sql` (the oldest supported schema, currently 0.2.2) through
+  `initDb` and compares every table's shape with a fresh install. Adding a
+  column to schema.sql without the matching ALTER in `init.ts` now fails the
+  test with the exact table.column — the 0.2.3 class of bug can no longer
+  ship silently.
+
 ## [0.2.3] - 2026-11-22
 
 ### Added

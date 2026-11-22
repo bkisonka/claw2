@@ -69,6 +69,11 @@ export function initDb(dbPath: string): ChatRepository {
     /* there is no table or the column already exists*/
   }
   try {
+    db.exec("ALTER TABLE chats ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    /* there is no table or the column already exists*/
+  }
+  try {
     db.exec(
       "CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id))"
     );
