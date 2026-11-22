@@ -25,6 +25,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New chats showed the "New chat" placeholder in the sidebar instead of the
   derived title when a per-chat model override had created the row first; the
   placeholder now gives way to the derived/loaded title.
+- **The sidebar fork tree stays still during generation**: stream progress
+  used to re-sort the chat list on every chunk (updatedAt ticks), visibly
+  reshuffling the tree and moving the selected chat around. Progress now
+  updates the row in place; the final order lands once when the reply
+  completes.
 - **A manually renamed chat keeps its name**: the rename is recorded as
   manual (new `title_manual` flag) and automatic titling — including the
   browser page title a web-surface chat sends with every message — can no

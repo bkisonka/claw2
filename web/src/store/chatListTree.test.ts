@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { forkTreeIds, isInForkTree } from "./chatList";
+import { forkTreeIds, isInForkTree, upsertChatRowStable, type ChatItem } from "./chatList";
 
 const tree = [
   { id: "a", forkedFrom: null },
@@ -40,5 +40,27 @@ describe("fork tree helpers", () => {
     ];
     const ids = forkTreeIds(cyclic, "z");
     assert.deepEqual(new Set(ids), new Set(["x", "y", "z"]));
+  });
+});
+
+describe("stable upsert during generation", () => {
+  const row = (id: string, updatedAt: number, forkedFrom: string | null = null): ChatItem =>
+    ({ id, title: id, updatedAt, messages: [], forkedFrom });
+
+  it("keeps the list order while a streaming chat's updatedAt ticks", () => {
+    let list = [row("old", 1), row("mid", 2), row("new", 3)];
+    // Stream ticks on "old": its updatedAt grows past everything.
+    for (const ts of [10, 11, 12, 13]) {
+      list = upsertChatRowStable(list, { ...list.find((c) => c.id === "old")!, updatedAt: ts });
+      assert.deepEqual(list.map((c) => c.id), ["old", "mid", "new"], `tick ${ts}`);
+    }
+  });
+
+  it("inserts a brand-new chat at the top and keeps it there", () => {
+    let list = [row("a", 1), row("b", 2)];
+    list = upsertChatRowStable(list, row("fresh", 100));
+    assert.deepEqual(list.map((c) => c.id), ["fresh", "a", "b"]);
+    list = upsertChatRowStable(list, { ...list[0]!, updatedAt: 101 });
+    assert.deepEqual(list.map((c) => c.id), ["fresh", "a", "b"]);
   });
 });

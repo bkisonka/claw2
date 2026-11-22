@@ -117,3 +117,18 @@ export function forkTreeIds(chats: ForkNode[], chatId: string): string[] {
   }
   return out;
 }
+
+/**
+ * Insert-or-replace a chat row WITHOUT re-sorting. Used for stream progress:
+ * compareChatItems is updatedAt-driven and a streaming chat's updatedAt ticks
+ * on every chunk, so sorting per tick would keep reshuffling the list (and
+ * the fork tree rendered from it) while the user is watching. The final
+ * ordering lands when the turn completes (handleSessionUpdate sorts once).
+ */
+export function upsertChatRowStable(prev: ChatItem[], item: ChatItem): ChatItem[] {
+  const idx = prev.findIndex((c) => c.id === item.id);
+  if (idx < 0) return [item, ...prev];
+  const copy = [...prev];
+  copy[idx] = item;
+  return copy;
+}

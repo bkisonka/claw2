@@ -31,7 +31,7 @@ import {
 import { browserSearch } from "../api/browserSearch";
 import { getConfig } from "../api/config";
 import { fetchProjectList, deleteProject, type ProjectListItemApi } from "../api/project";
-import { type ChatItem, compareChatItems, resolveListTitle } from "../store/chatList";
+import { type ChatItem, compareChatItems, resolveListTitle, upsertChatRowStable } from "../store/chatList";
 import {
   evictChatHistories,
   selectInactiveHistoryEvictions,
@@ -365,9 +365,7 @@ export function AuthenticatedArea() {
     (sessionId: string, title: string, messages: Message[]) => {
       if (!sessionId || !messages.length) return;
       setChats((prev) => {
-        const copy = [...prev];
-        const idx = copy.findIndex((c) => c.id === sessionId);
-        const existing = idx >= 0 ? copy[idx] : undefined;
+        const existing = prev.find((c) => c.id === sessionId);
         const listTitle = resolveListTitle(existing?.title, title);
         const item: ChatItem = {
           id: sessionId,
@@ -384,9 +382,9 @@ export function AuthenticatedArea() {
           hasDocs: existing?.hasDocs,
           historyEvicted: false,
         };
-        if (idx >= 0) copy[idx] = item;
-        else copy.unshift(item);
-        return copy.sort(compareChatItems);
+        // Stable upsert (no sort): progress ticks must not reshuffle the list
+        // and the fork tree while a reply is being generated.
+        return upsertChatRowStable(prev, item);
       });
     },
     [pendingProjectId]
