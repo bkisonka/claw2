@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Fact lifecycle in vector memory — the latest version is chosen
+  mechanically**: every recalled record now carries a date and id, and only
+  ACTIVE facts surface (recall filters status=retired). Changing a fact is
+  `remember(text, replaces=id)` — the old version is retired in the same
+  transaction with a supersede link; cancelling one is the new
+  `memory_forget(id)` tool. The model is taught the convention in the
+  system prompt: never keep two versions of one fact (the
+  moved-Wednesday-meeting case). The prune order drops retired records
+  first; the Chroma backend gets parity plus a one-time status backfill;
+  existing memory.sqlite databases are upgraded via ALTER (old records
+  stay active). Chronicle recall entries now show their date too.
+
 ### Fixed
 
 - **Local embeddings no longer break with a stale daemon**: the shared ONNX

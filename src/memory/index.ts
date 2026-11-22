@@ -23,11 +23,25 @@ export interface MemoryWriteResult {
 }
 
 export interface MemoryRecallResult {
-  chunks: { text: string; source: MemorySource; untrustedOrigin?: boolean }[];
+  chunks: {
+    text: string;
+    source: MemorySource;
+    untrustedOrigin?: boolean;
+    /** Record id + date: the model needs them to chain updates (replaces) and see versions. */
+    id?: string;
+    createdAt?: number;
+  }[];
 }
 
 export interface MemoryRecallScoredResult {
-  chunks: { text: string; source: MemorySource; score: number; untrustedOrigin?: boolean }[];
+  chunks: {
+    text: string;
+    source: MemorySource;
+    score: number;
+    untrustedOrigin?: boolean;
+    id?: string;
+    createdAt?: number;
+  }[];
 }
 
 let defaultStore: IMemoryStore | null = null;
@@ -95,7 +109,8 @@ export async function memoryWrite(
   source: MemorySource,
   userId?: string,
   importance?: number,
-  originUntrusted?: boolean
+  originUntrusted?: boolean,
+  lifecycle?: { replaces?: string; isSuperuser?: boolean }
 ): Promise<MemoryWriteResult> {
   if (!config.memory?.enabled) return { ok: false, reason: "memory_disabled" };
 
@@ -113,17 +128,26 @@ export async function memoryWrite(
   try {
     const embedding = await getEmbedding(client, config, sanitized.sanitized);
     const store = getStore(config);
-    const id = await store.add({
-      text: sanitized.sanitized,
-      embedding,
-      source,
-      importance: imp,
-      ...(originUntrusted ? { untrustedOrigin: true } : {}),
-      ...(userId ? { userId } : {}),
-    });
+    const id = await store.add(
+      {
+        text: sanitized.sanitized,
+        embedding,
+        source,
+        importance: imp,
+        ...(originUntrusted ? { untrustedOrigin: true } : {}),
+        ...(userId ? { userId } : {}),
+      },
+      lifecycle?.replaces
+        ? { replaces: lifecycle.replaces, isSuperuser: lifecycle.isSuperuser === true }
+        : undefined
+    );
     auditLog(config, {
       type: "memory_write",
-      details: { importance: imp, untrustedOrigin: originUntrusted === true },
+      details: {
+        importance: imp,
+        untrustedOrigin: originUntrusted === true,
+        ...(lifecycle?.replaces ? { replacedId: lifecycle.replaces } : {}),
+      },
     });
     return { ok: true, id };
   } catch (err) {
@@ -131,6 +155,50 @@ export async function memoryWrite(
     console.error("[memory] memoryWrite failed:", msg);
     return { ok: false, reason: msg };
   }
+}
+
+/** Retire a fact (no replacement): stored for audit, never recalled again. */
+export async function memoryRetire(
+  config: Claw2Config,
+  chunkId: string,
+  options?: { userId?: string; isSuperuser?: boolean }
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!config.memory?.enabled) return { ok: false, reason: "memory_disabled" };
+  const store = getStore(config);
+  if (typeof store.retire !== "function") {
+    return { ok: false, reason: "retire_not_supported_by_backend" };
+  }
+  try {
+    const done = await store.retire(chunkId, options);
+    auditLog(config, {
+      type: "memory_retire",
+      details: { chunkId, ok: done },
+    });
+    return done ? { ok: true } : { ok: false, reason: "not_found" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[memory] memoryRetire failed:", msg);
+    return { ok: false, reason: msg };
+  }
+}
+
+/**
+ * One memory hit as the model sees it: `[n] (source) 2026-11-22 · id=… · text`.
+ * The date comes from createdAt at render time (never baked into the stored
+ * text) so version ordering is mechanical; the id lets the model chain
+ * remember(text, replaces=id) on later updates.
+ */
+export function formatMemoryHit(
+  chunk: { text: string; source: MemorySource; id?: string; createdAt?: number },
+  index?: number
+): string {
+  const day =
+    typeof chunk.createdAt === "number" && Number.isFinite(chunk.createdAt)
+      ? new Date(chunk.createdAt).toISOString().slice(0, 10)
+      : "unknown-date";
+  const num = typeof index === "number" ? `[${index}] ` : "";
+  const id = chunk.id ? ` · id=${chunk.id}` : "";
+  return `${num}(${chunk.source}) ${day}${id} · ${chunk.text}`;
 }
 
 export interface MemoryRecallOptions {
@@ -154,6 +222,8 @@ export async function memoryRecall(
     chunks: scored.chunks.map((c) => ({
       text: c.text,
       source: c.source,
+      ...(c.id ? { id: c.id } : {}),
+      ...(typeof c.createdAt === "number" ? { createdAt: c.createdAt } : {}),
       ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
     })),
   };
@@ -179,6 +249,8 @@ export async function memoryRecallScored(
         text: x.chunk.text,
         source: x.chunk.source,
         score: x.score,
+        id: x.chunk.id,
+        createdAt: x.chunk.createdAt,
         // Provenance must survive the store→consumer seam (the anti-laundering
         // check in the orchestrator reads exactly this field).
         ...(x.chunk.untrustedOrigin ? { untrustedOrigin: true } : {}),
@@ -193,6 +265,8 @@ export async function memoryRecallScored(
       text: c.text,
       source: c.source,
       score: Math.max(0, 1 - i * 0.08),
+      id: c.id,
+      createdAt: c.createdAt,
       ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
     })),
   };

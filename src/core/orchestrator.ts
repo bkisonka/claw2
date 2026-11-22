@@ -16,7 +16,7 @@ import { pickVersionForRun, recordRunAndMaybeSelect } from "../agent-selection/s
 import { computeTaskId } from "../agent-selection/task-id.js";
 import { runCodeSkill, acceptSkill } from "../coding/run-code-skill.js";
 import { selectionLog } from "../agent-selection/log.js";
-import { memoryRecall, memoryWrite } from "../memory/index.js";
+import { formatMemoryHit, memoryRecall, memoryRetire, memoryWrite } from "../memory/index.js";
 import { createClient, chat, summarizeWithLlm, normalizeToolCalls, isGenerateImageToolEnabled } from "./llm.js";
 import { isPhoneCallToolEnabled } from "../config/sip.js";
 import { toolPhoneCall } from "../tools/phone-call.js";
@@ -780,8 +780,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         markUntrustedOrigin(sessionId ?? "");
       }
       if (recalled.chunks.length > 0) {
-        const block = recalled.chunks.map((c) => `[${c.source}] ${c.text}`).join("\n\n");
-        systemPrompt = `${systemPrompt}\n\nRelevant memory:\n${block}`;
+        const block = recalled.chunks.map((c) => formatMemoryHit(c)).join("\n\n");
+        systemPrompt = `${systemPrompt}\n\nRelevant memory (active facts, newest wins — retire via remember(replaces) / memory_forget):\n${block}`;
       }
     } catch {
       throwIfAborted(signal);
@@ -1191,6 +1191,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           const source = args.source === "internal" ? "internal" : "user";
           const importance =
             typeof args.importance === "number" ? clampImportance(args.importance, 0.5) : undefined;
+          const replaces = typeof args.replaces === "string" ? args.replaces.trim() : undefined;
           try {
             const result = await memoryWrite(
               client,
@@ -1201,11 +1202,16 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               importance,
               // Content saved during a trifecta-armed turn derives from
               // untrusted context (strictest-label inheritance).
-              trifectaState.untrustedContent
+              trifectaState.untrustedContent,
+              replaces ? { replaces, isSuperuser } : undefined
             );
             toolResults.push({
               id: tc.id!,
-              content: result.ok ? `Saved: ${result.id}` : `Error: ${result.reason ?? "unknown"}`,
+              content: result.ok
+                ? replaces
+                  ? `Saved: ${result.id} (replaced ${replaces}; old version retired)`
+                  : `Saved: ${result.id}`
+                : `Error: ${result.reason ?? "unknown"}`,
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -1213,6 +1219,25 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               id: tc.id!,
               content: `Remember failed: ${msg}. Check out Ollama (embeddings) and Chroma.`,
             });
+          }
+          continue;
+        }
+
+        if (tc.function?.name === "memory_forget") {
+          const id = String(args.id ?? "").trim();
+          if (!id) {
+            toolResults.push({ id: tc.id!, content: "Error: memory_forget requires id" });
+            continue;
+          }
+          try {
+            const result = await memoryRetire(config, id, recognizedUser ? { userId: recognizedUser, isSuperuser } : undefined);
+            toolResults.push({
+              id: tc.id!,
+              content: result.ok ? `Retired: ${id}` : `Error: ${result.reason ?? "unknown"}`,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            toolResults.push({ id: tc.id!, content: `memory_forget failed: ${msg}` });
           }
           continue;
         }
@@ -1497,7 +1522,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
               }
             }
             const lines = chunks.length
-              ? chunks.map((c, i) => `[${i + 1}] (${c.source}) ${c.text}`).join("\n\n")
+              ? chunks.map((c, i) => formatMemoryHit(c, i + 1)).join("\n\n")
               : "No relevant chunks found.";
             toolResults.push({ id: tc.id!, content: lines });
           } catch (err) {

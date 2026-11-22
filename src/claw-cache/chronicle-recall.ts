@@ -28,8 +28,12 @@ function formatChronicleHit(hit: ChronicleRecallHit, index: number): string {
   const src = hit.source === "model" ? "model" : "auto";
   const pin = hit.pinned ? " pinned" : "";
   const sim = hit.similarity.toFixed(3);
+  // Date from the entry timestamp: versions of a session fact are ordered
+  // visibly, the same convention as vector memory hits.
+  const day = Number.isFinite(hit.timestamp) ? new Date(hit.timestamp).toISOString().slice(0, 10) : "";
+  const dated = day ? `${day} · ` : "";
   const text = sanitizeForChroniclePrompt(hit.context);
-  return `[${index + 1}] (importance=${imp}, source=${src}, sim=${sim}${pin}) ${text}`;
+  return `[${index + 1}] (importance=${imp}, source=${src}, sim=${sim}${pin}) ${dated}${text}`;
 }
 
 export function buildChronicleRecallPromptBlock(hits: ChronicleRecallHit[]): string {

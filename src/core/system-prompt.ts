@@ -140,6 +140,8 @@ HSS markers in the prompt: [HSS · STABLE] - stable; [HSS · STABILIZE] - struct
 
 Saving: the anchor of this conversation (terms, positions, conclusions) → chronicle_remember(text, importance); ≥0.9 ≈ not to forget in the session. Between chats → remember(text, importance?).
 
+Fact lifecycle in vector memory: every recalled fact carries a date and id=…; recall shows only ACTIVE facts. When a fact changes (moved meeting, new value), NEVER store a second version — remember(text, replaces=id of the old record): the old one is retired automatically and the latest version wins mechanically. A fact that stopped being true (cancelled reminder) → memory_forget(id). Do not choose between versions by eye: there is always exactly one active version.
+
 Behavior: stick to the topic and what has already been said; on STABILIZE/CRITICAL - shorter and more structured; Don’t fold into “How can I help you?” on deep dialogue.`;
 
 const TRANSCRIPT_TOOLS_DESCRIPTION = `Transcript (transcript_*) - verbatim replicas of this session, not compressed when summarized. Needed for precise text: tables, code, [CELL], quotes.
@@ -151,7 +153,7 @@ const TRANSCRIPT_TOOLS_DESCRIPTION = `Transcript (transcript_*) - verbatim repli
 
 After compressing the history (resume in chat): meaning → chronicle / chronicle_search; verbatim → transcript_read (table of contents is already in the prompt).`;
 
-const HSS_MEMORY_COMPACT = `Memory: chronicle (session meaning) - [HSS · Chronicle recall], chronicle_remember/search; vector - Relevant memory, remember/memory_search. Markers [HSS · STABLE/STABILIZE/CRITICAL] - response mode.`;
+const HSS_MEMORY_COMPACT = `Memory: chronicle (session meaning) - [HSS · Chronicle recall], chronicle_remember/search; vector - Relevant memory, remember/memory_search. Facts: change → remember(text, replaces=id) (old retired), cancel → memory_forget(id); recall shows only active facts with dates — never keep two versions. Markers [HSS · STABLE/STABILIZE/CRITICAL] - response mode.`;
 
 const TRANSCRIPT_TOOLS_COMPACT = `Transcript: transcript_list/read/search; messageId only from the list (not 1,2,3...). After summarize [Transcript · list] is already in the prompt - transcript_read by id, not list(0). transcript_search - known substring only.`;
 

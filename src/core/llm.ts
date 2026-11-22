@@ -150,7 +150,7 @@ export const REMEMBER_TOOL: OpenAI.Chat.ChatCompletionTool = {
   function: {
     name: "remember",
     description:
-      "Save a fact or note to long-term vector memory (if memory is enabled). Use for user preferences, important facts. Optional importance 0..1 (higher = recalled more often): low ~0.25, medium 0.5, high 0.75, critical 0.95. When the user is recognized by face (vision), the system automatically attaches their ID to each saved record — you only pass text and source; do not add any face-id or user ID into the content.",
+      "Save a fact or note to long-term vector memory (if memory is enabled). Use for user preferences, important facts. Facts have a lifecycle: recall shows only ACTIVE facts with their date and id. When a fact CHANGES (date, time, value — e.g. a moved meeting), pass replaces=<id of the old record from memory_search>: the old version is retired automatically and only the new one is recalled. Optional importance 0..1 (higher = recalled more often): low ~0.25, medium 0.5, high 0.75, critical 0.95. When the user is recognized by face (vision), the system automatically attaches their ID to each saved record — you only pass text and source; do not add any face-id or user ID into the content.",
     parameters: {
       type: "object",
       properties: {
@@ -160,8 +160,29 @@ export const REMEMBER_TOOL: OpenAI.Chat.ChatCompletionTool = {
           type: "number",
           description: "Optional importance 0..1 for future recall weighting (default 0.5)",
         },
+        replaces: {
+          type: "string",
+          description:
+            "Optional id of the record this one updates (from memory_search output): the old version is retired automatically — do not keep two versions of one fact.",
+        },
       },
       required: ["text"],
+    },
+  },
+};
+
+export const MEMORY_FORGET_TOOL: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "memory_forget",
+    description:
+      "Retire a fact from long-term vector memory without a replacement: the fact is no longer true or relevant (e.g. a cancelled reminder). The record stays stored for audit but is never recalled again. For CHANGING a fact use remember(text, replaces=id) instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "id of the memory record (from memory_search output)" },
+      },
+      required: ["id"],
     },
   },
 };
@@ -272,7 +293,7 @@ export const MEMORY_SEARCH_TOOL: OpenAI.Chat.ChatCompletionTool = {
   function: {
     name: "memory_search",
     description:
-      "Search the vector memory by meaning (semantic search). Use when the user asks what was saved, to find a fact, to search stored notes or documents. Returns relevant chunks with text and source [user/internal]. When the user is recognized by face (vision), results are automatically limited to that user's memory. Prefer this over suggesting to store documents as files — store with remember, search with memory_search.",
+      "Search the vector memory by meaning (semantic search). Use when the user asks what was saved, to find a fact, to search stored notes or documents. Returns ACTIVE facts only, each with source, date, and id=… — use that id to update the fact (remember(text, replaces=id)) or retire it (memory_forget(id)). When the user is recognized by face (vision), results are automatically limited to that user's memory. Prefer this over suggesting to store documents as files — store with remember, search with memory_search.",
     parameters: {
       type: "object",
       properties: {
@@ -902,6 +923,7 @@ export function getChatTools(config: Claw2Config): OpenAI.Chat.ChatCompletionToo
   if (config.memory?.enabled) {
     tools.push(REMEMBER_TOOL);
     tools.push(MEMORY_SEARCH_TOOL);
+    tools.push(MEMORY_FORGET_TOOL);
   }
   if (isChronicleRecallEnabled(config)) {
     tools.push(CHRONICLE_REMEMBER_TOOL);

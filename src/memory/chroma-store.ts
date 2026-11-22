@@ -9,7 +9,7 @@
  */
 import type { Claw2Config } from "../config/types.js";
 import type { MemoryChunk } from "./store.js";
-import type { IMemoryStore } from "./store.js";
+import type { IMemoryStore, MemoryAddOptions, MemoryRecallOptions } from "./store.js";
 import type { MemorySource } from "./sanitize.js";
 
 const DEFAULT_COLLECTION = "claw2_memory";
@@ -37,6 +37,9 @@ type ChromaCollection = Awaited<ReturnType<ChromaClientInstance["getOrCreateColl
 let chromaClient: ChromaClientInstance | null = null;
 let chromaCollection: ChromaCollection | null = null;
 let chromaCollectionName: string | null = null;
+/** One-time per process: pre-lifecycle records have no status metadata —
+ *  without a backfill the recall filter (status="active") would hide them. */
+let chromaStatusBackfilled = false;
 
 async function getClient(url: string): Promise<ChromaClientInstance> {
   if (chromaClient) return chromaClient;
@@ -57,6 +60,27 @@ async function getCollection(config: Claw2Config): Promise<ChromaCollection> {
     embeddingFunction: NOOP_EMBEDDING_FUNCTION,
   });
   chromaCollectionName = name;
+  if (!chromaStatusBackfilled) {
+    chromaStatusBackfilled = true;
+    try {
+      const existing = await chromaCollection.get({ include: ["metadatas"] });
+      const ids: string[] = [];
+      const metas: Record<string, string>[] = [];
+      (existing?.ids ?? []).forEach((rawId, i) => {
+        const meta = existing?.metadatas?.[i];
+        if (meta && typeof meta === "object" && !("status" in meta)) {
+          ids.push(String(rawId));
+          metas.push({ ...(meta as Record<string, string>), status: "active" });
+        }
+      });
+      if (ids.length > 0) {
+        await chromaCollection.update({ ids, metadatas: metas });
+        console.error(`[memory] Chroma backfill: status=active → ${ids.length} record(s)`);
+      }
+    } catch (err) {
+      console.error("[memory] Chroma status backfill failed:", err);
+    }
+  }
   return chromaCollection;
 }
 
@@ -69,12 +93,12 @@ export class ChromaStore implements IMemoryStore {
     this.maxRecallChunks = config.memory?.maxRecallChunks ?? 5;
   }
 
-  async add(chunk: Omit<MemoryChunk, "id" | "createdAt">): Promise<string> {
+  async add(chunk: Omit<MemoryChunk, "id" | "createdAt">, options?: MemoryAddOptions): Promise<string> {
     const id = `mem_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const now = Date.now();
     try {
       const collection = await getCollection(this.config);
-      const meta: Record<string, string> = { source: chunk.source, createdAt: String(now) };
+      const meta: Record<string, string> = { source: chunk.source, createdAt: String(now), status: "active" };
       if (chunk.userId) meta.userId = chunk.userId;
       if (typeof chunk.importance === "number") meta.importance = String(chunk.importance);
       if (chunk.untrustedOrigin) meta.untrustedOrigin = "1";
@@ -84,10 +108,53 @@ export class ChromaStore implements IMemoryStore {
         documents: [chunk.text],
         metadatas: [meta],
       });
+      // Updating a fact: retire the replaced version (metadata-only update).
+      if (options?.replaces) {
+        try {
+          const existing = await collection.get({ ids: [options.replaces], include: ["metadatas"] });
+          const oldMeta = existing?.metadatas?.[0];
+          const owned =
+            !!oldMeta &&
+            (options.isSuperuser === true || (oldMeta.userId ?? undefined) === (chunk.userId ?? undefined));
+          if (!oldMeta || !owned) {
+            throw new Error(`replaces: record not found (${options.replaces})`);
+          }
+          await collection.update({
+            ids: [options.replaces],
+            metadatas: [{ ...oldMeta, status: "retired", supersededBy: id }],
+          });
+        } catch (err) {
+          if (err instanceof Error && err.message.startsWith("replaces:")) throw err;
+          throw new Error(`replaces: record not found (${options.replaces})`);
+        }
+      }
       return id;
     } catch (err) {
       console.error("[memory] Chroma add failed:", err);
       throw err;
+    }
+  }
+
+  /** Retire a fact without a replacement (kept in Chroma, filtered from recall). */
+  async retire(chunkId: string, options?: MemoryRecallOptions): Promise<boolean> {
+    try {
+      const collection = await getCollection(this.config);
+      const existing = await collection.get({ ids: [chunkId], include: ["metadatas"] });
+      const meta = existing?.metadatas?.[0];
+      const owned =
+        !!meta &&
+        (!options?.userId ||
+          options.isSuperuser === true ||
+          (meta.userId ?? undefined) === options.userId);
+      if (!meta || !owned) return false;
+      await collection.update({
+        ids: [chunkId],
+        metadatas: [{ ...meta, status: "retired" }],
+      });
+      return true;
+    } catch (err) {
+      console.error("[memory] Chroma retire failed:", err);
+      return false;
     }
   }
 
@@ -113,8 +180,14 @@ export class ChromaStore implements IMemoryStore {
         nResults: Math.min(Math.max(n * 4, 12), 40),
         include: ["documents", "metadatas", "distances"],
       };
+      // Only active facts surface; retired versions are history, never recall.
       if (options?.userId && !options?.isSuperuser) {
-        (queryParams as { where?: Record<string, string> }).where = { userId: options.userId };
+        (queryParams as { where?: Record<string, string> }).where = {
+          userId: options.userId,
+          status: "active",
+        };
+      } else {
+        (queryParams as { where?: Record<string, string> }).where = { status: "active" };
       }
       const result = await collection.query(queryParams);
       const ids = result.ids?.[0] ?? [];

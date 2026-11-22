@@ -106,7 +106,9 @@ function ensureVecTables(db: Database.Database, dim: number): void {
       source TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       user_id TEXT,
-      importance REAL
+      importance REAL,
+      status TEXT NOT NULL DEFAULT 'active',
+      superseded_by TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_user ON memory_chunks(user_id);
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_created ON memory_chunks(created_at);
@@ -136,6 +138,19 @@ function ensureVecTables(db: Database.Database, dim: number): void {
   // JS block would become literal SQL and parse as "near '/': syntax error".
   try {
     db.exec("ALTER TABLE memory_chunks ADD COLUMN origin_untrusted INTEGER DEFAULT 0");
+  } catch {
+    /* column already exists */
+  }
+  // Fact lifecycle (existing databases): active/retired + the replacement
+  // link. CREATE TABLE IF NOT EXISTS does not alter an existing table —
+  // without these ALTERs an upgraded install would crash on INSERT.
+  try {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN status TEXT NOT NULL DEFAULT 'active'");
+  } catch {
+    /* column already exists */
+  }
+  try {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN superseded_by TEXT");
   } catch {
     /* column already exists */
   }

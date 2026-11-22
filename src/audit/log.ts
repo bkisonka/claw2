@@ -24,6 +24,7 @@ export type AuditEventType =
   | "chat_cancelled"
   | "run_agent_done"
   | "memory_write"
+  | "memory_retire"
   | "config_saved"
   | "config_saved_denied"
   | "agent_created"

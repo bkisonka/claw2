@@ -6,7 +6,7 @@
  */
 import type { Claw2Config } from "../config/types.js";
 import type { MemorySource } from "./sanitize.js";
-import type { IMemoryStore, MemoryChunk, MemoryRecallOptions } from "./store.js";
+import type { IMemoryStore, MemoryAddOptions, MemoryChunk, MemoryRecallOptions } from "./store.js";
 import {
   embeddingToMatchParam,
   openMemorySqlite,
@@ -24,7 +24,7 @@ export class SqliteVecStore implements IMemoryStore {
     this.maxRecallChunks = config.memory?.maxRecallChunks ?? 5;
   }
 
-  async add(chunk: Omit<MemoryChunk, "id" | "createdAt">): Promise<string> {
+  async add(chunk: Omit<MemoryChunk, "id" | "createdAt">, options?: MemoryAddOptions): Promise<string> {
     const db = openMemorySqlite(this.config);
     const dim = resolveEmbeddingDim(this.config);
     if (chunk.embedding.length !== dim) {
@@ -37,11 +37,29 @@ export class SqliteVecStore implements IMemoryStore {
     const embParam = embeddingToMatchParam(chunk.embedding);
 
     const tx = db.transaction(() => {
+      // Updating a fact: retire the replaced version in the same transaction.
+      // Ownership is enforced — another user's id reads as "not found"
+      // (no existence leak).
+      if (options?.replaces) {
+        const target = db
+          .prepare("SELECT id, user_id FROM memory_chunks WHERE chunk_id = ?")
+          .get(options.replaces) as { id: number; user_id: string | null } | undefined;
+        const owned =
+          !!target &&
+          (options.isSuperuser === true || target.user_id === (chunk.userId ?? null));
+        if (!target || !owned) {
+          throw new Error(`replaces: record not found (${options.replaces})`);
+        }
+        db.prepare("UPDATE memory_chunks SET status = 'retired', superseded_by = ? WHERE id = ?").run(
+          chunkId,
+          target.id
+        );
+      }
       const info = db.prepare("INSERT INTO memory_vec(embedding) VALUES (?)").run(embParam);
       const rowid = Number(info.lastInsertRowid);
       db.prepare(
-        `INSERT INTO memory_chunks(id, chunk_id, text, source, created_at, user_id, importance, origin_untrusted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO memory_chunks(id, chunk_id, text, source, created_at, user_id, importance, origin_untrusted, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')`
       ).run(
         rowid,
         chunkId,
@@ -53,14 +71,20 @@ export class SqliteVecStore implements IMemoryStore {
         chunk.untrustedOrigin === true ? 1 : 0
       );
 
-      // FIFO trim by maxChunks
+      // FIFO trim by maxChunks: retired facts are dropped first (oldest),
+      // then oldest active — a fresh active fact must not be evicted by a
+      // pile of retired versions.
       const count = (
         db.prepare("SELECT COUNT(*) AS n FROM memory_chunks").get() as { n: number }
       ).n;
       if (count > this.maxChunks) {
         const excess = count - this.maxChunks;
         const old = db
-          .prepare("SELECT id FROM memory_chunks ORDER BY created_at ASC LIMIT ?")
+          .prepare(
+            `SELECT id FROM memory_chunks
+             ORDER BY CASE status WHEN 'retired' THEN 0 ELSE 1 END, created_at ASC
+             LIMIT ?`
+          )
           .all(excess) as { id: number }[];
         const delChunk = db.prepare("DELETE FROM memory_chunks WHERE id = ?");
         const delVec = db.prepare("DELETE FROM memory_vec WHERE rowid = ?");
@@ -72,6 +96,22 @@ export class SqliteVecStore implements IMemoryStore {
     });
     tx();
     return chunkId;
+  }
+
+  /** Retire a fact without a replacement: kept for audit, never recalled. */
+  async retire(chunkId: string, options?: MemoryRecallOptions): Promise<boolean> {
+    const db = openMemorySqlite(this.config);
+    const target = db
+      .prepare("SELECT id, user_id FROM memory_chunks WHERE chunk_id = ?")
+      .get(chunkId) as { id: number; user_id: string | null } | undefined;
+    const owned =
+      !!target &&
+      (!options?.userId ||
+        options.isSuperuser === true ||
+        target.user_id === options.userId);
+    if (!target || !owned) return false;
+    db.prepare("UPDATE memory_chunks SET status = 'retired' WHERE id = ?").run(target.id);
+    return true;
   }
 
   async recall(
@@ -122,7 +162,8 @@ export class SqliteVecStore implements IMemoryStore {
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
                AND k = ?
-               AND c.user_id = ?`
+               AND c.user_id = ?
+               AND c.status = 'active'`
           )
           .all(q, fetchN, options.userId) as typeof rows;
       } else {
@@ -132,7 +173,8 @@ export class SqliteVecStore implements IMemoryStore {
              FROM memory_vec v
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
-               AND k = ?`
+               AND k = ?
+               AND c.status = 'active'`
           )
           .all(q, fetchN) as typeof rows;
       }
