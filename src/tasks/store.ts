@@ -191,9 +191,26 @@ function normalizeReminderType(v: unknown): ReminderType {
   return "daily";
 }
 
-/**
- * Add a reminder for a task. One-time (once) - run_at in ISO format; periodic - firstRun in ISO (or now).
- */
+// The old writer stored at most 19 characters and compared them as local wall
+// time. Full millisecond ISO strings with a Z suffix distinguish new UTC rows
+// without guessing the intent of (or rewriting) any legacy timestamps.
+const UTC_RUN_AT = "r.run_at GLOB '????-??-??T??:??:??.???Z'";
+const REMINDER_ORDER = `CASE WHEN ${UTC_RUN_AT} THEN julianday(r.run_at) ELSE julianday(r.run_at, 'utc') END, r.run_at, r.id`;
+
+function parseRunAt(value: string): string | null {
+  const match = /^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?)?$/i.exec(value);
+  if (!match) return null;
+  const [, day, time = "00:00:00", zone = ""] = match;
+  const midnight = new Date(`${day}T00:00:00.000Z`);
+  if (!Number.isFinite(midnight.getTime()) || !midnight.toISOString().startsWith(day)) return null;
+  // A missing offset means local time, as in the existing reminder tool.
+  const date = new Date(`${day}T${time}${zone}`);
+  if (!Number.isFinite(date.getTime())) return null;
+  const utc = date.toISOString();
+  return utc.length === 24 ? utc : null;
+}
+
+/** Add a one-time or recurring reminder; a recurring reminder defaults to now. */
 export function reminderAdd(
   config: Claw2Config,
   params: { taskId: number; type: string; at?: string; firstRun?: string }
@@ -202,14 +219,9 @@ export function reminderAdd(
   if (!Number.isInteger(taskId) || taskId < 1) return { ok: false, error: "taskId must be a positive integer" };
   const type = normalizeReminderType(params.type);
   const at = (params.at ?? params.firstRun ?? "").trim();
-  let runAt: string;
-  if (type === "once") {
-    if (!at) return { ok: false, error: "For once reminder, at (ISO datetime) is required" };
-    runAt = at;
-  } else {
-    runAt = at ? at.replace("T", " ").slice(0, 19) : new Date().toISOString().slice(0, 19).replace("T", " ");
-  }
-  if (type === "once" && at) runAt = runAt.replace("T", " ").slice(0, 19);
+  if (!at && type === "once") return { ok: false, error: "For once reminder, at (ISO datetime) is required" };
+  const runAt = at ? parseRunAt(at) : new Date().toISOString();
+  if (!runAt) return { ok: false, error: "Invalid reminder time; expected ISO datetime" };
   try {
     const db = getTasksDb(config);
     const task = db.prepare("SELECT id FROM tasks WHERE id = ?").get(taskId) as { id: number } | undefined;
@@ -237,35 +249,37 @@ export function reminderList(
     sql += " WHERE r.task_id = ?";
     args.push(params.taskId);
   }
-  sql += " ORDER BY r.run_at ASC";
+  sql += ` ORDER BY ${REMINDER_ORDER}`;
   const rows = (args.length ? db.prepare(sql).all(...args) : db.prepare(sql).all()) as (Reminder & { taskText: string })[];
   return rows;
 }
 
-/** Reminders that are time to send (run_at <= now).*/
-export function remindersGetDue(config: Claw2Config): (Reminder & { taskText: string })[] {
-  const db = getTasksDb(config);
-  const rows = db
+/** Compare UTC rows to UTC now, keeping the previous due rule for legacy rows. */
+export function remindersGetDue(config: Claw2Config, now = new Date()): (Reminder & { taskText: string })[] {
+  return getTasksDb(config)
     .prepare(
       `SELECT r.id AS id, r.task_id AS taskId, r.type AS type, r.run_at AS runAt, r.created_at AS createdAt, t.text AS taskText
        FROM reminders r JOIN tasks t ON t.id = r.task_id
-       WHERE r.run_at <= datetime('now', 'localtime') ORDER BY r.run_at ASC`
+       WHERE CASE WHEN ${UTC_RUN_AT} THEN r.run_at <= @now ELSE r.run_at <= datetime(@now, 'localtime') END
+       ORDER BY ${REMINDER_ORDER}`
     )
-    .all() as (Reminder & { taskText: string })[];
-  return rows;
+    .all({ now: now.toISOString() }) as (Reminder & { taskText: string })[];
 }
 
-/** After sending: for once - delete; for periodic - shift run_at.*/
-export function reminderMarkSent(config: Claw2Config, reminderId: number): void {
+/** Finish only the occurrence that was sent; a stale result can't advance it twice. */
+export function reminderMarkSent(config: Claw2Config, reminder: Pick<Reminder, "id" | "type" | "runAt">): void {
   const db = getTasksDb(config);
-  const row = db.prepare("SELECT id, type, run_at FROM reminders WHERE id = ?").get(reminderId) as { id: number; type: string; run_at: string } | undefined;
-  if (!row) return;
-  if (row.type === "once") {
-    db.prepare("DELETE FROM reminders WHERE id = ?").run(reminderId);
+  const { id, type, runAt } = reminder;
+  if (type === "once") {
+    db.prepare("DELETE FROM reminders WHERE id = ? AND type = ? AND run_at = ?").run(id, type, runAt);
     return;
   }
-  const modifier = row.type === "daily" ? "+1 day" : row.type === "every_3_days" ? "+3 days" : "+7 days";
-  db.prepare("UPDATE reminders SET run_at = datetime(run_at, ?) WHERE id = ?").run(modifier, reminderId);
+  const modifier = type === "daily" ? "+1 day" : type === "every_3_days" ? "+3 days" : "+7 days";
+  // Legacy recurrences stay on the same local wall clock. New ones advance
+  // from their scheduled UTC instant, not from the time delivery completed.
+  db.prepare(`UPDATE reminders AS r SET run_at = CASE WHEN ${UTC_RUN_AT}
+    THEN strftime('%Y-%m-%dT%H:%M:%fZ', run_at, @modifier) ELSE datetime(run_at, @modifier) END
+    WHERE id = @id AND type = @type AND run_at = @runAt`).run({ modifier, id, type, runAt });
 }
 
 /** Delete reminder by id.*/

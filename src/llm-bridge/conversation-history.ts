@@ -4,6 +4,7 @@
 import { wrapExternalContent } from "../security/content-boundary.js";
 
 export interface RoomMessage {
+  id: string;
   authorId: string;
   authorKind: "llm" | "human";
   text: string;
@@ -27,19 +28,17 @@ function formatOtherMessage(m: RoomMessage, labels: Record<string, string>): str
   return `[${label}]: ${wrapped}`;
 }
 
-/**
- * Full room feed → history + last message as the current move (as in a chat with a user).
- */
+/** Use the room's feed order, stopping at the exact event being handled. */
 export function buildOrchestratorTurn(
-  messages: RoomMessage[],
+  messages: readonly RoomMessage[],
+  anchor: RoomMessage,
   selfAgentId: string,
   labels: Record<string, string>
 ): { history: SessionTurn[]; userMessage: string } {
-  if (messages.length === 0) {
-    return { history: [], userMessage: "" };
-  }
-  const prior = messages.slice(0, -1);
-  const last = messages[messages.length - 1];
+  const index = messages.findIndex((m) => m.id === anchor.id);
+  // An older event can fall outside the fetched window. Reply to the polled
+  // event without room history rather than guessing which rows predate it.
+  const prior = index < 0 ? [] : messages.slice(0, index);
   const history: SessionTurn[] = prior.map((m) => {
     if (m.authorId === selfAgentId) {
       return { role: "assistant", content: m.text };
@@ -47,8 +46,8 @@ export function buildOrchestratorTurn(
     return { role: "user", content: formatOtherMessage(m, labels) };
   });
   const userMessage =
-    last.authorId === selfAgentId
-      ? last.text
-      : formatOtherMessage(last, labels);
+    anchor.authorId === selfAgentId
+      ? anchor.text
+      : formatOtherMessage(anchor, labels);
   return { history, userMessage };
 }

@@ -13,7 +13,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Claw2Config } from "../config/types.js";
 import { applyUserConfigPolicy } from "../config/user-config-policy.js";
 import { assertPublicUrl } from "../security/url-guard.js";
-import { FILES_TOKEN_TTL_MS, signFilesToken, verifyFilesToken } from "./files-token.js";
+import { FILES_TOKEN_TTL_MS, filesReadPath, signFilesToken, verifyFilesToken } from "./files-token.js";
 import { getConfigPath, loadConfig, loadConfigRaw } from "../config/load.js";
 import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
@@ -1014,9 +1014,15 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       );
       return;
     }
-    // The health probe and the UI shell stay GET-public (see isUiShellPath);
-    // every data route requires the key.
-    if (!checkAuth(config, req) && !(req.method === "GET" && isUiShellPath(p))) {
+    const hostedRequested = config.gateway?.auth?.registrationEnabled === true;
+    const personalFileSecret = authEffective && !hostedRequested
+      ? config.gateway?.auth?.apiKey?.trim() : undefined;
+    const keyAuthorized = checkAuth(config, req);
+    const filePath = req.method === "GET" ? filesReadPath(p) : null;
+    const fileGrant = personalFileSecret && filePath
+      ? verifyFilesToken(personalFileSecret, new URLSearchParams(req.url?.split("?", 2)[1]).get("k") ?? "", filePath)
+      : null;
+    if (!keyAuthorized && !(req.method === "GET" && isUiShellPath(p)) && fileGrant?.userId !== "default") {
       res.writeHead(401, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
       res.end("Unauthorized");
       return;
@@ -1288,12 +1294,18 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "GET" && p === "/api/files-token") {
-      // Short-lived signed token for header-less media loads (see /files gate).
-      const secret =
-        config.gateway?.auth?.sessionSecret?.trim() || config.gateway?.auth?.apiKey?.trim() || "";
+      const requestUrl = new URL(req.url ?? "", "http://localhost");
+      const path = filesReadPath(requestUrl.searchParams.get("path") ?? "");
+      const secret = personalFileSecret ?? (registrationGateActive
+        ? config.gateway?.auth?.sessionSecret?.trim() : undefined);
+      if (!secret || !path) {
+        res.writeHead(!secret ? 403 : 400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: !secret ? "File tokens unavailable" : "Invalid file path" }));
+        return;
+      }
       const exp = Date.now() + FILES_TOKEN_TTL_MS;
-      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
-      res.end(JSON.stringify({ k: signFilesToken(secret, userId, exp), exp }));
+      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin, "Cache-Control": "no-store" });
+      res.end(JSON.stringify({ k: signFilesToken(secret, userId, exp, path), exp }));
       return;
     }
     if (req.method === "POST" && p === "/chat") {
@@ -1301,8 +1313,30 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       let onRequestAborted: (() => void) | undefined;
       let onResponseClose: (() => void) | undefined;
       let activeSessionId = "";
+      let streamSessionId: string | undefined;
       let auditConfig = config;
       const requestStartMs = Date.now();
+      const openChatStream = (sessionId: string) => {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": corsOrigin,
+          "X-Session-Id": sessionId,
+        });
+        streamSessionId = sessionId;
+      };
+      const formatChatEvent = (payload: Record<string, unknown>) => `data: ${JSON.stringify(payload)}\n\n`;
+      const writeChatEvent = (payload: Record<string, unknown>) => {
+        if (!res.writableEnded && !res.destroyed && !activeRun?.controller.signal.aborted) {
+          res.write(formatChatEvent(payload));
+        }
+      };
+      const finishChatStream = (payload: Record<string, unknown>) => {
+        if (streamSessionId !== undefined && !res.writableEnded && !res.destroyed) {
+          res.end(formatChatEvent({ ...payload, done: true, sessionId: streamSessionId }));
+        }
+      };
       try {
         const body = await parseBody(req, CHAT_BODY_LIMIT_BYTES);
         const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
@@ -1392,16 +1426,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 ? "Команда /allow доступна только администратору (gateway.auth.admins)."
                 : "Команда /allow доступна только администратору (войдите под аккаунтом из gateway.auth.admins).";
               if (useStream) {
-                res.writeHead(200, {
-                  "Content-Type": "text/event-stream",
-                  "Cache-Control": "no-cache",
-                  Connection: "keep-alive",
-                  "Access-Control-Allow-Origin": corsOrigin,
-                  "X-Session-Id": sessionId,
-                });
-                res.write(`data: ${JSON.stringify({ content })}\n\n`);
-                res.write(`data: ${JSON.stringify({ done: true, content, sessionId })}\n\n`);
-                res.end();
+                openChatStream(sessionId);
+                writeChatEvent({ content });
+                finishChatStream({ content });
               } else {
                 res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
                 res.end(JSON.stringify({ content, sessionId }));
@@ -1441,16 +1468,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             ? `✅ Навык «${scriptName}» разрешён и добавлен в skills.allowlist. Теперь его можно запустить.`
             : `Навык «${scriptName}» уже есть в skills.allowlist.`;
           if (useStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "Access-Control-Allow-Origin": corsOrigin,
-              "X-Session-Id": sessionId,
-            });
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
-            res.write(`data: ${JSON.stringify({ done: true, content, sessionId })}\n\n`);
-            res.end();
+            openChatStream(sessionId);
+            writeChatEvent({ content });
+            finishChatStream({ content });
             return;
           }
           res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -1542,12 +1562,6 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const history = limitHistoryForPrompt(historyForLlm, 2 * maxTurns);
         const fullLengthBeforeAppend = fullHistory.length;
         const historyLenForLlm = history.length;
-        const persistPromptSummary = (summary: string, dropCount: number) => {
-          const covered = nextPromptCoveredCount(fullLengthBeforeAppend, historyLenForLlm, dropCount);
-          if (covered <= 0) return;
-          if (chatRepo) chatRepo.setPromptContext(sessionId, userId, summary, covered);
-          else setSessionPromptContext(sessionId, summary, covered);
-        };
         const wrapped = composeWebchatUserPayload(
           message ||
             (pageContext?.text?.trim()
@@ -1599,16 +1613,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const tenantEndpointError = await assertTenantLlmEndpointPublic(config, userId, effectiveConfig);
         if (tenantEndpointError) {
           if (useStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "Access-Control-Allow-Origin": corsOrigin,
-              "X-Session-Id": sessionId,
-            });
-            res.write(`data: ${JSON.stringify({ error: tenantEndpointError, code: "endpoint_not_allowed" })}\n\n`);
-            res.write("data: [DONE]\n\n");
-            res.end();
+            openChatStream(sessionId);
+            finishChatStream({ error: tenantEndpointError, code: "endpoint_not_allowed" });
           } else {
             res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
             res.end(JSON.stringify({ error: tenantEndpointError, code: "endpoint_not_allowed" }));
@@ -1622,16 +1628,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             llmReady.reason ||
             "LLM not configured. Open Settings or complete setup (baseURL + API key).";
           if (useStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "Access-Control-Allow-Origin": corsOrigin,
-              "X-Session-Id": sessionId,
-            });
-            res.write(`data: ${JSON.stringify({ error: errMsg, code: "llm_not_configured" })}\n\n`);
-            res.write("data: [DONE]\n\n");
-            res.end();
+            openChatStream(sessionId);
+            finishChatStream({ error: errMsg, code: "llm_not_configured" });
             return;
           }
           res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -1735,14 +1733,40 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return offer;
         };
 
+        // Both response formats use the same commit path. Do not send a terminal
+        // result until the full turn (including any prompt recap) is durable.
+        const persistTurn = (result: Awaited<ReturnType<typeof runOrchestrator>>) => {
+          const userCells = imageCellsFromUploads(attachedDocuments);
+          const summary = result.summaryForHistory;
+          const coveredCount = nextPromptCoveredCount(
+            fullLengthBeforeAppend, historyLenForLlm, result.summaryDropCount ?? 0
+          );
+          const promptContext = summary != null && coveredCount > 0 ? { summary, coveredCount } : undefined;
+          if (chatRepo) {
+            chatRepo.appendTurn(
+              sessionId,
+              userId,
+              { content: storedUserMessage, meta: cellsToMeta(userCells) },
+              { content: result.content, meta: cellsToMeta(result.cells ?? []) },
+              promptContext
+            );
+          } else {
+            appendToSession(sessionId, "user", storedUserMessage, userOrigin);
+            appendToSession(
+              sessionId,
+              "assistant",
+              result.content,
+              hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
+            );
+            if (promptContext) {
+              setSessionPromptContext(sessionId, promptContext.summary, promptContext.coveredCount);
+            }
+          }
+          return userCells;
+        };
+
         if (useStream) {
-          res.writeHead(200, {
-            "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
-            Connection: "keep-alive",
-            "Access-Control-Allow-Origin": corsOrigin,
-            "X-Session-Id": sessionId,
-          });
+          openChatStream(sessionId);
           try {
             const result = await runOrchestrator({
               config: effectiveConfig,
@@ -1762,74 +1786,28 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               transcript: transcriptAccess,
               onStreamChunk: (chunk) => {
                 throwIfAborted(signal);
-                if (!res.writableEnded && !res.destroyed) {
-                  res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
-                }
+                writeChatEvent({ content: chunk });
               },
-              onSidebarUpdated: () =>
-                !res.writableEnded &&
-                !res.destroyed &&
-                res.write(`data: ${JSON.stringify({ sidebarUpdated: true })}\n\n`),
-              onOpenBrowserUrl: (url) =>
-                !res.writableEnded &&
-                !res.destroyed &&
-                res.write(`data: ${JSON.stringify({ openBrowserUrl: url })}\n\n`),
+              onSidebarUpdated: () => writeChatEvent({ sidebarUpdated: true }),
+              onOpenBrowserUrl: (url) => writeChatEvent({ openBrowserUrl: url }),
               browserPageTextFallback,
               requestBrowserPageText: async () => {
                 const requestId = randomBytes(8).toString("hex");
                 const wait = waitForBrowserPageText(requestId, 18_000, signal);
-                if (!res.writableEnded && !res.destroyed) {
-                  res.write(`data: ${JSON.stringify({ readBrowserPage: { requestId } })}\n\n`);
-                }
+                writeChatEvent({ readBrowserPage: { requestId } });
                 return wait;
               },
               requestHeadlessPageText: async (pageUrl: string) => {
                 const requestId = randomBytes(8).toString("hex");
                 const wait = waitForBrowserPageText(requestId, 20_000, signal);
-                if (!res.writableEnded && !res.destroyed) {
-                  res.write(
-                    `data: ${JSON.stringify({
-                      headlessPageText: { requestId, url: pageUrl },
-                    })}\n\n`
-                  );
-                }
+                writeChatEvent({ headlessPageText: { requestId, url: pageUrl } });
                 return wait;
               },
             });
             throwIfAborted(signal);
             const insightOffer = await resolveInsightOffer();
             throwIfAborted(signal);
-            if (chatRepo) {
-              const userImageCells = imageCellsFromUploads(attachedDocuments);
-              chatRepo.appendMessage(
-                sessionId,
-                userId,
-                "user",
-                storedUserMessage,
-                cellsToMeta(userImageCells)
-              );
-              chatRepo.appendMessage(
-                sessionId,
-                userId,
-                "assistant",
-                result.content,
-                cellsToMeta(result.cells ?? [])
-              );
-              if (result.summaryForHistory != null && result.summaryDropCount != null) {
-                persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
-              }
-            } else {
-              appendToSession(sessionId, "user", storedUserMessage, userOrigin);
-              appendToSession(
-                sessionId,
-                "assistant",
-                result.content,
-                hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
-              );
-              if (result.summaryForHistory != null && result.summaryDropCount != null) {
-                persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
-              }
-            }
+            const userCells = persistTurn(result);
             auditLog(effectiveConfig, {
               type: "chat_turn",
               sessionId,
@@ -1842,22 +1820,16 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 chatModelOverride: chatModel || undefined,
               },
             });
-            if (!res.writableEnded && !res.destroyed) {
-              res.write(
-                `data: ${JSON.stringify({
-                  done: true,
-                  content: result.content,
-                  sessionId,
-                  error: result.error ?? undefined,
-                  lastRunId: result.lastRunId ?? undefined,
-                  cells: result.cells ?? undefined,
-                  userCells: imageCellsFromUploads(attachedDocuments),
-                  contextCompressed: result.contextCompressed,
-                  sidebarUpdated: result.sidebarUpdated,
-                  insightOffer: insightOffer ?? undefined,
-                })}\n\n`
-              );
-            }
+            finishChatStream({
+              content: result.content,
+              error: result.error ?? undefined,
+              lastRunId: result.lastRunId ?? undefined,
+              cells: result.cells ?? undefined,
+              userCells,
+              contextCompressed: result.contextCompressed,
+              sidebarUpdated: result.sidebarUpdated,
+              insightOffer: insightOffer ?? undefined,
+            });
           } catch (streamErr) {
             if (signal.aborted || isAbortError(streamErr)) throw streamErr;
             auditLog(config, {
@@ -1871,13 +1843,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 chatModelOverride: chatModel || undefined,
               },
             });
-            if (!res.writableEnded && !res.destroyed) {
-              res.write(
-                `data: ${JSON.stringify({ done: true, error: String(streamErr), sessionId })}\n\n`
-              );
-            }
+            finishChatStream({ error: String(streamErr) });
           }
-          if (!res.writableEnded && !res.destroyed) res.end();
         } else {
           const openedBrowserUrls: string[] = [];
           const result = await runOrchestrator({
@@ -1905,37 +1872,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           throwIfAborted(signal);
           const insightOffer = await resolveInsightOffer();
           throwIfAborted(signal);
-          if (chatRepo) {
-            const userImageCells = imageCellsFromUploads(attachedDocuments);
-            chatRepo.appendMessage(
-              sessionId,
-              userId,
-              "user",
-              storedUserMessage,
-              cellsToMeta(userImageCells)
-            );
-            chatRepo.appendMessage(
-              sessionId,
-              userId,
-              "assistant",
-              result.content,
-              cellsToMeta(result.cells ?? [])
-            );
-            if (result.summaryForHistory != null && result.summaryDropCount != null) {
-              persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
-            }
-          } else {
-            appendToSession(sessionId, "user", storedUserMessage, userOrigin);
-            appendToSession(
-              sessionId,
-              "assistant",
-              result.content,
-              hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
-            );
-            if (result.summaryForHistory != null && result.summaryDropCount != null) {
-              persistPromptSummary(result.summaryForHistory, result.summaryDropCount);
-            }
-          }
+          const userCells = persistTurn(result);
           auditLog(config, {
             type: "chat_turn",
             sessionId,
@@ -1961,7 +1898,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 error: result.error ?? undefined,
                 lastRunId: result.lastRunId ?? undefined,
                 cells: result.cells ?? undefined,
-                userCells: imageCellsFromUploads(attachedDocuments),
+                userCells,
                 contextCompressed: result.contextCompressed,
                 sidebarUpdated: result.sidebarUpdated,
                 openBrowserUrls: openedBrowserUrls.length ? openedBrowserUrls : undefined,
@@ -1983,7 +1920,13 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               durationMs: Date.now() - requestStartMs,
             },
           });
-          if (!res.writableEnded && !res.destroyed) res.end();
+          if (streamSessionId !== undefined) {
+            finishChatStream({ error: "Chat cancelled", code: "chat_cancelled" });
+          } else if (!res.writableEnded && !res.destroyed) {
+            res.end();
+          }
+        } else if (streamSessionId !== undefined) {
+          finishChatStream({ error: String(err) });
         } else if (!res.headersSent) {
           res.writeHead(500, { "Content-Type": JSON_TYPE });
           res.end(JSON.stringify({ error: String(err) }));
@@ -4339,29 +4282,17 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       return;
     }
     if (req.method === "GET" && p.startsWith("/files/")) {
-      let rel: string;
-      try {
-        rel = decodeURIComponent(p.slice(7)).replace(/^\/+/, "").replace(/\.\./g, "");
-      } catch {
-        res.writeHead(400, { "Content-Type": TEXT_TYPE });
-        res.end("Bad Request");
-        return;
-      }
-      const segments = rel.split("/").filter(Boolean);
-      if (segments.length === 0 || !DOWNLOAD_ALLOWED_SUBDIRS.includes(segments[0])) {
+      const rel = filePath;
+      if (!rel) {
         res.writeHead(403, { "Content-Type": TEXT_TYPE });
         res.end("Forbidden");
         return;
       }
-      // Header-less media loads authenticate via the signed token (k):
-      // browser <img>/<audio>/<a> cannot send API-key/JWT headers. Auth-off
-      // single-owner deployments (no secret to sign with) stay open as before.
-      if (authEffective || registrationGateActive) {
-        const filesUrl = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
-        const k = filesUrl.searchParams.get("k") ?? "";
-        const filesSecret =
-          config.gateway?.auth?.sessionSecret?.trim() || config.gateway?.auth?.apiKey?.trim() || "";
-        if (!verifyFilesToken(filesSecret, k)) {
+      const segments = rel.split("/");
+      if (registrationGateActive) {
+        const k = new URLSearchParams(req.url?.split("?", 2)[1]).get("k") ?? "";
+        const secret = config.gateway?.auth?.sessionSecret?.trim() ?? "";
+        if (verifyFilesToken(secret, k, rel)?.userId !== userId) {
           res.writeHead(401, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end("Unauthorized");
           return;
@@ -4402,37 +4333,40 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           webp: "image/webp",
           svg: "image/svg+xml",
         };
+        const avTypes: Record<string, string> = {
+          mp3: "audio/mpeg", wav: "audio/wav", ogg: "audio/ogg", m4a: "audio/mp4",
+          aac: "audio/aac", flac: "audio/flac", mp4: "video/mp4", webm: "video/webm",
+          mov: "video/quicktime",
+        };
         const ct =
           ext === "docx"
             ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : ext === "pdf"
               ? "application/pdf"
-              : imageTypes[ext] ?? "application/octet-stream";
+              : (Object.hasOwn(imageTypes, ext) ? imageTypes[ext] : undefined) ??
+                (Object.hasOwn(avTypes, ext) ? avTypes[ext] : undefined) ?? "application/octet-stream";
         const name = segments[segments.length - 1] ?? "download";
         // SVG can carry scripts: it always downloads instead of rendering on
         // the gateway origin (stored-XSS closure); nosniff + sandbox CSP for
         // the whole /files/ surface.
-        const isImage = ext in imageTypes && ext !== "svg";
+        const inline = (Object.hasOwn(imageTypes, ext) && ext !== "svg") || Object.hasOwn(avTypes, ext);
         const forceDownload =
           typeof req.url === "string" &&
           new URL(req.url, "http://localhost").searchParams.get("download") === "1";
+        const data = readFileSync(fullPath, {
+          flag: noFollowFlag(fsConstants.O_RDONLY) as unknown as string,
+        });
         res.writeHead(200, {
           "Content-Type": ct,
           "Content-Disposition":
-            isImage && !forceDownload
-              ? "inline"
-              : `attachment; filename="${name.replace(/"/g, "%22")}"`,
+            inline && !forceDownload ? "inline" : contentDispositionAttachment(name),
           "X-Content-Type-Options": "nosniff",
           "Content-Security-Policy": "sandbox",
+          "Cache-Control": "private, no-store",
+          "Referrer-Policy": "no-referrer",
           "Access-Control-Allow-Origin": corsOrigin,
         });
-        res.end(
-          readFileSync(fullPath, {
-            // Numeric open flags are valid at runtime (stringToFlags); the
-            // @types/node overload only admits strings — cast documented.
-            flag: noFollowFlag(fsConstants.O_RDONLY) as unknown as string,
-          })
-        );
+        res.end(data);
       } catch {
         res.writeHead(500, { "Content-Type": TEXT_TYPE });
         res.end("Error");

@@ -20,7 +20,8 @@ import { useT } from "../i18n";
 import { markdownComponents } from "./markdownComponents";
 import { ChartCell } from "./ChartCell";
 import { resolveAssistantDisplay, type DisplayCell } from "../lib/messageCells";
-import { renderCellSegments, resolveMediaSrc } from "../lib/cellRender";
+import { renderCellSegments, useMediaSrc } from "../lib/cellRender";
+import { sanitizeCellHtml } from "../lib/cellSanitize";
 import { IMAGE_DELETED_CELL_TYPE } from "../lib/galleryActions";
 import { apiBase } from "../config";
 import { IconBrightness, IconArrowUp, IconArrowDown, IconExternalLink } from "./icons";
@@ -70,6 +71,8 @@ function writeOverlayTone(value: number): void {
 }
 
 function OverlayCell({ cell }: { cell: DisplayCell }) {
+  const isMedia = cell.type === "image" || cell.type === "audio" || cell.type === "video";
+  const url = useMediaSrc(isMedia ? cell.content ?? "" : "", apiBase);
   if (cell.type === "chart") {
     return (
       <div className="chat-cell">
@@ -80,14 +83,13 @@ function OverlayCell({ cell }: { cell: DisplayCell }) {
   if (cell.type === "html") {
     return (
       <div className="chat-cell">
-        <div className="chat-cell-html" dangerouslySetInnerHTML={{ __html: cell.content }} />
+        <div className="chat-cell-html" dangerouslySetInnerHTML={{ __html: sanitizeCellHtml(cell.content ?? "") }} />
       </div>
     );
   }
   if (cell.type === IMAGE_DELETED_CELL_TYPE) {
     return <div className="chat-cell-media-fallback">—</div>;
   }
-  const url = resolveMediaSrc((cell.content ?? "").trim(), apiBase);
   if (!url) return null;
   if (cell.type === "audio") {
     return (

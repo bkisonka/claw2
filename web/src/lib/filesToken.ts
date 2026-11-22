@@ -1,60 +1,71 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-/**
- * Signed-token access for /files: browser media loads (<img>/<audio>/<a>)
- * cannot send API-key/JWT headers, so the gateway issues a short-lived HMAC
- * token (GET /api/files-token) that authenticated clients append to /files
- * URLs (query param k). The token is cached and refreshed at ~2/3 TTL.
- * Signing is synchronous from cache: the first render of a session may use an
- * unsigned URL (401 → media retry logic re-renders once the token arrives).
- */
+import { useEffect, useSyncExternalStore } from "react";
 import { apiBase, apiKey } from "../config";
-import { getAuthHeaders } from "../auth/storage";
+import { onStoredTokenChange } from "../auth/storage";
+import { isGatewayFilesUrl } from "./gatewayUrl";
+import { createFileGrantCache } from "./fileGrantCache";
 
-interface FilesToken {
-  k: string;
-  exp: number;
-}
-
-let cached: FilesToken | null = null;
-let inflight: Promise<string> | null = null;
-
-function authedHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { ...getAuthHeaders() };
-  if (apiKey && !headers["Authorization"]) headers["Authorization"] = `Bearer ${apiKey}`;
-  if (apiKey) headers["X-API-Key"] = apiKey;
-  return headers;
-}
-
-async function fetchToken(): Promise<string> {
-  const res = await fetch(`${apiBase}/api/files-token`, { headers: authedHeaders() });
+// Only the personal gateway uses grants for requests without headers.
+const grants = createFileGrantCache(async (path) => {
+  const query = new URLSearchParams({ path });
+  const res = await fetch(`${apiBase}/api/files-token?${query}`, {
+    headers: apiKey ? { "X-API-Key": apiKey } : {},
+    cache: "no-store",
+    redirect: "error",
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const data = (await res.json()) as { k?: string; exp?: number };
-  if (!data.k || typeof data.exp !== "number") throw new Error("bad token payload");
-  cached = { k: data.k, exp: data.exp };
-  return cached.k;
+  const { k, exp } = await res.json() as { k?: string; exp?: number };
+  if (!k || typeof exp !== "number") throw new Error("Invalid file grant");
+  return { k, exp };
+});
+
+export const clearFilesToken = grants.clear;
+onStoredTokenChange(clearFilesToken);
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === "claw2_token" || event.key === null) clearFilesToken();
+  });
 }
 
-/** Current token, refetching in the background when missing/stale. Sync value only. */
-export function currentFilesToken(): string | null {
-  const now = Date.now();
-  if (cached && cached.exp - now > 3 * 60_000) return cached.k;
-  if (!inflight) {
-    inflight = fetchToken()
-      .catch(() => "")
-      .finally(() => {
-        inflight = null;
-      });
-  }
-  return cached && cached.exp > now ? cached.k : null;
+function grantUrl(raw: string): URL | null {
+  const page = typeof window === "undefined" ? undefined : window.location.href;
+  if (!page || !apiKey) return null;
+  let base: URL;
+  try { base = new URL(apiBase || page, page); } catch { return null; }
+  // Resolve against the page, exactly as the element will; relative URLs may
+  // otherwise be mistaken for gateway URLs in a split-origin deployment.
+  if (!isGatewayFilesUrl(raw, base.origin, page)) return null;
+  return new URL(raw, page);
 }
 
-/** Append the token to a /files URL (other URLs pass through untouched). */
-export function signFilesUrl(url: string): string {
-  if (!url || !url.includes("/files/")) return url;
-  const k = currentFilesToken();
-  if (!k) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}k=${encodeURIComponent(k)}`;
+function applyGrant(url: URL, k: string): string {
+  url.searchParams.set("k", k);
+  return url.href;
+}
+
+export function signFilesUrl(raw: string): string {
+  const url = grantUrl(raw);
+  const grant = url && grants.peek(url.pathname);
+  return url && grant ? applyGrant(url, grant.k) : raw;
+}
+
+/** Refresh after mount; keep long-lived previews and gallery URLs usable. */
+export function useFileGrantUrls(urls: string[]): void {
+  useSyncExternalStore(grants.subscribe, grants.snapshot, grants.snapshot);
+  const pathKey = JSON.stringify([...new Set(urls.map((raw) => grantUrl(raw)?.pathname).filter(Boolean))]);
+  useEffect(() => {
+    const paths = JSON.parse(pathKey) as string[];
+    if (!paths.length) return;
+    const refresh = () => { for (const path of paths) void grants.get(path); };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [pathKey]);
+}
+
+export function useSignedFilesUrl(raw: string): string {
+  useFileGrantUrls([raw]);
+  return signFilesUrl(raw);
 }

@@ -126,7 +126,7 @@ model provider and whatever the agent fetches on your behalf.
 - An API key for any OpenAI-compatible provider — a cloud service or a
   local server such as LM Studio or Ollama.
 
-Building from source without Docker requires Node.js 20 or newer.
+Building from source without Docker requires Node.js 22.13 or newer (CI uses Node.js 22).
 
 ## Configuration
 
@@ -239,12 +239,11 @@ with your own, its local `node_modules` (if present) takes precedence.
   guard-proxy sidecar is the container's only way out. Everything a skill
   sends (`fetch`/`http`/`https`, and any raw socket too) passes the same
   SSRF rules as `web_fetch`: loopback, private, link-local and metadata
-  destinations are refused and logged. Softening — running skills inside
-  the gateway container (`sandbox.useDocker: false`) or dropping the guard
-  (`sandbox.egress.mode: off`) — is possible but documented as an explicit,
-  at-your-own-risk change: without the sandbox tier, standard HTTP stacks
-  are still guarded, while a skill speaking raw TLS over `node:net` is a
-  known gap.
+  destinations are refused and logged. Running skills inside the gateway
+  (`sandbox.useDocker: false`) keeps guarding standard HTTP stacks but does
+  not isolate raw sockets. Setting `sandbox.egress.mode: off` disables egress
+  guarding; with `sandbox.useDocker: true` this is only supported on a direct
+  Docker daemon, not through the Compose Docker API guard.
 - **Validated docker access.** The gateway talks to the host docker only
   through a validating API guard (`src/sandbox/docker-guard.ts`, a separate
   container with read-only docker.sock on an internal network). Beyond an
@@ -252,8 +251,9 @@ with your own, its local `node_modules` (if present) takes precedence.
   probes — no exec, build, volumes or swarm), every container creation is
   structurally validated: the hardening profile is mandatory (no
   capabilities, no privilege escalation, read-only rootfs), privilege
-  widening is refused, bind sources must sit inside the sandbox roots, and
-  containers/networks must be claw2-named. The docker socket itself is
+  widening is refused, and bind sources must sit inside the sandbox roots.
+  Skills must join the named internal bridge; only the egress sidecar is
+  allowed on the separate upstream bridge. The Docker socket itself is
   never mounted into the gateway; skill code, including model-written
   skills, never gets any of this access.
 - **Verified identity.** Vision-based recognition ("who is at the camera")

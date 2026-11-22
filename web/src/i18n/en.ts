@@ -898,7 +898,7 @@ export const en = {
   "settings.codingModel": "Coding model",
   "settings.coding": "Skill coding (parent / subagents)",
   "settings.codingHint":
-    "How many parallel coding subagents run per code_skill call (minimum 1, default 3). Each candidate gets a smoke run_agent; accept one via accept_skill. No nested subagents.",
+    "How many parallel coding subagents run per code_skill call (minimum 1, default 3). Candidates are checked without executing; accept one via accept_skill. No nested subagents.",
   "settings.codingTokenWarning":
     "Higher values increase token usage (and cost) roughly in proportion to the number of candidates.",
   "settings.maxSubagents": "Parallel subagents (candidates)",

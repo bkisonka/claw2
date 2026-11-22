@@ -7,6 +7,7 @@ import { fetchMe, login as apiLogin, register as apiRegister, logout as apiLogou
 import { getToken, setToken } from "../auth/storage";
 import { apiBase } from "../config";
 import { isSingleUserClient } from "../lib/singleUser";
+import { clearFilesToken } from "../lib/filesToken";
 import { t } from "../i18n";
 
 export type AuthMode = "auth" | "no-auth" | "unknown";
@@ -131,14 +132,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     if (isSingleUserClient()) {
+      clearFilesToken();
       setToken(null);
       setUser(null);
       setAuthMode("no-auth");
       return;
     }
-    await apiLogout();
-    setToken(null);
-    setUser(null);
+    try {
+      await apiLogout();
+    } finally {
+      // Local session must end even if the request failed; the cached file
+      // token belongs to the signed-out identity and is dropped with it.
+      clearFilesToken();
+      setToken(null);
+      setUser(null);
+    }
   }, []);
 
   const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
@@ -146,6 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error(t("auth.singleUserNoAccounts"));
     }
     await apiChangePassword(currentPassword, newPassword);
+    clearFilesToken();
   }, []);
 
   const value: AuthContextValue = {

@@ -9,8 +9,13 @@ import { remindersGetDue, reminderMarkSent } from "../tasks/store.js";
 import { sendNotifyToOwner } from "../channels/telegram.js";
 
 const TICK_MS = 60_000;
+let running = false;
 
 async function runReminders(config: Claw2Config): Promise<void> {
+  // The startup tick and interval share one in-flight batch in this gateway.
+  // Don't read due rows again until the previous sends have been recorded.
+  if (running) return;
+  running = true;
   try {
     const due = remindersGetDue(config);
     if (due.length > 0) {
@@ -20,13 +25,15 @@ async function runReminders(config: Claw2Config): Promise<void> {
       const message = `Reminder:${r.taskText}`;
       const result = await sendNotifyToOwner(config, message);
       if (result.ok) {
-        reminderMarkSent(config, r.id);
+        reminderMarkSent(config, r);
       } else {
         console.error("[scheduler] reminder send failed:", r.id, result.error);
       }
     }
   } catch (err) {
     console.error("[scheduler] reminders error:", err);
+  } finally {
+    running = false;
   }
 }
 

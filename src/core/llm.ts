@@ -110,7 +110,7 @@ export const CODE_SKILL_TOOL: OpenAI.Chat.ChatCompletionTool = {
   function: {
     name: "code_skill",
     description:
-      "ONLY when the user explicitly asked to create/rewrite a skill. Spawns coding subagent(s) for agents/<script>. Prefer existing run_agent catalog skills otherwise. Returns runId + smoke; then accept_skill.",
+      "ONLY when the user explicitly asked to create/rewrite a skill. Spawns coding subagent(s) for agents/<script>. Prefer existing run_agent catalog skills otherwise. Returns candidate previews and static validation; does not execute drafts. Then accept_skill.",
     parameters: {
       type: "object",
       properties: {
@@ -118,11 +118,6 @@ export const CODE_SKILL_TOOL: OpenAI.Chat.ChatCompletionTool = {
         task: {
           type: "string",
           description: "What the skill must do (inputs argv/stdin, outputs, constraints). Not raw code.",
-        },
-        smokeArgs: {
-          type: "array",
-          items: { type: "string" },
-          description: "Optional argv for smoke run_agent after each candidate writes",
         },
       },
       required: ["script", "task"],

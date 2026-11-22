@@ -282,6 +282,7 @@ export async function sendMessageStream(
       error: data.error,
       lastRunId: data.lastRunId,
       cells: data.cells,
+      userCells: data.userCells,
       contextCompressed: data.contextCompressed,
       sidebarUpdated: data.sidebarUpdated,
       insightOffer: data.insightOffer ?? null,
@@ -291,75 +292,70 @@ export async function sendMessageStream(
   if (!reader) throw new Error("No response body");
   const decoder = new TextDecoder();
   let buffer = "";
-  let final: ChatResponse = { content: "", sessionId: sessionId ?? "" };
+  let skipLeadingLf = false;
+  let eventLines: string[] = [];
+  type ChatEvent = Partial<ChatResponse> & {
+    done?: boolean;
+    openBrowserUrl?: string;
+    readBrowserPage?: { requestId?: string };
+    headlessPageText?: { requestId?: string; url?: string };
+  };
+  const trimmedString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
+      if (done) throw new Error("Chat stream interrupted before a final response");
+      const text = decoder.decode(value, { stream: true });
+      if (!text) continue;
+      buffer += skipLeadingLf && text.startsWith("\n") ? text.slice(1) : text;
+      // SSE permits LF, CRLF, or CR, including CRLF split across network chunks.
+      skipLeadingLf = text.endsWith("\r");
+      const lines = buffer.split(/\r\n|\r|\n/);
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.startsWith("data: ")) {
-          const raw = line.slice(6).trim();
-          if (raw === "[DONE]" || !raw) continue;
-          try {
-            const data = JSON.parse(raw) as {
-              content?: string;
-              done?: boolean;
-              sessionId?: string;
-              error?: string;
-              lastRunId?: number;
-              cells?: ChatCell[];
-              userCells?: ChatCell[];
-              contextCompressed?: number;
-              sidebarUpdated?: boolean;
-              openBrowserUrl?: string;
-              readBrowserPage?: { requestId?: string };
-              headlessPageText?: { requestId?: string; url?: string };
-              insightOffer?: InsightOfferApi | null;
-            };
-            if (data.content != null && data.done !== true) {
-              onChunk(data.content);
-            }
-            if (data.sidebarUpdated === true && data.done !== true) {
-              onSidebarUpdated?.();
-            }
-            if (typeof data.openBrowserUrl === "string" && data.openBrowserUrl.trim()) {
-              onOpenBrowserUrl?.(data.openBrowserUrl.trim());
-            }
-            const readReqId = data.readBrowserPage?.requestId?.trim();
-            if (readReqId) {
-              onReadBrowserPage?.(readReqId);
-            }
-            const headlessReqId = data.headlessPageText?.requestId?.trim();
-            const headlessUrl = data.headlessPageText?.url?.trim();
-            if (headlessReqId && headlessUrl) {
-              onHeadlessPageText?.(headlessReqId, headlessUrl);
-            }
-            if (data.done === true) {
-              final = {
-                content: data.content ?? final.content,
-                sessionId: data.sessionId ?? final.sessionId,
-                error: data.error,
-                lastRunId: data.lastRunId,
-                cells: data.cells,
-                userCells: data.userCells,
-                contextCompressed: data.contextCompressed,
-                sidebarUpdated: data.sidebarUpdated,
-                insightOffer: data.insightOffer ?? null,
-              };
-            }
-          } catch {
-            // skip malformed line
-          }
+        if (line.startsWith("data:")) {
+          eventLines.push(line.slice(5).replace(/^ /, ""));
         }
+        if (line !== "" || !eventLines.length) continue;
+        const raw = eventLines.join("\n");
+        eventLines = [];
+        let data: ChatEvent;
+        try {
+          data = JSON.parse(raw) as ChatEvent;
+        } catch {
+          // Ignore malformed events and the legacy [DONE] marker. A complete JSON terminal is required.
+          continue;
+        }
+        if (!data || typeof data !== "object") continue;
+        if (data.done === true) {
+          return {
+            content: data.content ?? "",
+            sessionId: data.sessionId ?? sessionId ?? "",
+            error: data.error,
+            lastRunId: data.lastRunId,
+            cells: data.cells,
+            userCells: data.userCells,
+            contextCompressed: data.contextCompressed,
+            sidebarUpdated: data.sidebarUpdated,
+            insightOffer: data.insightOffer ?? null,
+          };
+        }
+        if (typeof data.content === "string") onChunk(data.content);
+        if (data.sidebarUpdated === true) onSidebarUpdated?.();
+        const openUrl = trimmedString(data.openBrowserUrl);
+        if (openUrl) onOpenBrowserUrl?.(openUrl);
+        const readReqId = trimmedString(data.readBrowserPage?.requestId);
+        if (readReqId) onReadBrowserPage?.(readReqId);
+        const headlessReqId = trimmedString(data.headlessPageText?.requestId);
+        const headlessUrl = trimmedString(data.headlessPageText?.url);
+        if (headlessReqId && headlessUrl) onHeadlessPageText?.(headlessReqId, headlessUrl);
       }
     }
   } finally {
+    // The terminal event, not EOF, completes the reply; stop consuming once it arrives.
+    void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
-  return final;
 }
 
 function chatHeaders(): Record<string, string> {
@@ -688,7 +684,9 @@ export function fileDownloadUrl(pathOrUrl: string): string {
 
 /** Download a file (blob + a.download — more reliable than inline Content-Disposition). */
 export async function downloadChatFile(pathOrUrl: string, filename: string): Promise<void> {
-  const res = await fetch(fileDownloadUrl(pathOrUrl), { headers: getAuthHeaders() });
+  const res = await fetch(fileDownloadUrl(pathOrUrl), {
+    headers: { ...getAuthHeaders(), ...(apiKey ? { "X-API-Key": apiKey } : {}) },
+  });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const blob = await res.blob();
   const objectUrl = URL.createObjectURL(blob);

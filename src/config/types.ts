@@ -564,7 +564,7 @@ export interface Claw2Config {
   coding?: {
     /** How many candidate implementations to generate in parallel (default 3, minimum 1). */
     maxSubagents?: number;
-    /** Optional default argv for post-write smoke run_agent. */
+    /** @deprecated Retained for compatibility; code_skill no longer executes drafts. */
     smokeArgs?: string[];
   };
   /** Legacy skill evolution — postponed; kept for older configs / server. Prefer coding.*. */

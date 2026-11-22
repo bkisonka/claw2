@@ -1143,11 +1143,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         if (tc.function?.name === "code_skill") {
           const script = String(args.script ?? "");
           const task = String(args.task ?? "");
-          const smokeArgs = Array.isArray(args.smokeArgs)
-            ? args.smokeArgs.map((a) => String(a))
-            : undefined;
           try {
-            const result = await runCodeSkill(config, { script, task, smokeArgs });
+            const result = await runCodeSkill(config, { script, task });
             toolResults.push({
               id: tc.id!,
               content: result.ok ? result.message : `Error: ${result.message}`,

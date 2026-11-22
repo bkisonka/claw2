@@ -37,10 +37,18 @@ const DOCKER_METHODS = new Set(["GET", "POST", "DELETE", "HEAD"]);
  * killing, reading logs of, or attaching to OTHER containers on the host
  * (co-tenant databases, the proxy itself...).
  */
-const SEG = "[A-Za-z0-9][A-Za-z0-9_.-]*";
 /** Image references carry registry/repo:tag (node:20-alpine, ghcr.io/x/y:z). */
 const IMG_SEG = "[A-Za-z0-9][A-Za-z0-9_./:-]*";
 const CLAW2_SEG = "claw2[A-Za-z0-9_.-]*";
+const AGENT_NAME = /^claw2-agent-[A-Za-z0-9_.-]+$/;
+export const SKILL_EGRESS_NETWORK = "claw2-skill-egress";
+export const SIDECAR_UPSTREAM_NETWORK = "claw2-egress-upstream";
+export const EGRESS_SIDECAR_NAME = "claw2-egress-sidecar";
+type EgressNetwork = typeof SKILL_EGRESS_NETWORK | typeof SIDECAR_UPSTREAM_NETWORK;
+
+function isEgressNetwork(name: unknown): name is EgressNetwork {
+  return name === SKILL_EGRESS_NETWORK || name === SIDECAR_UPSTREAM_NETWORK;
+}
 
 /**
  * Endpoints the claw2 skill sandbox legitimately uses via the docker CLI
@@ -50,6 +58,7 @@ const CLAW2_SEG = "claw2[A-Za-z0-9_.-]*";
  */
 const ALLOWED_ENDPOINTS: { method: string; re: RegExp }[] = [
   { method: "GET", re: /^\/_ping$/ },
+  { method: "HEAD", re: /^\/_ping$/ },
   { method: "GET", re: /^\/version$/ },
   { method: "GET", re: new RegExp(`^\\/images\\/${IMG_SEG}\\/json$`) },
   { method: "POST", re: /^\/images\/create$/ },
@@ -59,10 +68,8 @@ const ALLOWED_ENDPOINTS: { method: string; re: RegExp }[] = [
   { method: "POST", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}\\/(start|wait|kill|attach)$`) },
   { method: "DELETE", re: new RegExp(`^\\/containers\\/${CLAW2_SEG}$`) },
   { method: "GET", re: /^\/networks$/ },
-  { method: "GET", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}$`) },
+  { method: "GET", re: /^\/networks\/(claw2-skill-egress|claw2-egress-upstream)$/ },
   { method: "POST", re: /^\/networks\/create$/ },
-  { method: "POST", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}\\/(connect|disconnect)$`) },
-  { method: "DELETE", re: new RegExp(`^\\/networks\\/${CLAW2_SEG}$`) },
 ];
 
 /** Strip the docker API version prefix (/v1.47/containers/... → /containers/...). */
@@ -86,6 +93,55 @@ function isNonEmptyArray(v: unknown): v is unknown[] {
   return Array.isArray(v) && v.length > 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function hasNonCanonicalField(body: Record<string, unknown>, ...canonical: string[]): boolean {
+  return Object.keys(body).some((key) => canonical.some((field) => key !== field && key.toLowerCase() === field.toLowerCase()));
+}
+
+function validateContainerNetworks(
+  body: Record<string, unknown>,
+  hostConfig: Record<string, unknown>,
+  name: string,
+): ContainerCreateCheck {
+  if (hasNonCanonicalField(body, "HostConfig", "NetworkingConfig") || hasNonCanonicalField(hostConfig, "NetworkMode")) {
+    return { ok: false, error: "invalid network configuration field names" };
+  }
+  // The CLI uses the skill network as the primary network for both roles.
+  if (hostConfig.NetworkMode !== SKILL_EGRESS_NETWORK) {
+    return { ok: false, error: `NetworkMode must be ${SKILL_EGRESS_NETWORK}` };
+  }
+  const networking = body.NetworkingConfig;
+  if (networking != null && (!isRecord(networking) || hasNonCanonicalField(networking, "EndpointsConfig"))) {
+    return { ok: false, error: "invalid NetworkingConfig" };
+  }
+  const endpoints = networking?.EndpointsConfig;
+  if (endpoints != null && !isRecord(endpoints)) {
+    return { ok: false, error: "invalid EndpointsConfig" };
+  }
+  const hasUpstream = name === EGRESS_SIDECAR_NAME;
+  const names = Object.keys(endpoints ?? {});
+  if (names.some((net) => net !== SKILL_EGRESS_NETWORK && (!hasUpstream || net !== SIDECAR_UPSTREAM_NETWORK))) {
+    return { ok: false, error: "network attachment is not allowed for this container role" };
+  }
+  if (hasUpstream && (!names.includes(SKILL_EGRESS_NETWORK) || !names.includes(SIDECAR_UPSTREAM_NETWORK))) {
+    return { ok: false, error: "egress sidecar must join both egress networks" };
+  }
+  // A single-network CLI create can send an empty EndpointsConfig and rely
+  // on NetworkMode. If an endpoint includes a network ID, do not accept it
+  // in place of the approved network name.
+  for (const net of names) {
+    const endpoint = endpoints?.[net];
+    if (!isRecord(endpoint) || hasNonCanonicalField(endpoint, "NetworkID") ||
+        (endpoint.NetworkID != null && endpoint.NetworkID !== "")) {
+      return { ok: false, error: "network endpoints must use the approved names, not network IDs" };
+    }
+  }
+  return { ok: true };
+}
+
 /** Validate one bind spec ("src:dst[:opts]") against the sandbox roots. */
 function checkBind(
   bind: string,
@@ -102,12 +158,18 @@ function checkBind(
   if (!dst.startsWith("/app/") && dst !== "/sidecar.cjs") {
     return `bind target must be /app/** or /sidecar.cjs: "${bind}"`;
   }
-  // Docker mounts a bind WITHOUT options read-write; read-write is reserved
-  // for the sandbox output mount (dst === /app/output) — anything else that
-  // omitss opts (or explicitly carries rw) is rejected.
-  const ro = opts === "" || opts.split(",").includes("ro");
-  if (!ro && dst !== "/app/output") {
-    return `binds must be read-only except the /app/output mount: "${bind}"`;
+  // Docker mounts a bind WITHOUT a mode option READ-WRITE ("src:/dst" is rw),
+  // so the mode must be explicit: every bind except the sandbox output mount
+  // (dst === /app/output) must carry "ro" and must not carry "rw". Mount
+  // propagation that could leak host mounts (shared/rshared) is refused too.
+  const flags = opts === "" ? [] : opts.split(",").map((f) => f.trim()).filter(Boolean);
+  if (flags.includes("shared") || flags.includes("rshared")) {
+    return `bind mount propagation (shared/rshared) is not allowed: "${bind}"`;
+  }
+  const isRo = flags.includes("ro");
+  const isRw = flags.includes("rw");
+  if (dst !== "/app/output" && (!isRo || isRw)) {
+    return `binds must explicitly mount read-only ("...:ro") except the /app/output mount: "${bind}"`;
   }
   if (
     !allowedSrcPrefixes.some((p) => {
@@ -132,18 +194,18 @@ function isContainerNamespaceValue(v: unknown): boolean {
  */
 export function validateContainerCreateBody(
   body: unknown,
-  allowedSrcPrefixes: string[]
+  allowedSrcPrefixes: string[],
+  name: string | null,
 ): ContainerCreateCheck {
-  if (!body || typeof body !== "object") return { ok: false, error: "container create body required" };
-  const b = body as Record<string, unknown>;
-  const hc = (b.HostConfig ?? {}) as Record<string, unknown>;
+  if (!isRecord(body) || !isRecord(body.HostConfig)) {
+    return { ok: false, error: "container create body and HostConfig required" };
+  }
+  const b = body;
+  const hc = body.HostConfig;
 
-  // Container identity: sandbox containers are claw2-named (name is also
-  // spoofable via ?name= — see the endpoint guard; a non-claw2 name would
-  // squat co-tenant names on the daemon).
-  const name = typeof b.Name === "string" ? b.Name : "";
-  if (name && !name.startsWith("claw2")) {
-    return { ok: false, error: "container name must start with 'claw2'" };
+  // Docker gets the name from the create URL, not the request body.
+  if (!name || (name !== EGRESS_SIDECAR_NAME && !AGENT_NAME.test(name))) {
+    return { ok: false, error: "container name must identify a skill or the egress sidecar" };
   }
 
   // Mandatory hardening profile (both gateway-created containers set these).
@@ -203,22 +265,8 @@ export function validateContainerCreateBody(
   if (sysctls && typeof sysctls === "object" && Object.keys(sysctls).length > 0) {
     return { ok: false, error: "sysctls are not allowed" };
   }
-  // Networks at create time: the docker CLI sends NetworkingConfig for multi
-  // --network runs. Every endpoint must be a claw2-scoped network — a bridge /
-  // co-tenant / control network here would bypass the --internal egress
-  // isolation (and could put a sandbox container onto sandbox-control).
-  const networking = b.NetworkingConfig as { EndpointsConfig?: unknown } | undefined;
-  const endpoints = networking?.EndpointsConfig;
-  if (endpoints && typeof endpoints === "object") {
-    const names = Array.isArray(endpoints)
-      ? (endpoints as { Network?: unknown }[]).map((e) => e?.Network)
-      : Object.keys(endpoints as Record<string, unknown>);
-    for (const net of names) {
-      if (typeof net !== "string" || !net.startsWith("claw2")) {
-        return { ok: false, error: `network attachment "${String(net)}" must be a claw2 network` };
-      }
-    }
-  }
+  const networks = validateContainerNetworks(b, hc, name);
+  if (!networks.ok) return networks;
 
   // Binds: source inside the declared sandbox roots, target under /app.
   const binds = Array.isArray(hc.Binds) ? (hc.Binds as string[]) : [];
@@ -246,30 +294,70 @@ export interface DockerGuardServerOptions {
   onReject?: (detail: string) => void;
 }
 
-/**
- * Body checks for the remaining sandbox POSTs: networks must be claw2-owned
- * bridge networks and may only connect claw2-owned containers.
- */
 export function validateNetworkCreateBody(body: unknown): ContainerCreateCheck {
-  const b = (body ?? {}) as { Name?: unknown; Driver?: unknown };
-  if (typeof b.Name !== "string" || !b.Name.startsWith("claw2")) {
-    return { ok: false, error: "network name must start with 'claw2'" };
+  if (!isRecord(body) || !isEgressNetwork(body.Name)) {
+    return { ok: false, error: "network name must be one of the two egress networks" };
   }
-  // macvlan/host drivers put the network on a host interface — the sandbox
-  // contract is plain bridge networks only.
-  if (typeof b.Driver === "string" && b.Driver !== "bridge") {
-    return { ok: false, error: `network driver "${b.Driver}" is not allowed` };
+  if (body.Driver !== "bridge" || body.Internal !== (body.Name === SKILL_EGRESS_NETWORK)) {
+    return { ok: false, error: `${body.Name} requires bridge driver and Internal=${body.Name === SKILL_EGRESS_NETWORK}` };
+  }
+  // Accept the plain Docker CLI bridge profile, not network-driver options
+  // or alternate network types. Reject differently cased fields too, since
+  // Docker decodes Go struct field names case-insensitively.
+  const fields = new Set([
+    "Name", "Driver", "Internal", "Scope", "IPAM", "Attachable", "Ingress", "ConfigOnly",
+    "ConfigFrom", "Options", "Labels", "EnableIPv4", "EnableIPv6", "CheckDuplicate",
+  ]);
+  const emptyObject = (value: unknown) => value == null || (isRecord(value) && Object.keys(value).length === 0);
+  const ipam = body.IPAM;
+  if (Object.keys(body).some((key) => !fields.has(key)) ||
+      (body.Scope != null && body.Scope !== "" && body.Scope !== "local") ||
+      [body.Attachable, body.Ingress, body.ConfigOnly].some((value) => value != null && value !== false) ||
+      body.ConfigFrom != null || !emptyObject(body.Options) ||
+      (ipam != null && (!isRecord(ipam) || Object.keys(ipam).some((key) => !["Driver", "Options", "Config"].includes(key)) ||
+        (ipam.Driver != null && ipam.Driver !== "" && ipam.Driver !== "default") || !emptyObject(ipam.Options) ||
+        (ipam.Config != null && (!Array.isArray(ipam.Config) || ipam.Config.length !== 0))))) {
+    return { ok: false, error: "network create requires the default local bridge configuration" };
   }
   return { ok: true };
 }
 
-export function validateNetworkConnectBody(body: unknown): ContainerCreateCheck {
-  if (!body || typeof body !== "object") return { ok: true };
-  const container = (body as { Container?: unknown }).Container;
-  if (typeof container === "string" && !container.startsWith("claw2")) {
-    return { ok: false, error: "connect target must be a claw2 container" };
+/** Check Docker's actual network inspect response, not just the requested name. */
+export function validateEgressNetworkInfo(info: unknown, name: EgressNetwork): ContainerCreateCheck {
+  if (!isRecord(info) || info.Name !== name || info.Driver !== "bridge" || info.Scope !== "local" ||
+      info.Internal !== (name === SKILL_EGRESS_NETWORK) || info.ConfigOnly === true || info.Ingress === true) {
+    return { ok: false, error: `${name} must be a local bridge with Internal=${name === SKILL_EGRESS_NETWORK}` };
   }
   return { ok: true };
+}
+
+function inspectEgressNetwork(socketPath: string, name: EgressNetwork): Promise<ContainerCreateCheck> {
+  return new Promise((resolve) => {
+    const request = http.get({ socketPath, path: `/networks/${name}` }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve({ ok: false, error: `cannot inspect docker network ${name} (HTTP ${res.statusCode})` });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > MAX_CREATE_BODY_BYTES) request.destroy(new Error("network inspect response too large"));
+        else chunks.push(chunk);
+      });
+      res.on("error", () => resolve({ ok: false, error: `cannot read docker network ${name}` }));
+      res.on("end", () => {
+        try {
+          resolve(validateEgressNetworkInfo(JSON.parse(Buffer.concat(chunks).toString("utf-8")), name));
+        } catch {
+          resolve({ ok: false, error: `invalid inspect response for docker network ${name}` });
+        }
+      });
+    });
+    request.setTimeout(5_000, () => request.destroy(new Error("network inspect timed out")));
+    request.on("error", () => resolve({ ok: false, error: `cannot inspect docker network ${name}` }));
+  });
 }
 
 export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): http.Server {
@@ -341,14 +429,7 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
       }
     }
 
-    const guardKind =
-      method === "POST" && path === "/containers/create"
-        ? ("create" as const)
-        : method === "POST" && path === "/networks/create"
-          ? ("network-create" as const)
-          : method === "POST" && /^\/networks\/claw2[A-Za-z0-9_.-]*\/(connect|disconnect)$/.test(path)
-            ? ("network-connect" as const)
-            : null;
+    const guardKind = method === "POST" && (path === "/containers/create" || path === "/networks/create");
 
     if (guardKind) {
       const chunks: Buffer[] = [];
@@ -366,30 +447,39 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         }
         chunks.push(c);
       });
-      req.on("end", () => {
+      req.on("end", async () => {
         if (aborted) return;
+        const buffer = Buffer.concat(chunks);
         let body: unknown;
         try {
-          body = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+          body = JSON.parse(buffer.toString("utf-8"));
         } catch {
           opts.onReject?.(`${path} invalid JSON`);
           jsonError(res, 400, "docker guard: invalid JSON body");
           return;
         }
-        const check =
-          guardKind === "create"
-            ? validateContainerCreateBody(body, allowedBindSrc)
-            : guardKind === "network-create"
-              ? validateNetworkCreateBody(body)
-              : validateNetworkConnectBody(body);
-        if (!check.ok) {
+        const reject = (check: ContainerCreateCheck) => {
           opts.onReject?.(`${path} rejected: ${check.error}`);
           jsonError(res, 403, `docker guard: ${check.error}`);
-          return;
+        };
+        if (path === "/containers/create") {
+          const names = new URLSearchParams(rawUrl.slice(rawUrl.indexOf("?") + 1)).getAll("name");
+          const name = names.length === 1 ? names[0] : null;
+          const check = validateContainerCreateBody(body, allowedBindSrc, name === selfName ? null : name);
+          if (!check.ok) return reject(check);
+          const inner = await inspectEgressNetwork(socketPath, SKILL_EGRESS_NETWORK);
+          if (!inner.ok) return reject(inner);
+          if (name === EGRESS_SIDECAR_NAME) {
+            const outer = await inspectEgressNetwork(socketPath, SIDECAR_UPSTREAM_NETWORK);
+            if (!outer.ok) return reject(outer);
+          }
+        } else {
+          const check = validateNetworkCreateBody(body);
+          if (!check.ok) return reject(check);
         }
         // Re-send the buffered body — headers alone (with their Content-Length)
         // would hang the daemon forever.
-        forward(req, res, rawUrl, Buffer.concat(chunks));
+        if (!res.destroyed) forward(req, res, rawUrl, buffer);
       });
       req.on("error", () => {
         if (!aborted && !res.headersSent) jsonError(res, 400, "docker guard: request error");

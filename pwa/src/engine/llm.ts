@@ -266,12 +266,13 @@ async function bridgeRequest(opts: {
   url: string;
   method: "GET" | "POST";
   apiKey?: string;
+  headers?: Record<string, string>;
   data?: Record<string, unknown>;
 }): Promise<{ status: number; text: string }> {
   const res = await CapacitorHttp.request({
     url: opts.url,
     method: opts.method,
-    headers: authHeaders(opts.apiKey),
+    headers: opts.headers ?? authHeaders(opts.apiKey),
     data: opts.data,
     connectTimeout: 15_000,
     readTimeout: 300_000,
@@ -586,27 +587,26 @@ export async function listModels(target?: { baseURL: string; apiKey: string }): 
 
 export async function embedTexts(texts: string[]): Promise<number[][]> {
   const s = getSettings();
-  const base = normalizeBase(s.memory.embeddingBaseURL || s.llm.baseURL);
-  const key = s.memory.embeddingApiKey || s.llm.apiKey || "ollama";
+  const llm = resolveLlm(s);
+  const embeddingBase = s.memory.embeddingBaseURL.trim();
+  const url = `${normalizeBase(embeddingBase || llm.baseURL)}/embeddings`;
+  // Only the implicit LLM endpoint can inherit LLM credentials. An explicit
+  // embedding endpoint uses its own key or no Authorization header at all.
+  const key = s.memory.embeddingApiKey.trim() || (embeddingBase ? "" : llm.apiKey.trim() || "ollama");
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const body = { model: s.memory.embeddingModel || "text-embedding-3-small", input: texts };
   const parse = (raw: string): number[][] => {
     const data = JSON.parse(raw) as { data?: { embedding?: number[] }[] };
     return (data.data ?? []).map((d) => d.embedding ?? []);
   };
   try {
-    const res = await fetch(`${base}/embeddings`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
-      body: JSON.stringify({ model: s.memory.embeddingModel || "text-embedding-3-small", input: texts }),
-    });
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
     if (!res.ok) throw new LlmError(await extractError(res), res.status);
     return parse(await res.text());
   } catch (e) {
     if (!isNative()) throw e;
-    const { status, text } = await bridgeRequest({
-      url: `${base}/embeddings`,
-      method: "POST",
-      data: { model: s.memory.embeddingModel || "text-embedding-3-small", input: texts },
-    });
+    const { status, text } = await bridgeRequest({ url, method: "POST", headers, data: body });
     if (status < 200 || status >= 300) throw new LlmError(parseErrorText(text, status), status);
     try {
       return parse(text);

@@ -13,6 +13,12 @@ import { copyFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, relative } from "node:path";
 import type { Claw2Config } from "../config/types.js";
+import {
+  SKILL_EGRESS_NETWORK as EGRESS_NET,
+  SIDECAR_UPSTREAM_NETWORK as EGRESS_UPSTREAM_NET,
+  EGRESS_SIDECAR_NAME as EGRESS_SIDECAR,
+  validateEgressNetworkInfo,
+} from "./docker-guard.js";
 import { getEgressGuardProxy } from "./egress-proxy.js";
 import { ensureEgressPreload, ensureEgressSidecar } from "./egress-preload-build.js";
 
@@ -215,11 +221,6 @@ export function collectHostAgentDependencyRoots(agentsDir: string): string[] {
   return [...roots];
 }
 
-/** Internal docker network for skill containers (no external route). */
-const EGRESS_NET = "claw2-skill-egress";
-/** Normal (non-internal) network for the sidecar's own upstream traffic. */
-const EGRESS_UPSTREAM_NET = "claw2-egress-upstream";
-const EGRESS_SIDECAR = "claw2-egress-sidecar";
 const EGRESS_SIDECAR_PORT = 3128;
 
 function dockerSpawnSync(args: string[], timeoutMs = 15_000): { status: number; stdout: string; stderr: string } {
@@ -227,18 +228,31 @@ function dockerSpawnSync(args: string[], timeoutMs = 15_000): { status: number; 
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
-/** Ensure a docker network exists (internal ones get no external route). */
-function ensureDockerNetwork(name: string, internal: boolean): { ok: true } | { ok: false; error: string } {
-  const inspect = dockerSpawnSync(["network", "inspect", name]);
-  if (inspect.status === 0) return { ok: true };
-  const args = ["network", "create"];
-  if (internal) args.push("--internal");
-  args.push(name);
-  const created = dockerSpawnSync(args);
-  if (created.status !== 0) {
-    return { ok: false, error: `cannot create docker network ${name}: ${created.stderr.trim().slice(0, 200)}` };
+/** Never reuse (or replace) an existing network whose properties do not match. */
+function ensureDockerNetwork(name: typeof EGRESS_NET | typeof EGRESS_UPSTREAM_NET): { ok: true } | { ok: false; error: string } {
+  let inspect = dockerSpawnSync(["network", "inspect", name]);
+  if (inspect.status !== 0) {
+    const args = ["network", "create", "--driver", "bridge"];
+    if (name === EGRESS_NET) args.push("--internal");
+    const created = dockerSpawnSync([...args, name]);
+    // Re-inspect even when create failed: another runner may have created it.
+    inspect = dockerSpawnSync(["network", "inspect", name]);
+    if (inspect.status !== 0) {
+      const detail = (created.stderr || inspect.stderr).trim().slice(0, 200);
+      return { ok: false, error: `cannot ensure docker network ${name}: ${detail}` };
+    }
   }
-  return { ok: true };
+  try {
+    const networks: unknown = JSON.parse(inspect.stdout);
+    if (Array.isArray(networks) && networks.length === 1) {
+      const check = validateEgressNetworkInfo(networks[0], name);
+      if (check.ok) return { ok: true };
+      return { ok: false, error: check.error ?? `unexpected properties for docker network ${name}` };
+    }
+  } catch {
+    // Invalid daemon responses are not treated as evidence of isolation.
+  }
+  return { ok: false, error: `invalid inspect result for docker network ${name}` };
 }
 
 interface DockerEgressPrep {
@@ -272,9 +286,9 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
   }
 
   const image = config.sandbox?.image ?? "node:20-alpine";
-  const netErr = ensureDockerNetwork(EGRESS_NET, true);
+  const netErr = ensureDockerNetwork(EGRESS_NET);
   if (!netErr.ok) return { ok: false, error: netErr.error };
-  const upErr = ensureDockerNetwork(EGRESS_UPSTREAM_NET, false);
+  const upErr = ensureDockerNetwork(EGRESS_UPSTREAM_NET);
   if (!upErr.ok) return { ok: false, error: upErr.error };
 
   // Preload for the skill container: in sibling mode stage it to the
@@ -310,7 +324,21 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
     // Older sidecars have no label at all — treat as stale and recreate.
     sidecarEnvMatches = label.status === 0 && label.stdout.trim() === allowPrivate;
   }
-  if (!sidecarRunning || !sidecarEnvMatches) {
+  let sidecarNetworksMatch = false;
+  if (sidecarRunning && sidecarEnvMatches) {
+    const networks = dockerSpawnSync([
+      "container", "inspect", "-f", "{{json .NetworkSettings.Networks}}", EGRESS_SIDECAR,
+    ]);
+    if (networks.status === 0) {
+      try {
+        const attached = Object.keys(JSON.parse(networks.stdout));
+        sidecarNetworksMatch = attached.length === 2 && attached.includes(EGRESS_NET) && attached.includes(EGRESS_UPSTREAM_NET);
+      } catch {
+        // Missing/malformed attachment data is not a match.
+      }
+    }
+  }
+  if (!sidecarRunning || !sidecarEnvMatches || !sidecarNetworksMatch) {
     dockerSpawnSync(["rm", "-f", EGRESS_SIDECAR]);
     const sidecarCmd = [
       "run",
@@ -355,12 +383,8 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
     }
     const started = dockerSpawnSync(sidecarCmd);
     if (started.status !== 0) {
-      // rm may be denied by a restricted API proxy or race with a stale
-      // container — try the existing one as-is before failing.
-      const restarted = dockerSpawnSync(["start", EGRESS_SIDECAR]);
-      if (restarted.status !== 0) {
-        return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
-      }
+      // Do not start a stale container whose networks/settings were not verified.
+      return { ok: false, error: `cannot start egress sidecar: ${started.stderr.trim().slice(0, 200)}` };
     }
     // Wait for readiness: container HEALTHCHECK → healthy.
     let ready = false;

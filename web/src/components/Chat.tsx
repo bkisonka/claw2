@@ -27,7 +27,8 @@ import {
 import { markdownToPlainText } from "../utils/markdown-to-plain";
 import { normalizeAssistantMarkdown } from "../utils/normalize-assistant-markdown";
 import { resolveAssistantDisplay } from "../lib/messageCells";
-import { renderCellSegments, resolveMediaSrc } from "../lib/cellRender";
+import { renderCellSegments, resolveMediaSrc, useMediaSrc } from "../lib/cellRender";
+import { sanitizeCellHtml } from "../lib/cellSanitize";
 import {
   buildImageEditPrompt,
   imageFilenameFromUrl,
@@ -139,7 +140,7 @@ function MediaCell({
   const [editOpen, setEditOpen] = useState(false);
   const retryUsedRef = useRef(false);
   const rawUrl = (cell.content ?? "").trim();
-  const url = resolveMediaSrc(rawUrl, apiBase);
+  const url = useMediaSrc(rawUrl, apiBase);
   const filename = imageFilenameFromUrl(rawUrl);
   const isLocalFile = /^\/files\/(output|uploads)\//i.test(rawUrl);
   const isDeleted = cell.type === IMAGE_DELETED_CELL_TYPE;
@@ -362,12 +363,13 @@ function AssistantCell({
     cell.type === "video" ||
     cell.type === "image" ||
     cell.type === IMAGE_DELETED_CELL_TYPE;
+  // Stored content may predate a sanitizer fix — re-sanitize HTML cells at render (idempotent).
   return (
     <div className="chat-cell">
       {cell.type === "chart" ? (
         <ChartCell content={cell.content} />
       ) : cell.type === "html" ? (
-        <div className="chat-cell-html" dangerouslySetInnerHTML={{ __html: cell.content }} />
+        <div className="chat-cell-html" dangerouslySetInnerHTML={{ __html: sanitizeCellHtml(cell.content ?? "") }} />
       ) : isMedia ? (
         <MediaCell
           cell={cell}

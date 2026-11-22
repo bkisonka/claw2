@@ -336,48 +336,63 @@ export async function duplicateChat(
   chatId: string,
   opts?: { newId?: string; title?: string | null; upToCount?: number }
 ): Promise<string | null> {
-  const src = await getChat(chatId);
-  if (!src) return null;
   const id = opts?.newId?.trim() || newId();
   const upTo =
     typeof opts?.upToCount === "number" && Number.isFinite(opts.upToCount)
       ? Math.max(0, Math.floor(opts.upToCount))
       : null;
-  const fork: ChatSummary = {
-    ...src,
-    id,
-    title: (opts?.title ?? "").trim() || src.title,
-    updated_at: Date.now(),
-    forkedFrom: chatId,
-  };
-  await openDb().then(
-    (db) =>
-      new Promise<void>((resolve, reject) => {
-        const t = db.transaction(["chats", "messages"], "readwrite");
-        // `add`, not `put`: a colliding id must FAIL like the server's PK
-        // conflict does — an upsert would silently overwrite an existing chat.
-        t.objectStore("chats").add(fork);
-        if (upTo !== 0) {
-          const req = t.objectStore("messages").index("chatId").openCursor(IDBKeyRange.only(chatId));
-          let copied = 0;
-          req.onsuccess = () => {
-            const cursor = req.result;
-            if (!cursor) return;
-            if (upTo == null || copied < upTo) {
-              const m = cursor.value as StoredMessage;
-              const { id: _msgId, ...rest } = m;
-              t.objectStore("messages").add({ ...rest, chatId: id });
-              copied++;
-              cursor.continue();
-            }
-          };
+  const db = await openDb();
+  return new Promise<string | null>((resolve, reject) => {
+    // Read the recap and copy the tape in the same transaction.
+    const t = db.transaction(["chats", "messages"], "readwrite");
+    const chats = t.objectStore("chats");
+    const messages = t.objectStore("messages");
+    const srcReq = chats.get(chatId);
+    let forkId: string | null = null;
+    srcReq.onsuccess = () => {
+      const src = srcReq.result as ChatSummary | undefined;
+      if (!src) return;
+      const fork: ChatSummary = {
+        ...src,
+        id,
+        title: (opts?.title ?? "").trim() || src.title,
+        updated_at: Date.now(),
+        forkedFrom: chatId,
+        promptContext: null,
+      };
+      // Reserve the id before copying. A collision (including id === chatId)
+      // must abort the transaction, not overwrite the chat or extend its tape.
+      chats.add(fork);
+      forkId = id;
+      if (upTo === 0) return;
+      const keepRecapIfCovered = (copied: number) => {
+        const recap = src.promptContext;
+        if (
+          recap?.summary?.trim() && Number.isInteger(recap.coveredCount)
+          && recap.coveredCount > 0 && recap.coveredCount <= copied
+        ) {
+          chats.put({ ...fork, promptContext: recap });
         }
-        t.oncomplete = () => resolve();
-        t.onerror = () => reject(t.error);
-        t.onabort = () => reject(t.error);
-      })
-  );
-  return id;
+      };
+      const req = messages.index("chatId").openCursor(IDBKeyRange.only(chatId));
+      let copied = 0;
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          keepRecapIfCovered(copied);
+          return;
+        }
+        const { id: _msgId, ...rest } = cursor.value as StoredMessage;
+        messages.add({ ...rest, chatId: id });
+        copied++;
+        if (copied === upTo) keepRecapIfCovered(copied);
+        else cursor.continue();
+      };
+    };
+    t.oncomplete = () => resolve(forkId);
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
 }
 
 /** forkedFrom of the chat (or undefined). */

@@ -1,7 +1,14 @@
-# ---- build ----
-FROM node:20-alpine AS build
+# Build and runtime use the same Debian/glibc base for native dependencies.
+FROM node:22-bookworm-slim AS base
 WORKDIR /app
 
+FROM base AS native-build
+# node-gyp fallback when a dependency doesn't ship a prebuilt binary.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- build ----
+FROM native-build AS build
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -21,17 +28,25 @@ ENV VITE_CLAW2_SINGLE_USER=1
 RUN npm run build:web
 
 COPY pwa/package.json pwa/package-lock.json pwa/tsconfig.json pwa/tsconfig.node.json pwa/vite.config.ts pwa/index.html ./pwa/
-RUN cd pwa && npm ci
+# The web PWA does not use Capacitor's Android asset generation (Sharp).
+# Skip its install-time binary download and run only esbuild's setup.
+RUN cd pwa && npm ci --ignore-scripts && npm rebuild esbuild
 COPY pwa ./pwa
 RUN cd pwa && npm run build
 
+# ---- production dependencies ----
+FROM native-build AS runtime-deps
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && \
+    npm install --no-save --omit=dev --no-audit --no-fund \
+      "cheerio@^1.2.0" "rss-parser@^3.13.0" "mammoth@^1.8.0" "pdf-parse@^1.1.1" \
+      "tesseract.js@^5.1.0" "xlsx@^0.18.5" "docx@^9.5.0"
+# Bundled skills look for their libraries in /app/node_modules, above /app/agents.
+
 # ---- runtime ----
-# Debian (glibc), not alpine/musl: the sqlite-vec extension ships glibc-only
-# prebuilt binaries (vec0.so links against ld-linux-aarch64.so.1); on musl
-# dlopen fails and the error surfaces as a confusing "vec0.so.so" in the UI.
-# All native modules in the tree (better-sqlite3, onnxruntime) have glibc
-# prebuilts; alpine only breaks this class.
-FROM node:20-slim AS dockercli-extract
+# sqlite-vec ships glibc-only prebuilt binaries; keep the same libc and Node
+# ABI as the stages installing native dependencies.
+FROM base AS dockercli-extract
 ARG TARGETARCH
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -45,21 +60,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
     && mv /tmp/docker/docker /usr/local/bin/docker && rm -rf /tmp/docker.tgz /var/lib/apt/lists/*
 
-FROM node:20-slim AS runtime
-WORKDIR /app
+FROM base AS runtime
 
-# docker CLI (static binary from the official distribution): the gateway
-# launches every skill as a sibling container on the host docker through a
-# restricted API proxy (compose ships docker-socket-proxy; DOCKER_HOST points
-# at it). The gateway itself never sees the socket.
+# Compose points DOCKER_HOST at the validating API guard; the gateway itself
+# never sees the daemon socket.
 COPY package.json package-lock.json ./
 COPY --from=dockercli-extract /usr/local/bin/docker /usr/local/bin/docker
-RUN npm ci --omit=dev && \
-    npm install --no-save --omit=dev --no-audit --no-fund \
-      "cheerio@^1.2.0" "rss-parser@^3.13.0" "mammoth@^1.8.0" "pdf-parse@^1.1.1" \
-      "tesseract.js@^5.1.0" "xlsx@^0.18.5" "docx@^9.5.0"
-# The extra install above = libraries of the bundled skills (agents/):
-# skills resolve imports from /app/node_modules, the parent of /app/agents.
+COPY --from=runtime-deps /app/node_modules ./node_modules
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/web/dist ./web/dist

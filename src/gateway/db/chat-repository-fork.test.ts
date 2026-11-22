@@ -62,7 +62,7 @@ const USER = "user-fork-test";
     assert.equal(forkMessages[i]?.meta, srcMessages[i]?.meta, "meta (cells) copied verbatim");
   }
   assert.deepEqual(repo.getPromptContext("chat-fork", USER), { summary: "Recap of the covered region", coveredCount: 2 });
-  assert.ok(repo.getChatHistory("chat-fork", USER).length === 4, "transcript_messages copied as well");
+  assert.equal(repo.listTranscript("chat-fork", USER).totalCount, 4, "transcript_messages copied as well");
   assert.equal(repo.getForkParent("chat-src", USER), null);
   closeDb();
 }
@@ -72,19 +72,35 @@ const USER = "user-fork-test";
   repo.ensureChat("chat-src", USER, "Branched chat");
   for (let i = 0; i < 5; i++) repo.appendMessage("chat-src", USER, "user", `msg-${i}`);
 
-  // Truncated fork: only the first 3 messages, prompt context untouched.
+  // A recap ahead of the cutoff must be discarded, not clamped to the cutoff.
   repo.setPromptContext("chat-src", USER, "summary", 5);
   const partialId = repo.duplicateChat(USER, "chat-src", "chat-fork-3", { upToCount: 3 });
   assert.ok(partialId);
   assert.equal(repo.getMessages("chat-fork-3", USER).length, 3);
   assert.equal(repo.getMessages("chat-fork-3", USER)[2]?.content, "msg-2");
-  assert.deepEqual(repo.getPromptContext("chat-fork-3", USER), { summary: "summary", coveredCount: 5 });
+  repo.appendMessage("chat-fork-3", USER, "user", "new branch message");
+  assert.equal(repo.getPromptContext("chat-fork-3", USER), null);
+  assert.deepEqual(repo.getPromptContext("chat-src", USER), { summary: "summary", coveredCount: 5 });
+
+  repo.setPromptContext("chat-src", USER, "early summary", 3);
+  repo.duplicateChat(USER, "chat-src", "chat-fork-exact", { upToCount: 3.9 });
+  assert.deepEqual(repo.getPromptContext("chat-fork-exact", USER), { summary: "early summary", coveredCount: 3 });
+
+  // A requested limit is not proof that those messages were actually copied.
+  repo.setPromptContext("chat-src", USER, "stale summary", 6);
+  repo.duplicateChat(USER, "chat-src", "chat-fork-short", { upToCount: 10 });
+  assert.equal(repo.getMessages("chat-fork-short", USER).length, 5);
+  assert.equal(repo.getPromptContext("chat-fork-short", USER), null);
+  const fullId = repo.duplicateChat(USER, "chat-src", "chat-fork-stale-full");
+  assert.ok(fullId);
+  assert.equal(repo.getPromptContext(fullId, USER), null, "full copies also reject invalid coverage");
 
   // upToCount = 0: metadata-only fork with no history.
   const emptyId = repo.duplicateChat(USER, "chat-src", "chat-fork-0", { upToCount: 0 });
   assert.ok(emptyId);
   assert.equal(repo.getMessages("chat-fork-0", USER).length, 0);
   assert.equal(repo.getForkParent("chat-fork-0", USER), "chat-src");
+  assert.equal(repo.getPromptContext("chat-fork-0", USER), null);
 
   // Custom title override; unknown source chat rejected.
   repo.duplicateChat(USER, "chat-src", "chat-fork-t", { title: "  Моя копия  " });

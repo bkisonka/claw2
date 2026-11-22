@@ -74,7 +74,7 @@ const WRITE_AGENT_DESCRIPTION = `write_agent tool: write full code to agents/<sc
 const CODE_SKILL_DESCRIPTION = `Writing a new skill (parent/subagent):
 - It is prohibited to call code_skill / accept_skill without explicitly asking the user to create or rewrite a skill/agent/script.
 - If there is already a suitable skill in the run_agent directory, use run_agent, do not write a new one.
-- code_skill(script, task, smokeArgs?) - only after explicit permission: N subagents + smoke. Then accept_skill(runId, candidateIndex).
+- code_skill(script, task) - only after explicit permission: N subagents, with static validation but no execution. Then accept_skill(runId, candidateIndex).
 - Subagents do not call code_skill (depth 1).`;
 
 const AGENT_USE_OR_CREATE = `Skills Policy:

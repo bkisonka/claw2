@@ -1,0 +1,24 @@
+# Local installs/builds must not overwrite dependencies or assets from the image.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+
+# Runtime, generated content and local configuration/credentials.
+.git
+.zcode
+.claw2
+data
+agents/output
+agents/uploads
+**/.env
+**/.env.*
+**/.npmrc
+**/*.pem
+**/*.key
+**/*.keystore
+**/*.jks
+**/keystore.properties
+**/local.properties
+pwa/android
+pwa/ios
+puppeteer-cache

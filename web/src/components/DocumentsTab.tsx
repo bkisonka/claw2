@@ -11,6 +11,7 @@ import {
 } from "../api/chat";
 import { useChatPageContext } from "../context/ChatPageContext";
 import { useT } from "../i18n";
+import { useFileGrantUrls, signFilesUrl } from "../lib/filesToken";
 import { FileIcon, getFileTypeLabel } from "./FileIcon";
 import { IconDownload, IconTrash } from "./icons";
 
@@ -52,8 +53,9 @@ export function DocumentsTab() {
     }
   };
 
+  useFileGrantUrls(documents.map((doc) => fileDownloadUrl(doc.path)));
   const handleOpen = (doc: ChatDocumentItem) => {
-    window.open(fileDownloadUrl(doc.path).replace(/\?download=1$/, ""), "_blank", "noopener,noreferrer");
+    window.open(signFilesUrl(fileDownloadUrl(doc.path).replace(/\?download=1$/, "")), "_blank", "noopener,noreferrer");
   };
 
   const handleDelete = async (doc: ChatDocumentItem) => {

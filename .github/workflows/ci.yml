@@ -1,5 +1,5 @@
-# CI: build and test the gateway sources on every push to main and PR.
-# Tests are unit-level (no model provider, no external services required).
+# CI: build and test the gateway, web client, and PWA on pushes and PRs.
+# Tests need no model provider or external services.
 name: CI
 
 on:
@@ -16,8 +16,12 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+            pwa/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -27,3 +31,18 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Build and test web client
+        run: |
+          npm --prefix web ci
+          npm run build:web
+          node --import tsx --test web/src/lib/*.test.ts web/src/store/*.test.ts
+          node node_modules/vitest/vitest.mjs run web/src/browser web/src/api
+
+      - name: Build and test PWA
+        run: |
+          # The web PWA does not run Capacitor's Android asset generator (Sharp).
+          npm --prefix pwa ci --ignore-scripts
+          npm --prefix pwa rebuild esbuild
+          npm run build:pwa
+          npm --prefix pwa test

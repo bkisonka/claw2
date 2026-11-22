@@ -15,7 +15,12 @@ import http from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDockerGuardServer } from "./docker-guard.js";
+import {
+  createDockerGuardServer,
+  SKILL_EGRESS_NETWORK,
+  SIDECAR_UPSTREAM_NETWORK,
+  EGRESS_SIDECAR_NAME,
+} from "./docker-guard.js";
 
 const dir = mkdtempSync(join(tmpdir(), "claw2-guard-http-"));
 const sockPath = join(dir, "docker.sock");
@@ -24,13 +29,31 @@ const ROOTS = ["/host/claw2/agents", "/host/claw2/data"];
 try {
   // Fake docker daemon: records method/path/body per request.
   const seen: { method: string; path: string; body: string }[] = [];
+  let innerInternal = true;
+  let outerAvailable = true;
   const daemon = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
     req.on("end", () => {
       seen.push({ method: req.method ?? "", path: req.url ?? "", body: Buffer.concat(chunks).toString("utf-8") });
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ Id: "claw2-agent-test", Warnings: [] }));
+      res.setHeader("Content-Type", "application/json");
+      const inner = req.method === "GET" && req.url === `/networks/${SKILL_EGRESS_NETWORK}`;
+      const outer = req.method === "GET" && req.url === `/networks/${SIDECAR_UPSTREAM_NETWORK}`;
+      if (inner || outer) {
+        if (outer && !outerAvailable) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ message: "network not found" }));
+          return;
+        }
+        res.end(JSON.stringify({
+          Name: inner ? SKILL_EGRESS_NETWORK : SIDECAR_UPSTREAM_NETWORK,
+          Internal: inner && innerInternal,
+          Driver: "bridge",
+          Scope: "local",
+        }));
+      } else {
+        res.end(JSON.stringify({ Id: "claw2-agent-test", Warnings: [] }));
+      }
     });
   });
   await new Promise<void>((resolve) => daemon.listen(sockPath, resolve));
@@ -44,6 +67,7 @@ try {
   const addr = guard.address();
   const base = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : 0}`;
 
+  const agentCreatePath = "/v1.47/containers/create?name=claw2-agent-e2e";
   const post = (path: string, body: unknown): Promise<{ status: number; text: string }> =>
     new Promise((resolve, reject) => {
       const payload = JSON.stringify(body);
@@ -63,7 +87,6 @@ try {
     });
 
   const hardened = {
-    Name: "claw2-agent-e2e",
     Image: "node:20-alpine",
     HostConfig: {
       CapDrop: ["ALL"],
@@ -71,57 +94,71 @@ try {
       ReadonlyRootfs: true,
       Binds: ["/host/claw2/agents:/app/agents:ro", "/host/claw2/agents/output:/app/output"],
       Tmpfs: { "/tmp": "rw,noexec,nosuid,size=64m" },
-      NetworkMode: "claw2-skill-egress",
+      NetworkMode: SKILL_EGRESS_NETWORK,
     },
-    NetworkingConfig: { EndpointsConfig: [{ Network: "claw2-skill-egress" }] },
+    NetworkingConfig: { EndpointsConfig: {} },
   };
 
   // 1. Validated create: body must reach the daemon, response must come back.
-  const r1 = await post("/v1.47/containers/create?name=claw2-agent-e2e", hardened);
+  const r1 = await post(agentCreatePath, hardened);
   assert.equal(r1.status, 200, `create must pass: ${r1.text}`);
-  const createReq = seen.find((s) => s.path.includes("/containers/create"));
-  assert.ok(createReq, "daemon saw the create request");
-  assert.equal(createReq!.method, "POST");
-  const echoed = JSON.parse(createReq!.body) as Record<string, unknown>;
-  assert.equal(echoed.Name, "claw2-agent-e2e", "upstream received the FULL body (not zero bytes)");
-  assert.equal((echoed.HostConfig as Record<string, unknown>).ReadonlyRootfs, true);
+  assert.deepEqual(seen.map((s) => s.path), [`/networks/${SKILL_EGRESS_NETWORK}`, agentCreatePath]);
+  assert.equal(seen[1].method, "POST");
+  assert.equal(seen[1].body, JSON.stringify(hardened), "upstream received the full original body");
 
-  // 2. Network create with driver validation.
-  const r2 = await post("/v1.47/networks/create", { Name: "claw2-skill-egress", Internal: true });
-  assert.equal(r2.status, 200, `network create must pass: ${r2.text}`);
-  assert.equal(validateHelper(seen, "/networks/create")?.body.includes("claw2-skill-egress"), true);
+  // 2. Both named network create requests retain the exact original body.
+  for (const [Name, Internal] of [[SKILL_EGRESS_NETWORK, true], [SIDECAR_UPSTREAM_NETWORK, false]] as const) {
+    const network = { Name, Internal, Driver: "bridge" };
+    const r2 = await post("/v1.47/networks/create", network);
+    assert.equal(r2.status, 200, `network create must pass: ${r2.text}`);
+    assert.equal(seen.at(-1)?.body, JSON.stringify(network));
+  }
 
-  // 3. Non-claw2 endpoint network rejected at the guard.
-  const r3 = await post("/v1.47/containers/create", {
+  // 3. Only the named sidecar has both networks. Wrong or missing network
+  // properties must stop the request before the daemon receives create.
+  const sidecarPath = `/v1.47/containers/create?name=${EGRESS_SIDECAR_NAME}`;
+  const sidecar = {
     ...hardened,
-    NetworkingConfig: { EndpointsConfig: [{ Network: "bridge" }] },
-  });
-  assert.equal(r3.status, 403, "bridge attachment rejected");
-  assert.ok(r3.text.includes("claw2 network"));
+    NetworkingConfig: { EndpointsConfig: { [SKILL_EGRESS_NETWORK]: {}, [SIDECAR_UPSTREAM_NETWORK]: {} } },
+  };
+  seen.length = 0;
+  assert.equal((await post(sidecarPath, sidecar)).status, 200);
+  assert.deepEqual(seen.map((s) => s.path), [`/networks/${SKILL_EGRESS_NETWORK}`, `/networks/${SIDECAR_UPSTREAM_NETWORK}`, sidecarPath]);
+  seen.length = 0;
+  assert.equal((await post(agentCreatePath, sidecar)).status, 403);
+  assert.equal((await post("/v1.47/containers/create", hardened)).status, 403);
+  assert.equal((await post(`${agentCreatePath}&name=${EGRESS_SIDECAR_NAME}`, sidecar)).status, 403);
+  assert.deepEqual(seen, []);
+  innerInternal = false;
+  assert.equal((await post(agentCreatePath, hardened)).status, 403);
+  innerInternal = true;
+  outerAvailable = false;
+  assert.equal((await post(sidecarPath, sidecar)).status, 403);
+  assert.deepEqual(seen.map((s) => s.method), ["GET", "GET", "GET"]);
 
   // 4. container:<name> namespace sharing rejected.
-  const r4 = await post("/v1.47/containers/create", {
+  const r4 = await post(agentCreatePath, {
     ...hardened,
     HostConfig: { ...hardened.HostConfig, NetworkMode: "container:postgres" },
   });
   assert.equal(r4.status, 403, "container: network mode rejected");
 
   // 5. Restart policy rejected.
-  const r5 = await post("/v1.47/containers/create", {
+  const r5 = await post(agentCreatePath, {
     ...hardened,
     HostConfig: { ...hardened.HostConfig, RestartPolicy: { Name: "always" } },
   });
   assert.equal(r5.status, 403, "restart policy rejected");
 
   // 6. Exec tmpfs rejected.
-  const r6 = await post("/v1.47/containers/create", {
+  const r6 = await post(agentCreatePath, {
     ...hardened,
     HostConfig: { ...hardened.HostConfig, Tmpfs: { "/": "rw,exec" } },
   });
   assert.equal(r6.status, 403, "tmpfs over / rejected");
 
   // 7. VolumesFrom rejected.
-  const r7 = await post("/v1.47/containers/create", {
+  const r7 = await post(agentCreatePath, {
     ...hardened,
     HostConfig: { ...hardened.HostConfig, VolumesFrom: ["postgres"] },
   });
@@ -153,10 +190,6 @@ try {
     r.end();
   });
   assert.equal(r10.status, 200, "GET passthrough works");
-
-  function validateHelper(list: typeof seen, pathPart: string) {
-    return list.find((s) => s.path.includes(pathPart));
-  }
 
   guard.close();
   daemon.close();

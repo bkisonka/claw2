@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 Vitaliy Bondar
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { sendMessageStream } from "./chat";
+
+vi.mock("../config", () => ({ apiBase: "", apiKey: undefined }));
+vi.mock("../auth/storage", () => ({ getAuthHeaders: () => ({}) }));
+
+const encoder = new TextEncoder();
+const event = (data: object) => `data: ${JSON.stringify(data)}\n\n`;
+
+function mockStream(chunks: Uint8Array[], keepOpen = false) {
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      if (!keepOpen) controller.close();
+    },
+    cancel,
+  });
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+    headers: { "Content-Type": "text/event-stream; charset=utf-8" },
+  })));
+  return { cancel, body };
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("sendMessageStream terminal contract", () => {
+  it("assembles split events and UTF-8, dispatches controls, and finishes without waiting for EOF", async () => {
+    const userCells = [{ type: "image", content: "/files/uploads/example.png" }];
+    const terminal = { done: true, sessionId: "s1", content: "Final reply", lastRunId: 42, userCells };
+    const wire = ": keepalive\r\n\r\ndata:{\r\ndata: \"content\":\"Привет\"}\r\n\r\n" +
+      event({ sidebarUpdated: true, openBrowserUrl: " https://example.test/ " }) +
+      event({ readBrowserPage: { requestId: "read" } }) +
+      event({ headlessPageText: { requestId: "load", url: "https://example.test/page" } }) +
+      event(terminal) + event({ content: "late chunk" }) + event({ done: true, content: "late terminal" });
+    // Fragment every byte: this splits UTF-8, data fields, and the CRLF delimiter.
+    const { cancel, body } = mockStream(Array.from(encoder.encode(wire), (byte) => Uint8Array.of(byte)), true);
+    const onChunk = vi.fn();
+    const onSidebar = vi.fn();
+    const onOpen = vi.fn();
+    const onRead = vi.fn();
+    const onHeadless = vi.fn();
+    const result = await sendMessageStream("Question", undefined, undefined, onChunk,
+      undefined, undefined, undefined, undefined, undefined, onSidebar,
+      undefined, onOpen, undefined, undefined, undefined, undefined, onRead, onHeadless);
+
+    expect(onChunk.mock.calls).toEqual([["Привет"]]);
+    expect(onSidebar).toHaveBeenCalledTimes(1);
+    expect(onOpen).toHaveBeenCalledWith("https://example.test/");
+    expect(onRead).toHaveBeenCalledWith("read");
+    expect(onHeadless).toHaveBeenCalledWith("load", "https://example.test/page");
+    expect(result).toMatchObject({ sessionId: "s1", content: "Final reply", lastRunId: 42, userCells });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(body.locked).toBe(false);
+  });
+
+  it("surfaces an explicit server error even when it starts before any chunks", async () => {
+    mockStream([encoder.encode(event({ done: true, sessionId: "s1", error: "LLM not configured" }))]);
+    const onChunk = vi.fn();
+    await expect(sendMessageStream("Question", undefined, undefined, onChunk)).resolves.toMatchObject({
+      sessionId: "s1", error: "LLM not configured", content: "",
+    });
+    expect(onChunk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "",
+    "data: [DONE]\n\n",
+    "data: {\"done\":tru\n\n",
+    'data: {"done":true}\n',
+  ])("rejects EOF after partial text without a complete JSON terminal (%j)", async (trailer) => {
+    const { body } = mockStream([encoder.encode(event({ content: "Partial" }) + trailer)]);
+    const onChunk = vi.fn();
+    await expect(sendMessageStream("Question", undefined, undefined, onChunk)).rejects.toThrow(/interrupted/i);
+    expect(onChunk.mock.calls).toEqual([["Partial"]]);
+    expect(body.locked).toBe(false);
+  });
+
+  it("keeps the abort error and does not rewrite it as an interrupted reply", async () => {
+    const error = new DOMException("Aborted", "AbortError");
+    const body = new ReadableStream<Uint8Array>({ start: (controller) => controller.error(error) });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(body, {
+      headers: { "Content-Type": "text/event-stream" },
+    })));
+    await expect(sendMessageStream("Question", undefined, undefined, vi.fn())).rejects.toBe(error);
+    expect(body.locked).toBe(false);
+  });
+
+  it("keeps the non-streaming JSON fallback and attachment metadata", async () => {
+    const reply = { sessionId: "s1", content: "Reply", userCells: [{ type: "image", content: "/files/a.png" }] };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(reply)));
+    await expect(sendMessageStream("Question", undefined, undefined, vi.fn())).resolves.toMatchObject(reply);
+  });
+});

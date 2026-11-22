@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 /**
- * Common room poll: new message not from this agent → orchestrator with full feed → reply to room.
+ * Common room poll: reply to each eligible message using the feed up to that event.
  */
 import type { Claw2Config } from "../config/types.js";
 import { runOrchestrator } from "../core/orchestrator.js";
@@ -57,13 +57,9 @@ async function handleNewMessage(config: Claw2Config, msg: ConversationMessage): 
     console.error("[llm-room] fetch history failed:", all.error);
     return;
   }
-  const roomMessages = all.messages.map((m) => ({
-    authorId: m.authorId,
-    authorKind: m.authorKind,
-    text: m.text,
-  }));
   const { history, userMessage } = buildOrchestratorTurn(
-    roomMessages,
+    all.messages,
+    msg,
     resolved.agentId,
     resolved.participantLabels
   );

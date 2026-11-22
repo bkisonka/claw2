@@ -3,29 +3,28 @@
 
 /**
  * Parent/subagent skill coding: N parallel candidates, scoped read/write/edit,
- * auto smoke run_agent, parent accepts via accept_skill.
+ * static validation only, parent accepts via accept_skill.
  * No nested code_skill (depth 1 only).
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import type OpenAI from "openai";
 import type { Claw2Config } from "../config/types.js";
 import { createClient, normalizeToolCalls } from "../core/llm.js";
 import { resolveAgentsDir } from "../agents/paths.js";
-import { runAgent, runAgentHost } from "../sandbox/run-agent.js";
 import { writeAgent } from "../agents/write-agent.js";
+import { validateSkillSource } from "../agents/skill-header.js";
 
 const MAX_SUB_ITERS = 8;
 const CODE_PREVIEW_CHARS = 4000;
-const SMOKE_OUT_CHARS = 2500;
 const PENDING_TTL_MS = 30 * 60 * 1000;
 
 export interface CodeSkillCandidate {
   index: number;
   ok: boolean;
   code: string;
-  smoke: { stdout: string; stderr: string; exitCode: number };
   error?: string;
 }
 
@@ -33,7 +32,6 @@ export interface CodeSkillRun {
   runId: string;
   script: string;
   task: string;
-  agentsDir: string;
   candidates: CodeSkillCandidate[];
   createdAt: number;
 }
@@ -45,11 +43,6 @@ function prunePending(): void {
   for (const [id, run] of pending) {
     if (now - run.createdAt > PENDING_TTL_MS) {
       pending.delete(id);
-      try {
-        rmSync(join(run.agentsDir, ".code_skill", id), { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
     }
   }
 }
@@ -149,20 +142,19 @@ async function chatWithCustomTools(
   return { content: msg?.content ?? null, tool_calls };
 }
 
-async function smokeRun(
-  config: Claw2Config,
-  relScript: string,
-  args: string[]
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const agentsDir = resolveAgentsDir(config);
-  const useHost = config.sandbox?.useDocker === false;
-  const runOptions = {
-    script: relScript,
-    args,
-    outputDir: resolve(agentsDir, "output"),
-    uploadsDir: resolve(agentsDir, "uploads"),
-  };
-  return useHost ? runAgentHost(config, runOptions) : runAgent(config, runOptions);
+function checkCandidate(script: string, code: string): string | undefined {
+  const header = validateSkillSource(script, code);
+  if (!header.ok) return header.error;
+  // Parse as ESM without loading imports or executing the draft.
+  const syntax = spawnSync(process.execPath, ["--check", "--input-type=module"], {
+    input: code,
+    encoding: "utf-8",
+    timeout: 5_000,
+    env: {},
+  });
+  if (syntax.status !== 0) {
+    return syntax.error?.message ?? (syntax.stderr.trim().slice(0, 2_500) || "Invalid JavaScript syntax.");
+  }
 }
 
 async function runOneCandidate(
@@ -174,26 +166,16 @@ async function runOneCandidate(
     script: string;
     task: string;
     baselineCode: string | null;
-    smokeArgs: string[];
   }
 ): Promise<CodeSkillCandidate> {
-  const agentsDir = resolveAgentsDir(config);
   const relPath = relCandidatePath(opts.runId, opts.index, opts.script);
-  const absPath = resolve(agentsDir, relPath);
-  mkdirSync(join(absPath, ".."), { recursive: true });
-  if (opts.baselineCode != null) {
-    writeFileSync(absPath, opts.baselineCode, "utf-8");
-  } else {
-    writeFileSync(
-      absPath,
-      `// Agent: stub\n` +
-        `// Call: run_agent({script:${JSON.stringify(opts.script)}})\n` +
-        `// In: no args (stub)\n` +
-        `// Out: stdout JSON {ok:true}\n` +
-        `console.log(JSON.stringify({ ok: true, script: ${JSON.stringify(opts.script)} }));\n`,
-      "utf-8"
-    );
-  }
+  // Drafts are never written into the skill runner's filesystem view.
+  let code = opts.baselineCode ??
+    `// Agent: stub\n` +
+    `// Call: run_agent({script:${JSON.stringify(opts.script)}})\n` +
+    `// In: no args (stub)\n` +
+    `// Out: stdout JSON {ok:true}\n` +
+    `console.log(JSON.stringify({ ok: true, script: ${JSON.stringify(opts.script)} }));\n`;
 
   const system = `You are a coding subagent (depth 1). Implement the skill script.
 Rules:
@@ -247,31 +229,18 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
         if (!pathAllowed(pathArg, relPath)) {
           content = `Error: path not allowed. Use exactly "${relPath}".`;
         } else if (name === "read") {
-          try {
-            content = readFileSync(absPath, "utf-8");
-          } catch (err) {
-            content = `Error: ${err instanceof Error ? err.message : String(err)}`;
-          }
+          content = code;
         } else if (name === "write") {
-          try {
-            writeFileSync(absPath, String(args.content ?? ""), "utf-8");
-            content = `Wrote ${relPath}`;
-          } catch (err) {
-            content = `Error: ${err instanceof Error ? err.message : String(err)}`;
-          }
+          code = String(args.content ?? "");
+          content = `Wrote ${relPath}`;
         } else if (name === "edit") {
-          try {
-            const cur = readFileSync(absPath, "utf-8");
-            const search = String(args.searchText ?? "");
-            const replace = String(args.replaceText ?? "");
-            if (!search || !cur.includes(search)) {
-              content = "Error: searchText not found";
-            } else {
-              writeFileSync(absPath, cur.split(search).join(replace), "utf-8");
-              content = `Edited ${relPath}`;
-            }
-          } catch (err) {
-            content = `Error: ${err instanceof Error ? err.message : String(err)}`;
+          const search = String(args.searchText ?? "");
+          const replace = String(args.replaceText ?? "");
+          if (!search || !code.includes(search)) {
+            content = "Error: searchText not found";
+          } else {
+            code = code.split(search).join(replace);
+            content = `Edited ${relPath}`;
           }
         } else {
           content = `Error: tool "${name}" not allowed for subagent`;
@@ -280,30 +249,13 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
       }
     }
 
-    const code = readFileSync(absPath, "utf-8");
-    const smoke = await smokeRun(config, relPath, opts.smokeArgs);
-    return {
-      index: opts.index,
-      ok: smoke.exitCode === 0,
-      code,
-      smoke: {
-        stdout: smoke.stdout.slice(0, SMOKE_OUT_CHARS),
-        stderr: smoke.stderr.slice(0, SMOKE_OUT_CHARS),
-        exitCode: smoke.exitCode,
-      },
-    };
+    const error = checkCandidate(opts.script, code);
+    return { index: opts.index, ok: error === undefined, code, error };
   } catch (err) {
-    let code = "";
-    try {
-      code = readFileSync(absPath, "utf-8");
-    } catch {
-      /* */
-    }
     return {
       index: opts.index,
       ok: false,
       code,
-      smoke: { stdout: "", stderr: "", exitCode: -1 },
       error: err instanceof Error ? err.message : String(err),
     };
   }
@@ -311,7 +263,7 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
 
 export async function runCodeSkill(
   config: Claw2Config,
-  options: { script: string; task: string; smokeArgs?: string[] }
+  options: { script: string; task: string }
 ): Promise<{ ok: boolean; message: string; runId?: string }> {
   prunePending();
   const script = safeScriptName(options.script);
@@ -324,7 +276,6 @@ export async function runCodeSkill(
   }
 
   const n = Math.max(1, Math.floor(config.coding?.maxSubagents ?? 3));
-  const smokeArgs = options.smokeArgs ?? config.coding?.smokeArgs ?? [];
   const agentsDir = resolveAgentsDir(config);
   const finalPath = resolve(agentsDir, script);
   let baseline: string | null = null;
@@ -337,7 +288,6 @@ export async function runCodeSkill(
   }
 
   const runId = randomBytes(8).toString("hex");
-  mkdirSync(join(agentsDir, ".code_skill", runId), { recursive: true });
   const client = createClient(config);
 
   const candidates = await Promise.all(
@@ -348,7 +298,6 @@ export async function runCodeSkill(
         script,
         task,
         baselineCode: baseline,
-        smokeArgs,
       })
     )
   );
@@ -357,7 +306,6 @@ export async function runCodeSkill(
     runId,
     script,
     task,
-    agentsDir,
     candidates,
     createdAt: Date.now(),
   };
@@ -370,9 +318,7 @@ export async function runCodeSkill(
       index: c.index,
       ok: c.ok,
       error: c.error,
-      smokeExitCode: c.smoke.exitCode,
-      smokeStdout: c.smoke.stdout,
-      smokeStderr: c.smoke.stderr,
+      executed: false,
       codePreview: preview,
     };
   });
@@ -385,7 +331,7 @@ export async function runCodeSkill(
         runId,
         script,
         candidates: n,
-        note: "Review candidates. Call accept_skill(runId, candidateIndex) to install into agents/<script>. Do not rewrite a good candidate unless smoke failed or the user asked.",
+        note: "Candidates were checked statically, not executed. Review them and call accept_skill(runId, candidateIndex) to install one that passed. Do not claim the skill was run.",
         results: summaries,
       },
       null,
@@ -411,20 +357,15 @@ export function acceptSkill(
       message: `No candidate index ${candidateIndex}. Valid: ${run.candidates.map((x) => x.index).join(", ")}`,
     };
   }
-  if (!c.code.trim()) {
-    return { ok: false, message: "Candidate has empty code." };
+  if (!c.ok) {
+    return { ok: false, message: c.error ?? "Candidate failed static validation." };
   }
   const result = writeAgent(config, { script: run.script, content: c.code });
   if (result.ok) {
-    pending.delete(runId);
-    try {
-      rmSync(join(run.agentsDir, ".code_skill", runId), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    pending.delete(run.runId);
     return {
       ok: true,
-      message: `${result.message}. Candidate #${candidateIndex} accepted (smoke exit ${c.smoke.exitCode}).`,
+      message: `${result.message}. Candidate #${candidateIndex} accepted (validated, not executed).`,
     };
   }
   return result;

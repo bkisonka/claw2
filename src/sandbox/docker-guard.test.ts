@@ -9,12 +9,17 @@
 import assert from "node:assert/strict";
 import {
   isAllowedDockerEndpoint,
-  validateContainerCreateBody,
+  validateContainerCreateBody as checkContainerCreateBody,
   validateNetworkCreateBody,
-  validateNetworkConnectBody,
+  validateEgressNetworkInfo,
+  SKILL_EGRESS_NETWORK,
+  SIDECAR_UPSTREAM_NETWORK,
+  EGRESS_SIDECAR_NAME,
 } from "./docker-guard.js";
 
 const ROOTS = ["/host/claw2/agents", "/host/claw2/data"];
+const validateContainerCreateBody = (body: unknown, roots: string[]) =>
+  checkContainerCreateBody(body, roots, "claw2-agent-test");
 
 const hardened = {
   Image: "claw2:latest",
@@ -24,6 +29,7 @@ const hardened = {
     ReadonlyRootfs: true,
     Memory: 536870912,
     PidsLimit: 64,
+    NetworkMode: SKILL_EGRESS_NETWORK,
     Binds: ["/host/claw2/agents:/app/agents:ro", "/host/claw2/agents/output:/app/output", "/host/claw2/data/egress-preload.cjs:/app/.claw2-egress-preload.cjs:ro"],
   },
 };
@@ -41,8 +47,13 @@ assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/claw2-agent-x/ex
 // Foreign containers/networks are out of scope even via allowed endpoints:
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/containers/postgres-1/kill"), false, "foreign container kill denied");
 assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/containers/claw2-egress-sidecar/logs"), true);
-assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/networks/claw2-skill-egress"), true);
-assert.equal(isAllowedDockerEndpoint("DELETE", "/v1.47/networks/bridge"), false, "foreign network denied");
+assert.equal(isAllowedDockerEndpoint("HEAD", "/_ping"), true);
+assert.equal(isAllowedDockerEndpoint("GET", `/v1.47/networks/${SKILL_EGRESS_NETWORK}`), true);
+assert.equal(isAllowedDockerEndpoint("GET", `/v1.47/networks/${SIDECAR_UPSTREAM_NETWORK}`), true);
+assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/networks/claw2_default"), false);
+assert.equal(isAllowedDockerEndpoint("DELETE", `/v1.47/networks/${SKILL_EGRESS_NETWORK}`), false);
+assert.equal(isAllowedDockerEndpoint("POST", `/v1.47/networks/${SIDECAR_UPSTREAM_NETWORK}/connect`), false);
+assert.equal(isAllowedDockerEndpoint("POST", `/v1.47/networks/${SKILL_EGRESS_NETWORK}/disconnect`), false);
 assert.equal(isAllowedDockerEndpoint("GET", "/v1.47/volumes"), false);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/images/claw2:latest/push"), false);
 assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/swarm/init"), false);
@@ -51,11 +62,30 @@ assert.equal(isAllowedDockerEndpoint("POST", "/v1.47/networks/create"), true);
 assert.equal(isAllowedDockerEndpoint("PUT", "/containers/create"), false);
 assert.equal(isAllowedDockerEndpoint("GET", "/containers/../../etc/passwd"), false);
 
-// Network name scoping
-assert.deepEqual(validateNetworkCreateBody({ Name: "claw2-skill-egress" }), { ok: true });
-assert.equal(validateNetworkCreateBody({ Name: "host-net" }).ok, false);
-assert.equal(validateNetworkConnectBody({ Container: "claw2-agent-x" }).ok, true);
-assert.equal(validateNetworkConnectBody({ Container: "postgres" }).ok, false, "foreign connect target denied");
+// Both intended bridge profiles, with Docker CLI metadata.
+const inner = { Name: SKILL_EGRESS_NETWORK, Driver: "bridge", Internal: true };
+const outer = { Name: SIDECAR_UPSTREAM_NETWORK, Driver: "bridge", Internal: false };
+const cliFields = { Scope: "", IPAM: { Driver: "default", Options: {}, Config: [] }, Options: {} };
+for (const profile of [inner, outer]) {
+  assert.deepEqual(validateNetworkCreateBody({ ...profile, ...cliFields }), { ok: true });
+  assert.equal(validateNetworkCreateBody({ ...profile, Internal: !profile.Internal }).ok, false);
+  assert.deepEqual(validateEgressNetworkInfo({ ...profile, Scope: "local" }, profile.Name), { ok: true });
+  assert.equal(validateEgressNetworkInfo({ ...profile, Scope: "swarm" }, profile.Name).ok, false);
+}
+assert.equal(validateNetworkCreateBody({ ...inner, Name: "claw2-other" }).ok, false);
+assert.equal(validateNetworkCreateBody({ ...inner, Driver: "overlay" }).ok, false);
+assert.equal(validateNetworkCreateBody({ ...inner, Internal: undefined }).ok, false);
+assert.equal(validateEgressNetworkInfo({ ...outer, Scope: "local" }, SKILL_EGRESS_NETWORK).ok, false);
+
+const sidecar = {
+  ...hardened,
+  NetworkingConfig: { EndpointsConfig: { [SKILL_EGRESS_NETWORK]: {}, [SIDECAR_UPSTREAM_NETWORK]: {} } },
+};
+assert.equal(checkContainerCreateBody(sidecar, ROOTS, EGRESS_SIDECAR_NAME).ok, true);
+assert.equal(checkContainerCreateBody(hardened, ROOTS, EGRESS_SIDECAR_NAME).ok, false, "sidecar requires both networks");
+assert.equal(checkContainerCreateBody(hardened, ROOTS, null).ok, false, "request name required");
+assert.equal(validateContainerCreateBody(sidecar, ROOTS).ok, false, "skill must not join upstream network");
+assert.equal(validateContainerCreateBody({ ...hardened, HostConfig: { ...hardened.HostConfig, NetworkMode: "default" } }, ROOTS).ok, false);
 
 // Container create validation
 {
@@ -120,6 +150,32 @@ assert.equal(validateNetworkConnectBody({ Container: "postgres" }).ok, false, "f
 {
   const noRoots = validateContainerCreateBody(hardened, []);
   assert.equal(noRoots.ok, false, "empty bind-source allowlist rejects all binds (fail closed)");
+}
+{
+  // Docker mounts an optionless bind READ-WRITE — the guard must not treat it as ro.
+  const implicitRw = structuredClone(hardened) as typeof hardened;
+  (implicitRw.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents:/app/agents"];
+  assert.equal(validateContainerCreateBody(implicitRw, ROOTS).ok, false, "optionless bind (rw in Docker) rejected");
+}
+{
+  const explicitRw = structuredClone(hardened) as typeof hardened;
+  (explicitRw.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents:/app/agents:rw"];
+  assert.equal(validateContainerCreateBody(explicitRw, ROOTS).ok, false, "explicit rw bind rejected");
+}
+{
+  const roWithRw = structuredClone(hardened) as typeof hardened;
+  (roWithRw.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents:/app/agents:ro,rw"];
+  assert.equal(validateContainerCreateBody(roWithRw, ROOTS).ok, false, "ro+rw bind rejected");
+}
+{
+  const shared = structuredClone(hardened) as typeof hardened;
+  (shared.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents:/app/agents:ro,rshared"];
+  assert.equal(validateContainerCreateBody(shared, ROOTS).ok, false, "shared bind propagation rejected");
+}
+{
+  const outputNoOpts = structuredClone(hardened) as typeof hardened;
+  (outputNoOpts.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents/output:/app/output"];
+  assert.equal(validateContainerCreateBody(outputNoOpts, ROOTS).ok, true, "output mount without opts stays allowed");
 }
 
 console.log("docker-guard.test.ts: ok");

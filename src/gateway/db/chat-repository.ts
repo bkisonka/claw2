@@ -7,6 +7,9 @@ export interface SessionMessage {
   meta?: string;
 }
 
+type MessagePayload = Omit<SessionMessage, "role">;
+type TurnPromptContext = { summary: string; coveredCount: number };
+
 /** Server-side title bound: the UI caps input length, the API must too
  * (a multi-megabyte title used to be stored verbatim and re-rendered). */
 const CHAT_TITLE_MAX_CHARS = 300;
@@ -79,8 +82,16 @@ export interface ChatRepository {
   updateChatPinned(chatId: string, userId: string, pinned: boolean): boolean;
   /** Favorite / unfavorite chat (does not bump updated_at). */
   updateChatFavorited(chatId: string, userId: string, favorited: boolean): boolean;
-  /** Add a message to the chat; update updated_at chat.*/
+  /** Add a message to both history stores and update the owned chat's timestamp. */
   appendMessage(chatId: string, userId: string, role: "user" | "assistant", content: string, meta?: string): void;
+  /** Atomically append the user/assistant pair to both history stores, along with any new prompt recap. */
+  appendTurn(
+    chatId: string,
+    userId: string,
+    user: MessagePayload,
+    assistant: MessagePayload,
+    promptContext?: TurnPromptContext
+  ): void;
   /** Chat message history (full UI feed). Checking user_id.*/
   getMessages(chatId: string, userId: string): SessionMessage[];
   /** Replace chat history (scrub, etc.; not for summarize).*/
@@ -136,9 +147,9 @@ export interface ChatRepository {
   /**
    * Fork a chat: create a copy of its row and message history (full, or only the
    * first upToCount messages when given) under the newChatId. Metadata (project,
-   * model, browser_page_key, prompt context) is carried over; pinned/favorited are
-   * reset. Returns the new chat id, or null if the source chat does not belong to
-   * the user.
+   * model, browser_page_key) is carried over and pinned/favorited are reset. The
+   * recap is carried over only if all its covered messages are copied. Returns
+   * the new chat id, or null if the source chat does not belong to the user.
    */
   duplicateChat(
     userId: string,
@@ -405,16 +416,49 @@ export class SqliteChatRepository implements ChatRepository {
   }
 
   appendMessage(chatId: string, userId: string, role: "user" | "assistant", content: string, meta?: string): void {
-    const now = Date.now();
-    this.db.prepare("UPDATE chats SET updated_at = ? WHERE id = ? AND user_id = ?").run(now, chatId, userId);
-    this.db
-      .prepare("INSERT INTO messages (chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?)")
-      .run(chatId, role, content, meta ?? null, now);
-    this.db
-      .prepare(
+    this.appendMessages(chatId, userId, [{ role, content, meta }]);
+  }
+
+  appendTurn(
+    chatId: string,
+    userId: string,
+    user: MessagePayload,
+    assistant: MessagePayload,
+    promptContext?: TurnPromptContext
+  ): void {
+    this.appendMessages(chatId, userId, [
+      { ...user, role: "user" },
+      { ...assistant, role: "assistant" },
+    ], promptContext);
+  }
+
+  private appendMessages(
+    chatId: string,
+    userId: string,
+    messages: SessionMessage[],
+    promptContext?: TurnPromptContext
+  ): void {
+    this.db.transaction(() => {
+      const now = Date.now();
+      const updated = this.db
+        .prepare("UPDATE chats SET updated_at = ? WHERE id = ? AND user_id = ?")
+        .run(now, chatId, userId);
+      if (updated.changes !== 1) throw new Error("Chat not found");
+
+      const insertMessage = this.db.prepare(
+        "INSERT INTO messages (chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?)"
+      );
+      const insertTranscript = this.db.prepare(
         "INSERT INTO transcript_messages (chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?)"
-      )
-      .run(chatId, role, content, meta ?? null, now);
+      );
+      for (const { role, content, meta } of messages) {
+        insertMessage.run(chatId, role, content, meta ?? null, now);
+        insertTranscript.run(chatId, role, content, meta ?? null, now);
+      }
+      if (promptContext) {
+        this.setPromptContext(chatId, userId, promptContext.summary, promptContext.coveredCount);
+      }
+    })();
   }
 
   getMessages(chatId: string, userId: string): SessionMessage[] {
@@ -920,73 +964,59 @@ export class SqliteChatRepository implements ChatRepository {
     newChatId: string,
     opts?: { title?: string | null; upToCount?: number }
   ): string | null {
-    const src = this.db
-      .prepare(
-        "SELECT id, project_id, title, browser_page_key, model, prompt_summary, prompt_covered_count FROM chats WHERE id = ? AND user_id = ?"
-      )
-      .get(sourceChatId, userId) as
-      | {
-          id: string;
-          project_id?: string | null;
-          title: string;
-          browser_page_key?: string | null;
-          model?: string | null;
-          prompt_summary?: string | null;
-          prompt_covered_count?: number | null;
-        }
-      | undefined;
-    if (!src) return null;
     const id = newChatId.trim();
     if (!id) return null;
-    const title = capTitle(opts?.title) || src.title.slice(0, CHAT_TITLE_MAX_CHARS);
     const upTo =
       typeof opts?.upToCount === "number" && Number.isFinite(opts.upToCount)
         ? Math.max(0, Math.floor(opts.upToCount))
         : null;
-    const now = Date.now();
     const tx = this.db.transaction(() => {
+      const src = this.db
+        .prepare(
+          "SELECT project_id, title, browser_page_key, model, prompt_summary, prompt_covered_count FROM chats WHERE id = ? AND user_id = ?"
+        )
+        .get(sourceChatId, userId) as
+        | {
+            title: string;
+            project_id: string | null;
+            browser_page_key: string | null;
+            model: string | null;
+            prompt_summary: string | null;
+            prompt_covered_count: number;
+          }
+        | undefined;
+      if (!src) return null;
+      const title = capTitle(opts?.title) || src.title.slice(0, CHAT_TITLE_MAX_CHARS);
+      const now = Date.now();
       this.db
         .prepare(
-          "INSERT INTO chats (id, user_id, project_id, title, browser_page_key, model, pinned, favorited, updated_at, created_at, prompt_summary, prompt_covered_count, forked_from_chat_id) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)"
+          "INSERT INTO chats (id, user_id, project_id, title, browser_page_key, model, pinned, favorited, updated_at, created_at, forked_from_chat_id) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)"
         )
-        .run(
-          id,
-          userId,
-          src.project_id ?? null,
-          title,
-          src.browser_page_key ?? null,
-          src.model ?? null,
-          now,
-          now,
-          src.prompt_summary ?? null,
-          src.prompt_covered_count ?? 0,
-          sourceChatId
-        );
+        .run(id, userId, src.project_id, title, src.browser_page_key, src.model, now, now, sourceChatId);
       // Copy the message history with original meta/created_at (media cells and
       // /files/... references keep working); the fork shares files, links suffice.
-      const copyInto = (table: "messages" | "transcript_messages"): void => {
-        if (upTo === 0) return;
-        if (upTo == null) {
-          this.db
-            .prepare(
-              `INSERT INTO ${table} (chat_id, role, content, meta, created_at)
-               SELECT ?, role, content, meta, created_at FROM ${table} WHERE chat_id = ? ORDER BY id`
-            )
-            .run(id, sourceChatId);
-        } else {
-          this.db
-            .prepare(
-              `INSERT INTO ${table} (chat_id, role, content, meta, created_at)
-               SELECT ?, role, content, meta, created_at FROM ${table} WHERE chat_id = ? ORDER BY id LIMIT ?`
-            )
-            .run(id, sourceChatId, upTo);
-        }
+      const copyInto = (table: "messages" | "transcript_messages"): number => {
+        if (upTo === 0) return 0;
+        const limit = upTo == null ? [] : [upTo];
+        return this.db
+          .prepare(
+            `INSERT INTO ${table} (chat_id, role, content, meta, created_at)
+             SELECT ?, role, content, meta, created_at FROM ${table} WHERE chat_id = ? ORDER BY id${limit.length ? " LIMIT ?" : ""}`
+          )
+          .run(id, sourceChatId, ...limit).changes;
       };
-      copyInto("messages");
+      const copied = copyInto("messages");
       copyInto("transcript_messages");
+      // Clamping the count would leave recap text about discarded messages.
+      const covered = src.prompt_covered_count;
+      if (src.prompt_summary?.trim() && Number.isInteger(covered) && covered > 0 && covered <= copied) {
+        this.db
+          .prepare("UPDATE chats SET prompt_summary = ?, prompt_covered_count = ? WHERE id = ?")
+          .run(src.prompt_summary, covered, id);
+      }
+      return id;
     });
-    tx();
-    return id;
+    return tx.immediate();
   }
 
   getForkParent(chatId: string, userId: string): string | null {

@@ -17,6 +17,7 @@ import { buildImageEditPrompt } from "../lib/galleryActions";
 import { IconDownload, IconSpark, IconTrash, IconExpand } from "./icons";
 import { ImageLightbox } from "./ImageLightbox";
 import { ImageEditDialog } from "./ImageEditDialog";
+import { useFileGrantUrls } from "../lib/filesToken";
 
 export function GalleryTab() {
   const t = useT();
@@ -108,6 +109,7 @@ export function GalleryTab() {
     }
   };
 
+  useFileGrantUrls(images.map((img) => img.url.startsWith("/files/") ? `${apiBase}${img.url}` : img.url));
   const lightboxImg = lightboxIndex != null ? images[lightboxIndex] : null;
   const lightboxSrc = lightboxImg ? resolveMediaSrc(lightboxImg.url, apiBase) : "";
 
