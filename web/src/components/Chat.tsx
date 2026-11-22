@@ -417,6 +417,10 @@ export interface ChatProps {
   projectId?: string | null;
   /** Project name for display and context (if the chat is in a project). */
   projectName?: string | null;
+  /** Fork lineage: id of the chat this one was branched from (banner above the log). */
+  forkedFrom?: string | null;
+  /** Resolved parent chat title for the fork banner; banner renders only when resolved. */
+  forkedFromTitle?: string | null;
   /** External prompt (dynamic sidebar click) — send once. */
   seedPrompt?: string | null;
   onSeedPromptConsumed?: () => void;
@@ -474,6 +478,8 @@ export function Chat({
   onSessionUpdate,
   projectId,
   projectName,
+  forkedFrom,
+  forkedFromTitle,
   seedPrompt,
   onSeedPromptConsumed,
   seedPageContext,
@@ -1621,6 +1627,19 @@ export function Chat({
       {!isWebSurface && projectName != null && projectName.trim() !== "" && (
         <div className="chat-project-context" role="status">
           {t("chat.projectLabel")} <span className="chat-project-context-name">{projectName.trim()}</span>
+        </div>
+      )}
+      {!isWebSurface && forkedFrom && forkedFromTitle && (
+        <div className="chat-project-context chat-fork-context" role="status">
+          <button
+            type="button"
+            className="chat-fork-context-link"
+            onClick={() => onOpenPastChat?.(forkedFrom)}
+            title={t("chat.forkedFromBannerTitle")}
+            aria-label={t("chat.forkedFromBannerAria", { title: forkedFromTitle })}
+          >
+            {t("chat.forkedFromBanner", { title: forkedFromTitle })}
+          </button>
         </div>
       )}
       {!isWebSurface ? (

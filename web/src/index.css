@@ -248,6 +248,27 @@ body {
   font-weight: 500;
 }
 
+.chat-fork-context {
+  display: flex;
+  align-items: center;
+}
+
+.chat-fork-context-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+  font-family: inherit;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.chat-fork-context-link:hover {
+  color: var(--accent);
+}
+
 /* Message feed — only scrollable region between menu and input */
 .chat-log {
   flex: 1;

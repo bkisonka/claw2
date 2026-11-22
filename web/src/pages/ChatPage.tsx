@@ -118,6 +118,12 @@ function ChatPageContent() {
           onSessionUpdate={onSessionUpdate}
           projectId={currentChat?.projectId ?? pendingProjectId ?? undefined}
           projectName={projectName}
+          forkedFrom={currentChat?.forkedFrom ?? null}
+          forkedFromTitle={
+            currentChat?.forkedFrom
+              ? ctx.chats.find((c) => c.id === currentChat.forkedFrom)?.title ?? null
+              : null
+          }
           seedPrompt={seedPrompt}
           onSeedPromptConsumed={onSeedPromptConsumed}
           seedPageContext={seedPageContext}
