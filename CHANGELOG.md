@@ -3,6 +3,19 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Composer message queue and force-send**: the composer stays usable while
+  a reply is streaming — submitting puts the message into a visible numbered
+  queue above the input. Rows can be dragged to reorder, edited back into
+  the composer, removed, or sent immediately with ⚡ (interrupting the
+  running reply; the partial answer stays in the tape). When a turn ends,
+  the head of the queue sends itself. Attachments are not queued — they wait
+  in the composer with a hint. The queue is per chat and does not survive a
+  page reload. Web (full) and PWA (without drag reorder).
+
 ## [0.2.5] - 2026-11-22
 
 ### Fixed

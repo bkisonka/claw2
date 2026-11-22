@@ -41,6 +41,14 @@ import { pageKeyLabel } from "../browser/pageKey";
 import { formatVisitMarkerLabel } from "../browser/visitMarkers";
 import { markdownComponents, createMarkdownComponents } from "./markdownComponents";
 import { ChatComposerInput, type ChatComposerInputHandle } from "./ChatComposerInput";
+import { ChatQueuePanel } from "./ChatQueuePanel";
+import {
+  enqueueMessage,
+  moveQueued,
+  removeQueued,
+  takeNextQueued,
+  type QueuedMessage,
+} from "../store/composerQueue";
 import {
   ContextMenu,
   selectionTextIn,
@@ -559,7 +567,7 @@ export function Chat({
     return () => window.removeEventListener("claw2:quote-composer", onQuote);
   }, []);
 
-  // While streaming the textarea is disabled; when it re-enables, put caret back if focus was lost.
+  // When a turn ends, put the caret back if focus was lost while it streamed.
   useEffect(() => {
     if (busy) return;
     const ae = document.activeElement;
@@ -601,6 +609,17 @@ export function Chat({
   const [sessionId, setSessionId] = useState<string>(sessionIdProp);
   const sessionIdRef = useRef(sessionIdProp);
   sessionIdRef.current = sessionIdProp;
+  /**
+   * Messages submitted while a reply is streaming: queued per chat, drained
+   * FIFO when the turn ends. Ephemeral client state — a reload clears it.
+   * forcedQueuedRef marks the row whose "send now" (⚡) interrupted the run.
+   */
+  const [queues, setQueues] = useState<Record<string, QueuedMessage[]>>({});
+  const forcedQueuedRef = useRef<string | null>(null);
+  const [queueHint, setQueueHint] = useState(false);
+  const queueHintTimerRef = useRef<number | null>(null);
+  const queueSid = sessionIdRef.current || sessionId;
+  const currentQueue = queues[queueSid] ?? [];
   const prevSessionIdRef = useRef(sessionIdProp);
   useEffect(() => {
     const next = initialMessages ?? [];
@@ -1069,7 +1088,21 @@ export function Chat({
     e?.preventDefault();
     const text = (overrideText ?? composerRef.current?.getValue() ?? "").trim();
     const filesToUse = overrideText != null ? [] : files;
-    if ((!text && filesToUse.length === 0) || busy) return;
+    if (!text && filesToUse.length === 0) return;
+    if (busy) {
+      // A reply is streaming: queue the message instead of dropping it.
+      // Attachments cannot be queued — they stay in the composer with the text.
+      if (filesToUse.length > 0) {
+        setQueueHint(true);
+        if (queueHintTimerRef.current) window.clearTimeout(queueHintTimerRef.current);
+        queueHintTimerRef.current = window.setTimeout(() => setQueueHint(false), 4000);
+        return;
+      }
+      const sid = sessionIdRef.current || sessionId;
+      setQueues((prev) => ({ ...prev, [sid]: enqueueMessage(prev[sid] ?? [], text) }));
+      if (overrideText == null) composerRef.current?.clear();
+      return;
+    }
     setError(null);
     setRatingSent(false);
     setLastRunId(null);
@@ -1490,6 +1523,58 @@ export function Chat({
     // Re-run when loading clears so a click during an in-flight reply is not dropped.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seedPrompt, busy]);
+
+  /**
+   * Queue drain: when a turn ends (finish, error or abort) send the next
+   * queued message of THIS chat — the forced one first, else the head.
+   * Only the busy falling edge triggers a send, so editing/removing rows
+   * while idle never fires anything.
+   */
+  const prevQueueBusyRef = useRef(busy);
+  useEffect(() => {
+    const wasBusy = prevQueueBusyRef.current;
+    prevQueueBusyRef.current = busy;
+    if (busy || !wasBusy) return;
+    const sid = sessionIdRef.current || sessionId;
+    const q = queues[sid];
+    if (!q?.length) return;
+    const forcedId = forcedQueuedRef.current;
+    forcedQueuedRef.current = null;
+    const next = takeNextQueued(q, forcedId);
+    if (!next) return;
+    setQueues((prev) => ({ ...prev, [sid]: next.rest }));
+    void handleSubmit(undefined, next.item.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, queues, sessionId]);
+
+  /** ⚡ in the queue panel: interrupt the running reply and send this message now. */
+  const forceQueued = (id: string) => {
+    const sid = sessionIdRef.current || sessionId;
+    if (busy) {
+      forcedQueuedRef.current = id;
+      ttsAbortedRef.current = true;
+      if (sid) onAbortSession?.(sid);
+      else abortControllerRef.current?.abort();
+      return;
+    }
+    const next = takeNextQueued(queues[sid] ?? [], id);
+    if (!next) return;
+    setQueues((prev) => ({ ...prev, [sid]: next.rest }));
+    void handleSubmit(undefined, next.item.text);
+  };
+
+  /** ✏️ in the queue panel: move the text back into the composer for editing. */
+  const editQueued = (id: string) => {
+    const sid = sessionIdRef.current || sessionId;
+    const item = (queues[sid] ?? []).find((m) => m.id === id);
+    if (!item) return;
+    setQueues((prev) => ({ ...prev, [sid]: removeQueued(prev[sid] ?? [], id) }));
+    const cur = composerRef.current?.getValue() ?? "";
+    composerRef.current?.setValue(
+      cur.trim() ? `${cur.replace(/\s+$/, "")}\n\n${item.text}\n\n` : `${item.text}\n\n`
+    );
+    composerRef.current?.focus();
+  };
 
   const handleRate = async (rating: 0 | 1) => {
     if (lastRunId == null || ratingSent) return;
@@ -2090,6 +2175,28 @@ export function Chat({
           </label>
         </div>
         ) : null}
+        <ChatQueuePanel
+          queue={currentQueue}
+          onSendNow={forceQueued}
+          onEdit={editQueued}
+          onRemove={(id) =>
+            setQueues((prev) => ({
+              ...prev,
+              [queueSid]: removeQueued(prev[queueSid] ?? [], id),
+            }))
+          }
+          onMove={(from, to) =>
+            setQueues((prev) => ({
+              ...prev,
+              [queueSid]: moveQueued(prev[queueSid] ?? [], from, to),
+            }))
+          }
+        />
+        {queueHint && (
+          <p className="chat-queue-hint" role="status">
+            {t("chat.queueAttachmentsHint")}
+          </p>
+        )}
         <ChatComposerInput
           ref={composerRef}
           resetKey={sessionIdProp}
@@ -2100,8 +2207,13 @@ export function Chat({
               formRef.current?.requestSubmit();
             }
           }}
-          placeholder={isWebSurface ? t("browser.askPlaceholder") : t("chat.placeholder")}
-          disabled={busy}
+          placeholder={
+            busy
+              ? t("chat.queuePlaceholder")
+              : isWebSurface
+                ? t("browser.askPlaceholder")
+                : t("chat.placeholder")
+          }
           aria-label={t("chat.messageAria")}
         />
         {isWebSurface ? (
@@ -2109,7 +2221,6 @@ export function Chat({
             <button
               type="submit"
               className="chat-submit chat-submit--web"
-              disabled={busy}
               title={t("chat.sendTitle")}
               aria-label={t("chat.sendAria")}
             >
@@ -2141,7 +2252,6 @@ export function Chat({
               className="chat-file-btn"
               title={t("chat.attachTitle")}
               aria-label={t("chat.attachAria")}
-              disabled={loading}
               onClick={openFilePicker}
             >
               <IconPlus size={18} />
@@ -2218,7 +2328,6 @@ export function Chat({
             <button
               type="submit"
               className="chat-submit"
-              disabled={busy}
               title={t("chat.sendTitle")}
               aria-label={t("chat.sendAria")}
             >
