@@ -68,6 +68,12 @@ If you use a local model server on the host (for example Ollama on port
   downloading files, reading PDF and DOCX documents, charts, weather and
   more. When no suitable skill exists, the agent can write a new one and
   start using it after your confirmation.
+- **Fork and duplicate chats.** Branch a conversation from any message
+  (the fork button next to "copy" under each reply) or duplicate the whole
+  chat from the sidebar menu. The copy carries the history, project and
+  model; generated files stay shared between the original and its forks;
+  the sidebar shows the lineage as a tree, and deleting a chat re-attaches
+  its forks to the parent so the chain of reasoning never breaks.
 - **Activation cache (optional).** Export the trajectory of a successful
   deep conversation to a `.claw-cache` file and seed a new chat with it:
   the new session starts in the rebuilt context contour of that topic
@@ -239,15 +245,17 @@ with your own, its local `node_modules` (if present) takes precedence.
   at-your-own-risk change: without the sandbox tier, standard HTTP stacks
   are still guarded, while a skill speaking raw TLS over `node:net` is a
   known gap.
-- **Restricted docker access.** The gateway talks to the host docker only
-  through an API proxy that denies everything except the calls the skill
-  sandbox needs (container/network lifecycle, exec for health checks,
-  logs); the docker socket itself is never mounted into the gateway.
-  Stated plainly: a *fully compromised* gateway process could still abuse
-  the allowed container-create subset — that is the same trust boundary as
-  the gateway's own configuration file (which only the operator writes),
-  and it is why the skill sandbox exists at all: skill code, including
-  model-written skills, never gets that access.
+- **Validated docker access.** The gateway talks to the host docker only
+  through a validating API guard (`src/sandbox/docker-guard.ts`, a separate
+  container with read-only docker.sock on an internal network). Beyond an
+  endpoint allowlist (container/network lifecycle, image pull, health
+  probes — no exec, build, volumes or swarm), every container creation is
+  structurally validated: the hardening profile is mandatory (no
+  capabilities, no privilege escalation, read-only rootfs), privilege
+  widening is refused, bind sources must sit inside the sandbox roots, and
+  containers/networks must be claw2-named. The docker socket itself is
+  never mounted into the gateway; skill code, including model-written
+  skills, never gets any of this access.
 - **Verified identity.** Vision-based recognition ("who is at the camera")
   is trusted only when the recognition service signs its verdict with a
   shared secret (`vision.recognizeSecret`, HMAC + freshness window);
