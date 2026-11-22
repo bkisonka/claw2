@@ -5,10 +5,11 @@
  * Single resolution of the agents/output/uploads directory.
  * Desktop/CLAW2_STATE_DIR: Defaults to ~/.claw2/agents (not application cwd).
  */
-import { existsSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Claw2Config } from "../config/types.js";
 import { defaultAgentsDirUnderState, usesHomeStateLayout } from "../config/state-dir.js";
+import { safeRealPath } from "../security/safe-fs.js";
 
 export function resolveAgentsDir(config: Claw2Config): string {
   if (config.agentsDir?.trim()) return resolve(config.agentsDir.trim());
@@ -62,4 +63,33 @@ export function resolveAgentsFilePath(
 
   if (opts?.allowMissing && primary) return primary;
   return null;
+}
+
+/**
+ * Same as resolveAgentsFilePath, but symlink-hardened: the skill-writable
+ * output/uploads directories may contain planted links, so every path
+ * component is verified (safeRealPath rejects symlinks) and the canonical
+ * result must still land inside <realAgents>/output or /uploads. Used by the
+ * /files/ GET/DELETE handlers — lexical containment alone is not a boundary.
+ */
+export function resolveAgentsFileSafe(
+  agentsDir: string,
+  rel: string,
+  opts?: { allowMissing?: boolean }
+): string | null {
+  const base = resolveAgentsFilePath(agentsDir, rel, opts);
+  if (!base) return null;
+  const real = safeRealPath(base);
+  if (!real.ok) return null;
+  let realAgents: string;
+  try {
+    realAgents = realpathSync(agentsDir);
+  } catch {
+    realAgents = resolve(agentsDir);
+  }
+  const relToAgents = relative(realAgents, real.path);
+  if (relToAgents.startsWith("..") || isAbsolute(relToAgents)) return null;
+  const first = relToAgents.split(/[/\\]/)[0]?.toLowerCase() ?? "";
+  if (first !== "output" && first !== "uploads") return null;
+  return real.path;
 }

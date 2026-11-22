@@ -21,6 +21,13 @@ export async function initAuthSchema(p: pg.Pool): Promise<void> {
   if (!existsSync(schemaPath)) return;
   const sql = readFileSync(schemaPath, "utf-8");
   await p.query(sql);
+  // Migration for pre-existing databases: token_version (JWT invalidation on
+  // password change). No-op when the column is already there.
+  try {
+    await p.query("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    /* column already exists */
+  }
 }
 
 export async function closeAuthPool(): Promise<void> {

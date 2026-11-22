@@ -270,6 +270,13 @@ export interface Claw2Config {
       registrationEnabled?: boolean;
       /** JWT signature secret (minimum 32 characters). When registrationEnabled is required.*/
       sessionSecret?: string;
+      /**
+       * Logins allowed to approve skill execution (the /allow chat command) in
+       * registration (hosted) mode. Empty/absent = nobody: approvals then have
+       * to be made in the operator's config file directly. Single-user
+       * deployments (registration off) are unaffected — the API key gates them.
+       */
+      admins?: string[];
     };
     /** PostgreSQL URL for accounting (users, user_config). When auth.registrationEnabled is required.*/
     databaseUrl?: string;

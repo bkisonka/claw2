@@ -8,12 +8,26 @@
 import http from "node:http";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import { readFileSync, existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Claw2Config } from "../config/types.js";
 import { normalizeDuckDnsDomain } from "./duckdns.js";
 import { readCertMeta } from "./acme-dns01.js";
 import { writeRemoteAccessStatus } from "./status.js";
 import { upnpMapTcp, upnpUnmapTcp } from "./upnp.js";
+
+/**
+ * Per-process secret proving a request passed through THIS process's HTTPS
+ * proxy. The gateway requires it whenever X-Claw2-Via: remote-https is seen —
+ * otherwise anything that can reach the plain HTTP listener directly could
+ * spoof the via-header and ride the companion-auth path. Same process, so the
+ * secret never crosses a network.
+ */
+const PROXY_SECRET = randomBytes(32).toString("hex");
+
+export function getRemoteHttpsProxySecret(): string {
+  return PROXY_SECRET;
+}
 
 let httpsServer: HttpsServer | null = null;
 let listenPortActive: number | null = null;
@@ -164,6 +178,8 @@ function proxyRequest(config: Claw2Config, req: IncomingMessage, res: ServerResp
   const headers: http.OutgoingHttpHeaders = { ...req.headers };
   headers["x-forwarded-proto"] = "https";
   headers["x-claw2-via"] = "remote-https";
+  // Overwrite any client-supplied secret: only this proxy's value is valid.
+  headers["x-claw2-proxy-secret"] = PROXY_SECRET;
   if (req.socket.remoteAddress) {
     headers["x-forwarded-for"] = req.socket.remoteAddress;
   }

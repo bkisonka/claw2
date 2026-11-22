@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   tenant_id TEXT,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'suspended')),
+  -- Bumped on password change: JWTs carry the value at issue time and are
+  -- rejected once it drifts (server-side token invalidation).
+  token_version INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -4,14 +4,33 @@
 /**
  * Read, write, edit tools for the orchestrator. Paths are checked using isPathAllowed.
  * The alias "uploads" and "uploads/..." are substituted from config.uploads.hostPath.
+ *
+ * Skill-writable mounts (agents/output, agents/uploads) may contain planted
+ * symlinks, so after the lexical authorization every fs operation additionally
+ * verifies the physical path (safeRealPath — symlink components are rejected)
+ * and re-checks authorization on the canonical path, then opens the final
+ * component with O_NOFOLLOW (closing the check-then-open race where available).
  */
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import {
+  constants as fsConstants,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Claw2Config } from "../config/types.js";
 import { isPathAllowed, resolvePathAliases } from "../security/path-allowed.js";
+import { noFollowFlag, safeRealPath } from "../security/safe-fs.js";
 
 const MAX_FILE_SIZE_READ = 512 * 1024; // 512 KB
 const MAX_FILE_SIZE_WRITE = 1024 * 1024; // 1 MB
+
+const O_RDONLY = fsConstants.O_RDONLY ?? 0;
+const O_WRONLY = fsConstants.O_WRONLY ?? 0;
+const O_CREAT = fsConstants.O_CREAT ?? 0;
+const O_TRUNC = fsConstants.O_TRUNC ?? 0;
 
 function getResolvedPath(config: Claw2Config, pathArg: string): string {
   const workspaceDir = config.workspace ? resolve(config.workspace) : resolve(process.cwd());
@@ -19,12 +38,32 @@ function getResolvedPath(config: Claw2Config, pathArg: string): string {
   return trimmed.startsWith("/") ? resolve(trimmed) : resolve(workspaceDir, trimmed);
 }
 
+/**
+ * Authorize the lexical path, then the physical one: reject symlink
+ * components and re-authorize the canonical path (a link must not redirect
+ * an allowed path to a disallowed location).
+ */
+function resolveSafePath(config: Claw2Config, pathArg: string): { path: string; error?: string } {
+  if (!isPathAllowed(pathArg, config)) return { path: "", error: "path not allowed" };
+  const lexical = getResolvedPath(config, pathArg);
+  const real = safeRealPath(lexical);
+  if (!real.ok) return { path: "", error: `unsafe path: ${real.error ?? "unresolvable"}` };
+  // Canonical path must satisfy the same policy (defense in depth: mounts and
+  // canonicalization may move the path — it must stay within the same roots).
+  if (!isPathAllowed(real.path, config)) return { path: "", error: "path not allowed" };
+  return { path: real.path };
+}
+
 export function toolRead(config: Claw2Config, pathArg: string, encoding?: string): { ok: boolean; content?: string; error?: string } {
-  if (!isPathAllowed(pathArg, config)) return { ok: false, error: "path not allowed" };
-  const resolved = getResolvedPath(config, pathArg);
+  const safe = resolveSafePath(config, pathArg);
+  if (safe.error) return { ok: false, error: safe.error };
   try {
     const enc = encoding === "base64" ? "base64" : "utf-8";
-    const content = readFileSync(resolved, enc);
+    // Numeric flag is valid at runtime; @types/node admits strings only.
+    const content = readFileSync(safe.path, {
+      encoding: enc as BufferEncoding,
+      flag: noFollowFlag(O_RDONLY) as unknown as string,
+    });
     if (typeof content === "string" && content.length > MAX_FILE_SIZE_READ) {
       return { ok: false, error: `file too large (max ${MAX_FILE_SIZE_READ} bytes)` };
     }
@@ -35,15 +74,22 @@ export function toolRead(config: Claw2Config, pathArg: string, encoding?: string
 }
 
 export function toolWrite(config: Claw2Config, pathArg: string, content: string, encoding?: string): { ok: boolean; error?: string } {
-  if (!isPathAllowed(pathArg, config)) return { ok: false, error: "path not allowed" };
-  const resolved = getResolvedPath(config, pathArg);
+  const safe = resolveSafePath(config, pathArg);
+  if (safe.error) return { ok: false, error: safe.error };
   if (Buffer.byteLength(content, "utf-8") > MAX_FILE_SIZE_WRITE) {
     return { ok: false, error: `content too large (max ${MAX_FILE_SIZE_WRITE} bytes)` };
   }
   try {
-    mkdirSync(dirname(resolved), { recursive: true });
+    mkdirSync(dirname(safe.path), { recursive: true });
+    // The target dir may have been created through a planted symlink — re-verify.
+    const re = safeRealPath(safe.path);
+    if (!re.ok) return { ok: false, error: `unsafe path: ${re.error ?? "unresolvable"}` };
     const enc = encoding === "base64" ? "base64" : "utf-8";
-    writeFileSync(resolved, content, enc);
+    writeFileSync(re.path, content, {
+      encoding: enc === "base64" ? "base64" : "utf-8",
+      mode: 0o600,
+      flag: noFollowFlag(O_WRONLY | O_CREAT | O_TRUNC) as unknown as string,
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -56,15 +102,22 @@ export function toolEdit(
   searchText: string,
   replaceText: string
 ): { ok: boolean; error?: string } {
-  if (!isPathAllowed(pathArg, config)) return { ok: false, error: "path not allowed" };
-  const resolved = getResolvedPath(config, pathArg);
+  const safe = resolveSafePath(config, pathArg);
+  if (safe.error) return { ok: false, error: safe.error };
   try {
-    const content = readFileSync(resolved, "utf-8");
+    const content = readFileSync(safe.path, {
+      encoding: "utf-8",
+      flag: noFollowFlag(O_RDONLY) as unknown as string,
+    });
     const newContent = content.split(searchText).join(replaceText);
     if (Buffer.byteLength(newContent, "utf-8") > MAX_FILE_SIZE_WRITE) {
       return { ok: false, error: `result too large (max ${MAX_FILE_SIZE_WRITE} bytes)` };
     }
-    writeFileSync(resolved, newContent, "utf-8");
+    writeFileSync(safe.path, newContent, {
+      encoding: "utf-8",
+      mode: 0o600,
+      flag: noFollowFlag(O_WRONLY | O_TRUNC) as unknown as string,
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -75,12 +128,12 @@ export function toolListDir(
   config: Claw2Config,
   pathArg: string
 ): { ok: boolean; entries?: string[]; error?: string } {
-  if (!isPathAllowed(pathArg, config)) return { ok: false, error: "path not allowed" };
-  const resolved = getResolvedPath(config, pathArg);
+  const safe = resolveSafePath(config, pathArg);
+  if (safe.error) return { ok: false, error: safe.error };
   try {
-    const st = statSync(resolved);
+    const st = statSync(safe.path);
     if (!st.isDirectory()) return { ok: false, error: "not a directory" };
-    const entries = readdirSync(resolved);
+    const entries = readdirSync(safe.path);
     return { ok: true, entries };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

@@ -8,11 +8,20 @@ const DEFAULT_EXPIRES_IN = "7d";
 export interface JwtPayload {
   userId: string;
   login: string;
+  /**
+   * Token version (users.token_version at issue time). A mismatch against the
+   * current value invalidates the token — password change logs everyone out.
+   */
+  ver?: number;
   iat?: number;
   exp?: number;
 }
 
-export function signToken(payload: Omit<JwtPayload, "iat" | "exp">, secret: string, expiresIn = DEFAULT_EXPIRES_IN): string {
+export function signToken(
+  payload: Omit<JwtPayload, "iat" | "exp">,
+  secret: string,
+  expiresIn = DEFAULT_EXPIRES_IN
+): string {
   return jwt.sign(payload as object, secret, { expiresIn } as jwt.SignOptions);
 }
 

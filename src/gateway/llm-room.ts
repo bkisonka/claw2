@@ -20,9 +20,25 @@ function json(res: ServerResponse, status: number, body: unknown, allowOrigin = 
   res.end(JSON.stringify(body));
 }
 
+/**
+ * Body limit enforced DURING streaming (connection destroyed mid-request):
+ * LLM-room payloads are small chat JSON; a client must not be able to inflate
+ * gateway memory with an unbounded request body.
+ */
+const LLM_ROOM_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
+
 async function parseBody(req: IncomingMessage): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const c of req) chunks.push(c as Buffer);
+  let total = 0;
+  for await (const c of req) {
+    const chunk = c as Buffer;
+    total += chunk.length;
+    if (total > LLM_ROOM_BODY_LIMIT_BYTES) {
+      req.destroy();
+      throw new Error("request body too large");
+    }
+    chunks.push(chunk);
+  }
   return Buffer.concat(chunks).toString("utf-8");
 }
 

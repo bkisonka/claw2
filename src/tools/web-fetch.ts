@@ -84,10 +84,36 @@ export async function toolWebFetch(
     if (!res.ok) {
       return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
     }
-    const buf = await res.arrayBuffer();
-    throwIfAborted(signal);
-    if (buf.byteLength > maxBytes) {
+    // Stream with a running byte counter and abort as soon as the limit is
+    // exceeded: arrayBuffer() would download the whole (possibly attacker-
+    // controlled) body into memory before checking anything.
+    const reader = res.body?.getReader();
+    if (!reader) {
+      return { ok: false, error: "empty response body" };
+    }
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    let tooLarge = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      throwIfAborted(signal);
+      if (done) break;
+      received += value.byteLength;
+      if (received > maxBytes) {
+        tooLarge = true;
+        void reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(value);
+    }
+    if (tooLarge) {
       return { ok: false, error: `response too large (max ${maxBytes} bytes)` };
+    }
+    const buf = new Uint8Array(received);
+    let off = 0;
+    for (const c of chunks) {
+      buf.set(c, off);
+      off += c.byteLength;
     }
     const raw = new TextDecoder("utf-8", { fatal: false }).decode(buf);
     const contentType = res.headers.get("content-type");

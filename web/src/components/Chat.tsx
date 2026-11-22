@@ -383,7 +383,8 @@ function AssistantCell({
 }
 
 const MAX_FILE_SIZE = 15 * 1024 * 1024; // 15 MB — retina screenshots often exceed 5 MB
-const MAX_FILES = 20;
+// 10 x 15 MB ≈ 150 MB raw (~200 MB base64) — sized to the gateway's chat body limit.
+const MAX_FILES = 10;
 
 // PNG is better for the detector on a small face: fewer artifacts than JPEG compression.
 function captureVideoFrameAsBlob(video: HTMLVideoElement, mime = "image/png", quality = 1): Promise<Blob | null> {

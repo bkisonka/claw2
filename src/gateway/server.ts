@@ -3,7 +3,7 @@
 
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, lstatSync, readdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, lstatSync, readdirSync, unlinkSync, constants as fsConstants } from "node:fs";
 import { isIP } from "node:net";
 import { resolveCorsAllowOrigin } from "./cors.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
@@ -11,6 +11,7 @@ import { dirname, join, relative, resolve, extname, isAbsolute } from "node:path
 import { saveUploadedDocuments, type IncomingDocument } from "./documents.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Claw2Config } from "../config/types.js";
+import { applyUserConfigPolicy } from "../config/user-config-policy.js";
 import { getConfigPath, loadConfig, loadConfigRaw } from "../config/load.js";
 import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
@@ -58,6 +59,7 @@ import {
   verifyToken,
   getBearerToken,
 } from "./auth/index.js";
+import { LoginRateLimiter } from "./auth/rate-limit.js";
 import { startTelegramBot, sendNotifyToOwner } from "../channels/telegram.js";
 import { startVkBot } from "../channels/vk.js";
 import { startScheduler } from "../scheduler/runner.js";
@@ -72,6 +74,7 @@ import {
   runHttpsOpen,
   syncRemoteAccess,
 } from "../remote-access/service.js";
+import { getRemoteHttpsProxySecret, isHttpsListening } from "../remote-access/https-listen.js";
 import { collectConnectionsStatus } from "./connections-status.js";
 import {
   allCallLogsToMarkdown,
@@ -117,7 +120,9 @@ import {
   resolveAgentsOutputDir,
   resolveAgentsUploadsDir,
   resolveAgentsFilePath,
+  resolveAgentsFileSafe,
 } from "../agents/paths.js";
+import { noFollowFlag } from "../security/safe-fs.js";
 
 const DOWNLOAD_ALLOWED_SUBDIRS = ["output", "uploads"];
 const SESSION_FILES_OUTPUT_MAX = 100;
@@ -205,17 +210,20 @@ function deepMergeConfig(
   return result;
 }
 
-/** Effective config for a request: file (template) + user config from the database.*/
+/** Effective config for a request: file (template) + user config from the database.
+ * User config passes the security policy filter first (config/user-config-policy.ts):
+ * a registered user must not be able to override sandbox/fs/auth/channels policy. */
 function getEffectiveConfig(
   fileConfig: Claw2Config,
   userConfig: Record<string, unknown> | null | undefined
 ): Claw2Config {
-  if (!userConfig || typeof userConfig !== "object" || Object.keys(userConfig).length === 0) {
+  const allowed = applyUserConfigPolicy(userConfig);
+  if (!allowed || Object.keys(allowed).length === 0) {
     return fileConfig;
   }
   return deepMergeConfig(
     fileConfig as unknown as Record<string, unknown>,
-    userConfig
+    allowed
   ) as unknown as Claw2Config;
 }
 
@@ -418,7 +426,10 @@ function mergeConfigKeepingSecrets(
  * else — a small default.
  */
 const DEFAULT_BODY_LIMIT_BYTES = 16 * 1024 * 1024;
-const CHAT_BODY_LIMIT_BYTES = 512 * 1024 * 1024;
+// Chat bodies carry base64 attachments; the composer caps 10 files x 15 MB
+// (~150 MB raw → ~200 MB base64). 224 MiB leaves headroom while cutting the
+// concurrent-allocation surface more than twofold vs the previous 512 MiB.
+const CHAT_BODY_LIMIT_BYTES = 224 * 1024 * 1024;
 const STT_BODY_LIMIT_BYTES = 32 * 1024 * 1024;
 
 function parseRawBody(req: IncomingMessage, maxBytes = DEFAULT_BODY_LIMIT_BYTES): Promise<Buffer> {
@@ -500,6 +511,11 @@ function isCompanionPublicPath(path: string): boolean {
 /**
  * Remote HTTPS (DuckDNS) must present remoteAccess.accessToken.
  * Local Electron → gateway has no X-Claw2-Via and stays open.
+ * The via-header alone is not trusted: it must be paired with this process's
+ * proxy secret (getRemoteHttpsProxySecret) — a header only the in-process
+ * TLS proxy can produce. Requests that reach the plain listener directly
+ * cannot forge it; spoofing the via-header through any other channel is
+ * rejected outright.
  */
 function checkCompanionAccess(config: Claw2Config, req: IncomingMessage, path: string): {
   ok: boolean;
@@ -507,6 +523,16 @@ function checkCompanionAccess(config: Claw2Config, req: IncomingMessage, path: s
   error?: string;
 } {
   if (!isRemoteHttpsRequest(req)) return { ok: true };
+  const secretHeader = req.headers["x-claw2-proxy-secret"];
+  const secretProvided = typeof secretHeader === "string" ? secretHeader.trim() : "";
+  const secretExpected = getRemoteHttpsProxySecret();
+  if (!secretProvided || !safeTokenEqual(secretProvided, secretExpected)) {
+    return {
+      ok: false,
+      code: "companion_proxy_untrusted",
+      error: "Unauthorized",
+    };
+  }
   if (isCompanionPublicPath(path)) return { ok: true };
   const expected = resolveCompanionAccessToken(config);
   if (!expected) {
@@ -548,6 +574,20 @@ function contentDispositionAttachment(filename: string): string {
 
 let authRepoInstance: AuthRepository | null = null;
 
+/**
+ * Brute-force guard for /api/login and /api/register: 10 failures in 5 minutes
+ * (per ip:login) lock the key out for 15 minutes. Swept periodically to bound
+ * memory. In-memory only — restarting the gateway clears the state.
+ */
+const authRateLimiter = new LoginRateLimiter({ maxFailures: 10 });
+const authRateSweepTimer = setInterval(() => authRateLimiter.sweep(), 5 * 60_000);
+if (typeof authRateSweepTimer.unref === "function") authRateSweepTimer.unref();
+
+function authRateKey(req: IncomingMessage, login: string): string {
+  const ip = req.socket.remoteAddress ?? "unknown";
+  return `${ip}:${login.toLowerCase()}`;
+}
+
 function getAuthRepo(config: Claw2Config): AuthRepository | null {
   const url = config.gateway?.databaseUrl?.trim();
   if (!url) return null;
@@ -567,13 +607,24 @@ function isRegistrationMode(config: Claw2Config): boolean {
   );
 }
 
-const AUTH_PUBLIC_PATHS = new Set([
+/**
+ * Auth endpoints stay public for any method (register/login/logout are POST).
+ * UI-shell pages are public only for GET/HEAD: the page HTML must load before
+ * the browser can ask for credentials, but a state-changing request to those
+ * paths (POST /chat!) must always present a verified identity — otherwise a
+ * path-based exception would open the chat-processing route itself to
+ * unauthenticated callers.
+ */
+const AUTH_PUBLIC_DATA_PATHS = new Set([
   "/api/register",
   "/api/login",
   "/api/logout",
   "/api/me", // session check without token → 401 JSON
   "/api/voice/capabilities",
   "/health",
+]);
+
+const AUTH_PUBLIC_PAGE_PATHS = new Set([
   "/",
   "/chat",
   "/login",
@@ -611,14 +662,17 @@ function isTrustedHostHeader(hostHeader: unknown, config: Claw2Config): boolean 
   return trusted.includes(hostname);
 }
 
-function isAuthPublicPath(path: string): boolean {
-  if (AUTH_PUBLIC_PATHS.has(path)) return true;
-  // /files/ is deliberately NOT public: uploads and outputs are private user data.
-  if (path.startsWith("/assets/") || path.startsWith("/pwa")) return true;
+function isAuthPublicPath(method: string, path: string): boolean {
+  const reading = method === "GET" || method === "HEAD";
+  if (AUTH_PUBLIC_DATA_PATHS.has(path)) return true;
+  // UI pages and static assets: public only for reads. /files/ is deliberately
+  // NOT public: uploads and outputs are private user data.
+  if (reading && AUTH_PUBLIC_PAGE_PATHS.has(path)) return true;
+  if (reading && (path.startsWith("/assets/") || path.startsWith("/pwa"))) return true;
   // Built-in wiki shell + pages: documentation content, not user data.
-  if (path === "/wiki" || path.startsWith("/wiki/")) return true;
+  if (reading && (path === "/wiki" || path.startsWith("/wiki/"))) return true;
   // Static files (pictures, favicon) - without authorization, so that the login form loads
-  if (/^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
+  if (reading && /^\/[^/]*\.(jpg|jpeg|png|gif|svg|ico|webp|woff2?)$/i.test(path)) return true;
   return false;
 }
 
@@ -662,6 +716,53 @@ function getAuthUserId(config: Claw2Config, req: IncomingMessage): { userId: str
   if (!secret) return null;
   const payload = verifyToken(token, secret);
   return payload ? { userId: payload.userId, login: payload.login } : null;
+}
+
+/** Cached account state for token verification (TTL 60 s — one DB hit per minute per user). */
+const USER_AUTH_STATE_TTL_MS = 60_000;
+const userAuthStateCache = new Map<
+  string,
+  { status: string; tokenVersion: number; expiresAt: number }
+>();
+
+function invalidateUserAuthState(userId: string): void {
+  userAuthStateCache.delete(userId);
+}
+
+/**
+ * JWT verification + live account state: the token must belong to an ACTIVE
+ * account and carry the token version at issue time (password change bumps
+ * it and invalidates outstanding tokens). Returns null for any mismatch.
+ */
+async function verifyAuthIdentity(
+  config: Claw2Config,
+  req: IncomingMessage
+): Promise<{ userId: string; login: string } | null> {
+  const token = getBearerToken(req);
+  if (!token) return null;
+  const secret = config.gateway?.auth?.sessionSecret;
+  if (!secret) return null;
+  const payload = verifyToken(token, secret);
+  if (!payload) return null;
+  const repo = getAuthRepo(config);
+  if (!repo) return null;
+  const now = Date.now();
+  const cached = userAuthStateCache.get(payload.userId);
+  let state: { status: string; tokenVersion: number } | null;
+  if (cached && cached.expiresAt > now) {
+    state = { status: cached.status, tokenVersion: cached.tokenVersion };
+  } else {
+    state = await repo.getAuthState(payload.userId);
+    if (state) {
+      userAuthStateCache.set(payload.userId, { ...state, expiresAt: now + USER_AUTH_STATE_TTL_MS });
+    } else {
+      userAuthStateCache.delete(payload.userId);
+    }
+  }
+  if (!state) return null;
+  if (state.status !== "active") return null;
+  if ((payload.ver ?? 0) !== state.tokenVersion) return null;
+  return { userId: payload.userId, login: payload.login };
 }
 
 function getChatPageHtml(): string {
@@ -754,6 +855,38 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       );
       return;
     }
+    /**
+     * CSRF guard for auth-off deployments. The Host check above stops DNS
+     * rebinding but not plain cross-site POSTs: CORS cannot prevent a simple
+     * request from being SENT (a text/plain body with a JSON payload reaches
+     * the JSON parser untouched). Browsers always mark such requests with
+     * Origin / Sec-Fetch-Site — reject state-changing requests carrying
+     * cross-site indicators. Non-browser clients (curl, native) send no
+     * markers and are unaffected; same-origin UI matches its own Host.
+     */
+    if (!authEffective && req.method !== "GET" && req.method !== "HEAD" && req.method !== "OPTIONS") {
+      const origin = req.headers.origin;
+      if (typeof origin === "string" && origin.trim()) {
+        let sameOrigin = false;
+        try {
+          const u = new URL(origin);
+          sameOrigin = !!req.headers.host && u.host === req.headers.host;
+        } catch {
+          /* malformed Origin — treat as cross-site */
+        }
+        if (!sameOrigin) {
+          res.writeHead(403, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end("Forbidden: cross-site request");
+          return;
+        }
+      }
+      const fetchSite = req.headers["sec-fetch-site"];
+      if (typeof fetchSite === "string" && fetchSite.trim().toLowerCase() === "cross-site") {
+        res.writeHead(403, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end("Forbidden: cross-site request");
+        return;
+      }
+    }
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
         "Access-Control-Allow-Origin": corsOrigin,
@@ -837,6 +970,17 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const login = typeof data.login === "string" ? data.login.trim() : "";
         const email = typeof data.email === "string" ? data.email.trim() || null : null;
         const password = typeof data.password === "string" ? data.password : "";
+        const regKey = authRateKey(req, login || "anonymous");
+        const regCheck = authRateLimiter.attempt(regKey);
+        if (!regCheck.allowed) {
+          res.writeHead(429, {
+            "Content-Type": JSON_TYPE,
+            "Access-Control-Allow-Origin": corsOrigin,
+            "Retry-After": String(regCheck.retryAfterSec ?? 60),
+          });
+          res.end(JSON.stringify({ error: "Too many attempts; try again later" }));
+          return;
+        }
         if (!login || !password) {
           res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "login and password required" }));
@@ -849,6 +993,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
         await repo.ensureSchema();
         if (await repo.checkLoginExists(login)) {
+          authRateLimiter.failure(regKey);
           res.writeHead(409, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "login already taken" }));
           return;
@@ -859,7 +1004,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         const user = await repo.createUser({ login, email, password });
-        const token = signToken({ userId: user.id, login: user.login }, secret);
+        authRateLimiter.success(regKey);
+        const token = signToken({ userId: user.id, login: user.login, ver: user.token_version }, secret);
         res.writeHead(201, {
           "Content-Type": JSON_TYPE,
           "Access-Control-Allow-Origin": corsOrigin,
@@ -903,13 +1049,34 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           res.end(JSON.stringify({ error: "login and password required" }));
           return;
         }
+        const rateKey = authRateKey(req, login || "anonymous");
+        const rateCheck = authRateLimiter.attempt(rateKey);
+        if (!rateCheck.allowed) {
+          res.writeHead(429, {
+            "Content-Type": JSON_TYPE,
+            "Access-Control-Allow-Origin": corsOrigin,
+            "Retry-After": String(rateCheck.retryAfterSec ?? 60),
+          });
+          res.end(JSON.stringify({ error: "Too many attempts; try again later" }));
+          return;
+        }
         const user = await repo.findByLogin(login);
         if (!user || !(await repo.verifyPassword(user, password))) {
+          // Uniform error for unknown login, bad password AND locked accounts —
+          // no account-status oracle for credential stuffing.
+          authRateLimiter.failure(rateKey);
           res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(JSON.stringify({ error: "Invalid login or password" }));
           return;
         }
-        const token = signToken({ userId: user.id, login: user.login }, secret);
+        if (user.status !== "active") {
+          authRateLimiter.failure(rateKey);
+          res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Account is not active", code: `account_${user.status}` }));
+          return;
+        }
+        authRateLimiter.success(rateKey);
+        const token = signToken({ userId: user.id, login: user.login, ver: user.token_version }, secret);
         res.writeHead(200, {
           "Content-Type": JSON_TYPE,
           "Access-Control-Allow-Origin": corsOrigin,
@@ -937,7 +1104,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end(JSON.stringify({ error: "Not Found" }));
         return;
       }
-      const payload = getAuthUserId(config, req);
+      const payload = await verifyAuthIdentity(config, req);
       if (!payload) {
         res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: "Unauthorized", code: "auth_required" }));
@@ -966,7 +1133,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     }
 
     if (req.method === "PUT" && p === "/api/me/password") {
-      const payload = getAuthUserId(config, req);
+      const payload = await verifyAuthIdentity(config, req);
       if (!payload || !isRegistrationMode(config)) {
         res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: "Unauthorized" }));
@@ -995,6 +1162,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         await repo.updatePassword(payload.userId, newPwd);
+        invalidateUserAuthState(payload.userId);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {
@@ -1008,8 +1176,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
     let userId: string = "default";
     let userLogin = "";
     if (isRegistrationMode(config)) {
-      const authPayload = getAuthUserId(config, req);
-      if (!isAuthPublicPath(p) && !authPayload) {
+      const authPayload = await verifyAuthIdentity(config, req);
+      if (!isAuthPublicPath(req.method ?? "GET", p) && !authPayload) {
         res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: "Unauthorized", code: "auth_required" }));
         return;
@@ -1112,11 +1280,41 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
 
         // --- /allow <skill.js>: one-time user confirmation for a skill
-        // outside skills.allowlist. Only the real user can send it — it
-        // arrives as a chat message from the client, not as anything the
-        // model can produce. Persisted to the config file, applied at once.
+        // outside skills.allowlist. It arrives as a chat message from the
+        // client, not as anything the model can produce. Persisted to the
+        // config file, applied at once.
+        // In registration (hosted) mode approving executable code is an
+        // operator decision: only gateway.auth.admins may send /allow — an
+        // ordinary chat message is not authorization for widening the
+        // allowlist (this path used to inherit any chat-endpoint auth gap).
         const allowMatch = /^\/allow\s+([a-zA-Z0-9._-]+\.js)\s*$/i.exec(message);
         if (allowMatch) {
+          if (isRegistrationMode(config)) {
+            const admins = (config.gateway?.auth?.admins ?? []).map((a) => a.trim().toLowerCase()).filter(Boolean);
+            const isAdmin = !!userLogin && admins.includes(userLogin.toLowerCase());
+            if (!isAdmin) {
+              const content = userLogin
+                ? "Команда /allow доступна только администратору (gateway.auth.admins)."
+                : "Команда /allow доступна только администратору (войдите под аккаунтом из gateway.auth.admins).";
+              if (useStream) {
+                res.writeHead(200, {
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-cache",
+                  Connection: "keep-alive",
+                  "Access-Control-Allow-Origin": corsOrigin,
+                  "X-Session-Id": sessionId,
+                });
+                res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                res.write(`data: ${JSON.stringify({ done: true, content, sessionId })}\n\n`);
+                res.end();
+              } else {
+                res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+                res.end(JSON.stringify({ content, sessionId }));
+              }
+              auditLog(config, { type: "config_saved_denied", details: { allowSkill: allowMatch[1], userLogin } });
+              return;
+            }
+          }
           const scriptName = allowMatch[1];
           const skillPath = join(agentsDir, scriptName);
           if (!existsSync(skillPath) || !statSync(skillPath).isFile()) {
@@ -2965,7 +3163,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             typeof userConfig === "object" &&
             Object.keys(userConfig).length > 0;
           if (hasUserConfig) {
-            payload = maskSecrets(userConfig) as Record<string, unknown>;
+            // Same policy filter as the effective config: the settings UI must
+            // not round-trip admin-owned keys even if an old DB row has them.
+            payload = maskSecrets(applyUserConfigPolicy(userConfig) ?? {}) as Record<string, unknown>;
             source = "db";
           } else {
             // There is no config in the database - we give the file one as a template to be filled in in the settings.
@@ -3005,7 +3205,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             existing != null && typeof existing === "object" && Object.keys(existing).length > 0
               ? (existing as Record<string, unknown>)
               : (config as unknown as Record<string, unknown>);
-          const merged = mergeConfigKeepingSecrets(baseForMerge, data as Record<string, unknown>);
+          // Security policy: drop admin-owned keys from the incoming patch AND
+          // from the merged result (stale DB rows must not survive either).
+          const merged = applyUserConfigPolicy(
+            mergeConfigKeepingSecrets(baseForMerge, data as Record<string, unknown>)
+          ) as Record<string, unknown>;
           await repo.setUserConfig(userId, merged);
           invalidateUserConfigCache(userId);
           auditLog(config, { type: "config_saved", details: { source: "db", userId } });
@@ -3858,8 +4062,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end(JSON.stringify({ error: "Only image or document files can be deleted" }));
         return;
       }
-      const fullPath = resolveAgentsFilePath(agentsDir, rel, { allowMissing: true });
+      const fullPath = resolveAgentsFileSafe(agentsDir, rel, { allowMissing: true });
       if (!fullPath) {
+        // Includes planted-symlink paths: skill-writable dirs must not become
+        // a bridge to arbitrary gateway files.
         res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: "Forbidden" }));
         return;
@@ -3871,9 +4077,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const roots = [agentsDir, resolve(process.cwd(), "agents")];
         const seen = new Set<string>();
         for (const root of roots) {
-          const candidate = resolve(root, rel);
-          const fromRoot = relative(root, candidate);
-          if (fromRoot.startsWith("..") || seen.has(candidate)) continue;
+          const candidate = resolveAgentsFileSafe(root, rel);
+          if (!candidate || seen.has(candidate)) continue;
           seen.add(candidate);
           if (existsSync(candidate)) {
             const st = statSync(candidate);
@@ -3921,15 +4126,17 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end("Forbidden");
         return;
       }
-      const fullPath = resolveAgentsFilePath(agentsDir, rel);
+      const fullPath = resolveAgentsFileSafe(agentsDir, rel);
       if (!fullPath) {
         res.writeHead(404, { "Content-Type": TEXT_TYPE });
         res.end("Not Found");
         return;
       }
       try {
-        // Symlinks are refused: an agent-writable output dir must not become a
-        // bridge to arbitrary host files via /files/.
+        // Symlinks are refused at every path component (resolveAgentsFileSafe);
+        // O_NOFOLLOW closes the check-then-open race on the final component:
+        // an agent-writable output dir must not become a bridge to arbitrary
+        // host files via /files/.
         const lst = lstatSync(fullPath);
         if (lst.isSymbolicLink() || !lst.isFile()) {
           res.writeHead(404, { "Content-Type": TEXT_TYPE });
@@ -3969,7 +4176,13 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           "Content-Security-Policy": "sandbox",
           "Access-Control-Allow-Origin": corsOrigin,
         });
-        res.end(readFileSync(fullPath));
+        res.end(
+          readFileSync(fullPath, {
+            // Numeric open flags are valid at runtime (stringToFlags); the
+            // @types/node overload only admits strings — cast documented.
+            flag: noFollowFlag(fsConstants.O_RDONLY) as unknown as string,
+          })
+        );
       } catch {
         res.writeHead(500, { "Content-Type": TEXT_TYPE });
         res.end("Error");
@@ -4156,6 +4369,14 @@ export function startGateway(configRef: { current: Claw2Config }): void {
         "[gateway] WARNING: auth.enabled=false while gateway is not bound to loopback" +
           ` (bind=${bind ?? "all interfaces"}). Unauthenticated API may be reachable on the LAN.` +
           " Prefer gateway.bind: 127.0.0.1 (desktop) or enable gateway.auth."
+      );
+    }
+    if (isHttpsListening() && !loopback) {
+      console.error(
+        "[gateway] WARNING: remote HTTPS access is open while the plain HTTP gateway" +
+          ` is bound to a non-loopback address (bind=${bind ?? "all interfaces"}). Clients that` +
+          " bypass the TLS proxy reach it without the companion-token check —" +
+          " for desktop remote access set gateway.bind: 127.0.0.1."
       );
     }
     console.error("POST /chat — body: { message, sessionId? }");
