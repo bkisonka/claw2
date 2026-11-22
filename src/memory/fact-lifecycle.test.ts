@@ -172,6 +172,44 @@ const embB = [1, 0.1, 0, 0];
 }
 
 {
+  // Verification is a system property: touch stamps it, recall renders the
+  // demand — not the model's discipline to retype dates.
+  const config = tempConfig();
+  const store = new SqliteVecStore(config);
+  const id = await store.add({ text: "Пароль от wifi", embedding: embA, source: "user", importance: 0.9 });
+
+  const now = Date.now();
+  // Fresh fact, never verified: just its date.
+  assert.equal(
+    formatMemoryHit({ text: "x", source: "user", createdAt: now - 1000 }, 1, now),
+    "[1] (user) " + new Date(now - 1000).toISOString().slice(0, 10) + " · x"
+  );
+  // Old fact, never verified: the system demands a re-check.
+  const oldDay = new Date(now - 40 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  assert.equal(
+    formatMemoryHit({ text: "x", source: "user", createdAt: now - 40 * 24 * 3600 * 1000 }, 1, now),
+    `[1] (user) не проверено с ${oldDay} — перепроверь (memory_touch) · x`
+  );
+  // Stale verified fact: same demand, dated from the last verification.
+  assert.equal(
+    formatMemoryHit({ text: "x", source: "user", createdAt: now - 1000, verifiedAt: now - 40 * 24 * 3600 * 1000 }, 1, now),
+    `[1] (user) проверено ${oldDay} — УСТАРЕЛО, перепроверь (memory_touch) · x`
+  );
+
+  // touch() stamps verified_at with ownership.
+  assert.equal(await store.touch(id, { userId: "bob" }), false, "ownership enforced");
+  assert.equal(await store.touch(id), true);
+  const hits = await store.recall(embA, 10);
+  assert.equal(hits.length, 1);
+  assert.ok(typeof hits[0]?.verifiedAt === "number" && hits[0]!.verifiedAt! >= now, "verifiedAt surfaced in recall");
+  assert.ok(
+    formatMemoryHit(hits[0]!, 1, now).startsWith(`[1] (user) проверено ${new Date(now).toISOString().slice(0, 10)}`),
+    "verified fact renders its verification date"
+  );
+  closeMemorySqlite();
+}
+
+{
   // InMemoryStore parity: replaces retires, recall filters.
   const store = new InMemoryStore();
   const a = await store.add({ text: "v1", embedding: embA, source: "user" });

@@ -16,7 +16,7 @@ import { pickVersionForRun, recordRunAndMaybeSelect } from "../agent-selection/s
 import { computeTaskId } from "../agent-selection/task-id.js";
 import { runCodeSkill, acceptSkill } from "../coding/run-code-skill.js";
 import { selectionLog } from "../agent-selection/log.js";
-import { formatMemoryHit, memoryRecall, memoryRetire, memoryWrite } from "../memory/index.js";
+import { formatMemoryHit, memoryRecall, memoryRetire, memoryTouch, memoryWrite } from "../memory/index.js";
 import { createClient, chat, summarizeWithLlm, normalizeToolCalls, isGenerateImageToolEnabled } from "./llm.js";
 import { isPhoneCallToolEnabled } from "../config/sip.js";
 import { toolPhoneCall } from "../tools/phone-call.js";
@@ -1238,6 +1238,25 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             toolResults.push({ id: tc.id!, content: `memory_forget failed: ${msg}` });
+          }
+          continue;
+        }
+
+        if (tc.function?.name === "memory_touch") {
+          const id = String(args.id ?? "").trim();
+          if (!id) {
+            toolResults.push({ id: tc.id!, content: "Error: memory_touch requires id" });
+            continue;
+          }
+          try {
+            const result = await memoryTouch(config, id, recognizedUser ? { userId: recognizedUser, isSuperuser } : undefined);
+            toolResults.push({
+              id: tc.id!,
+              content: result.ok ? `Verified: ${id}` : `Error: ${result.reason ?? "unknown"}`,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            toolResults.push({ id: tc.id!, content: `memory_touch failed: ${msg}` });
           }
           continue;
         }

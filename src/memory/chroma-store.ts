@@ -158,6 +158,29 @@ export class ChromaStore implements IMemoryStore {
     }
   }
 
+  /** Mark a fact verified right now (memory_touch). */
+  async touch(chunkId: string, options?: MemoryRecallOptions): Promise<boolean> {
+    try {
+      const collection = await getCollection(this.config);
+      const existing = await collection.get({ ids: [chunkId], include: ["metadatas"] });
+      const meta = existing?.metadatas?.[0];
+      const owned =
+        !!meta &&
+        (!options?.userId ||
+          options.isSuperuser === true ||
+          (meta.userId ?? undefined) === options.userId);
+      if (!meta || !owned) return false;
+      await collection.update({
+        ids: [chunkId],
+        metadatas: [{ ...meta, verifiedAt: String(Date.now()) }],
+      });
+      return true;
+    } catch (err) {
+      console.error("[memory] Chroma touch failed:", err);
+      return false;
+    }
+  }
+
   async recall(
     queryEmbedding: number[],
     limit?: number,
@@ -203,6 +226,8 @@ export class ChromaStore implements IMemoryStore {
         const createdAt = typeof meta?.createdAt === "string" ? Number(meta.createdAt) : Date.now();
         const userId = typeof meta?.userId === "string" ? meta.userId : undefined;
         const untrustedOrigin = typeof meta?.untrustedOrigin === "string" && meta.untrustedOrigin === "1";
+        const verifiedAtRaw = typeof meta?.verifiedAt === "string" ? Number(meta.verifiedAt) : NaN;
+        const verifiedAt = Number.isFinite(verifiedAtRaw) ? verifiedAtRaw : undefined;
         const importanceRaw = typeof meta?.importance === "string" ? Number(meta.importance) : 0.5;
         const importance =
           typeof importanceRaw === "number" && Number.isFinite(importanceRaw)
@@ -223,6 +248,7 @@ export class ChromaStore implements IMemoryStore {
             userId,
             importance,
             untrustedOrigin,
+            verifiedAt,
           },
         });
       }

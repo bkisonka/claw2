@@ -114,6 +114,22 @@ export class SqliteVecStore implements IMemoryStore {
     return true;
   }
 
+  /** Mark a fact verified right now (memory_touch). */
+  async touch(chunkId: string, options?: MemoryRecallOptions): Promise<boolean> {
+    const db = openMemorySqlite(this.config);
+    const target = db
+      .prepare("SELECT id, user_id FROM memory_chunks WHERE chunk_id = ?")
+      .get(chunkId) as { id: number; user_id: string | null } | undefined;
+    const owned =
+      !!target &&
+      (!options?.userId ||
+        options.isSuperuser === true ||
+        target.user_id === options.userId);
+    if (!target || !owned) return false;
+    db.prepare("UPDATE memory_chunks SET verified_at = ? WHERE id = ?").run(Date.now(), target.id);
+    return true;
+  }
+
   async recall(
     queryEmbedding: number[],
     limit?: number,
@@ -151,13 +167,14 @@ export class SqliteVecStore implements IMemoryStore {
         user_id: string | null;
             origin_untrusted: number | null;
         importance: number | null;
+        verified_at: number | null;
         distance: number;
       }>;
 
       if (options?.userId && !options?.isSuperuser) {
         rows = db
           .prepare(
-            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, v.distance
+            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, c.verified_at, v.distance
              FROM memory_vec v
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
@@ -169,7 +186,7 @@ export class SqliteVecStore implements IMemoryStore {
       } else {
         rows = db
           .prepare(
-            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, v.distance
+            `SELECT c.chunk_id, c.text, c.source, c.created_at, c.user_id, c.importance, c.origin_untrusted, c.verified_at, v.distance
              FROM memory_vec v
              JOIN memory_chunks c ON c.id = v.rowid
              WHERE v.embedding MATCH ?
@@ -196,6 +213,7 @@ export class SqliteVecStore implements IMemoryStore {
           userId: r.user_id ?? undefined,
           importance,
           untrustedOrigin: r.origin_untrusted === 1,
+          ...(r.verified_at != null ? { verifiedAt: r.verified_at } : {}),
         };
         return { chunk, score };
       });

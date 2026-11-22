@@ -29,6 +29,12 @@ export interface MemoryChunk {
   status?: "active" | "retired";
   /** Id of the chunk that superseded this retired one. */
   supersededBy?: string;
+  /**
+   * When the fact was last confirmed still true (memory_touch). Null = never
+   * verified — recall marks such facts and stale ones so re-verification is
+   * the system's demand, not the model's discipline.
+   */
+  verifiedAt?: number;
 }
 
 const DEFAULT_MAX_CHUNKS = 500;
@@ -67,6 +73,8 @@ export interface IMemoryStore {
   ): Promise<{ chunk: MemoryChunk; score: number }[]>;
   /** Retire a fact without a replacement (still stored, never recalled). */
   retire?(chunkId: string, options?: MemoryRecallOptions): Promise<boolean>;
+  /** Mark a fact verified right now (memory_touch). */
+  touch?(chunkId: string, options?: MemoryRecallOptions): Promise<boolean>;
 }
 
 export class InMemoryStore implements IMemoryStore {
@@ -117,6 +125,13 @@ export class InMemoryStore implements IMemoryStore {
     const chunk = this.chunks.find((c) => c.id === chunkId);
     if (!chunk || !this.ownedBy(chunk, options?.userId, options?.isSuperuser)) return false;
     chunk.status = "retired";
+    return true;
+  }
+
+  async touch(chunkId: string, options?: MemoryRecallOptions): Promise<boolean> {
+    const chunk = this.chunks.find((c) => c.id === chunkId);
+    if (!chunk || !this.ownedBy(chunk, options?.userId, options?.isSuperuser)) return false;
+    chunk.verifiedAt = Date.now();
     return true;
   }
 

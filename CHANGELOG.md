@@ -3,6 +3,25 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Fact verification is a system property**: new `memory_touch(id)` tool
+  stamps `verified_at`; recall renders `проверено ДАТА` and marks facts that
+  were never verified or went stale (>30 days) with an explicit re-check
+  demand (`не проверено с … — перепроверь`). Forgetting to re-verify a fact
+  is now visible in every recall instead of relying on typing dates into
+  the text. Chroma parity; existing databases get the column via ALTER.
+
+### Fixed
+
+- **Bundled skills match their headers again**: `time.js` prints ISO 8601
+  (the promised format; `args:["ru"]` gives the localized ru-RU form);
+  `system-stats.js` runs without arguments as documented (live /proc +
+  `df -h`), and its dead `util.format` import and unused `parsePercentage`
+  are gone.
+
 ## [0.2.10] - 2026-11-22
 
 ### Fixed

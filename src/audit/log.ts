@@ -25,6 +25,7 @@ export type AuditEventType =
   | "run_agent_done"
   | "memory_write"
   | "memory_retire"
+  | "memory_touch"
   | "config_saved"
   | "config_saved_denied"
   | "agent_created"

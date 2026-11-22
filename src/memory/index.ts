@@ -30,6 +30,7 @@ export interface MemoryRecallResult {
     /** Record id + date: the model needs them to chain updates (replaces) and see versions. */
     id?: string;
     createdAt?: number;
+    verifiedAt?: number;
   }[];
 }
 
@@ -41,6 +42,7 @@ export interface MemoryRecallScoredResult {
     untrustedOrigin?: boolean;
     id?: string;
     createdAt?: number;
+    verifiedAt?: number;
   }[];
 }
 
@@ -182,6 +184,31 @@ export async function memoryRetire(
   }
 }
 
+/** Mark a fact as verified right now (memory_touch): recall stops nagging. */
+export async function memoryTouch(
+  config: Claw2Config,
+  chunkId: string,
+  options?: { userId?: string; isSuperuser?: boolean }
+): Promise<{ ok: boolean; reason?: string }> {
+  if (!config.memory?.enabled) return { ok: false, reason: "memory_disabled" };
+  const store = getStore(config);
+  if (typeof store.touch !== "function") {
+    return { ok: false, reason: "touch_not_supported_by_backend" };
+  }
+  try {
+    const done = await store.touch(chunkId, options);
+    auditLog(config, { type: "memory_touch", details: { chunkId, ok: done } });
+    return done ? { ok: true } : { ok: false, reason: "not_found" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[memory] memoryTouch failed:", msg);
+    return { ok: false, reason: msg };
+  }
+}
+
+/** A fact older than this without verification is marked stale in recall. */
+export const VERIFICATION_STALE_MS = 30 * 24 * 60 * 60 * 1000;
+
 /**
  * One memory hit as the model sees it: `[n] (source) 2026-11-22 · id=… · text`.
  * The date comes from createdAt at render time (never baked into the stored
@@ -189,16 +216,28 @@ export async function memoryRetire(
  * remember(text, replaces=id) on later updates.
  */
 export function formatMemoryHit(
-  chunk: { text: string; source: MemorySource; id?: string; createdAt?: number },
-  index?: number
+  chunk: { text: string; source: MemorySource; id?: string; createdAt?: number; verifiedAt?: number },
+  index?: number,
+  now: number = Date.now()
 ): string {
-  const day =
-    typeof chunk.createdAt === "number" && Number.isFinite(chunk.createdAt)
-      ? new Date(chunk.createdAt).toISOString().slice(0, 10)
-      : "unknown-date";
+  const day = (ts: number) => new Date(ts).toISOString().slice(0, 10);
   const num = typeof index === "number" ? `[${index}] ` : "";
   const id = chunk.id ? ` · id=${chunk.id}` : "";
-  return `${num}(${chunk.source}) ${day}${id} · ${chunk.text}`;
+  let when = "unknown-date";
+  const verifiedAt = chunk.verifiedAt;
+  const createdAt = chunk.createdAt;
+  if (typeof verifiedAt === "number" && Number.isFinite(verifiedAt)) {
+    when =
+      now - verifiedAt > VERIFICATION_STALE_MS
+        ? `проверено ${day(verifiedAt)} — УСТАРЕЛО, перепроверь (memory_touch)`
+        : `проверено ${day(verifiedAt)}`;
+  } else if (typeof createdAt === "number" && Number.isFinite(createdAt)) {
+    when =
+      now - createdAt > VERIFICATION_STALE_MS
+        ? `не проверено с ${day(createdAt)} — перепроверь (memory_touch)`
+        : day(createdAt);
+  }
+  return `${num}(${chunk.source}) ${when}${id} · ${chunk.text}`;
 }
 
 export interface MemoryRecallOptions {
@@ -224,6 +263,7 @@ export async function memoryRecall(
       source: c.source,
       ...(c.id ? { id: c.id } : {}),
       ...(typeof c.createdAt === "number" ? { createdAt: c.createdAt } : {}),
+      ...(typeof c.verifiedAt === "number" ? { verifiedAt: c.verifiedAt } : {}),
       ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
     })),
   };
@@ -251,6 +291,7 @@ export async function memoryRecallScored(
         score: x.score,
         id: x.chunk.id,
         createdAt: x.chunk.createdAt,
+        verifiedAt: x.chunk.verifiedAt,
         // Provenance must survive the store→consumer seam (the anti-laundering
         // check in the orchestrator reads exactly this field).
         ...(x.chunk.untrustedOrigin ? { untrustedOrigin: true } : {}),
@@ -267,6 +308,7 @@ export async function memoryRecallScored(
       score: Math.max(0, 1 - i * 0.08),
       id: c.id,
       createdAt: c.createdAt,
+      verifiedAt: c.verifiedAt,
       ...(c.untrustedOrigin ? { untrustedOrigin: true } : {}),
     })),
   };

@@ -108,7 +108,8 @@ function ensureVecTables(db: Database.Database, dim: number): void {
       user_id TEXT,
       importance REAL,
       status TEXT NOT NULL DEFAULT 'active',
-      superseded_by TEXT
+      superseded_by TEXT,
+      verified_at INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_user ON memory_chunks(user_id);
     CREATE INDEX IF NOT EXISTS idx_memory_chunks_created ON memory_chunks(created_at);
@@ -151,6 +152,13 @@ function ensureVecTables(db: Database.Database, dim: number): void {
   }
   try {
     db.exec("ALTER TABLE memory_chunks ADD COLUMN superseded_by TEXT");
+  } catch {
+    /* column already exists */
+  }
+  // Verification (existing databases): memory_touch(id) stamps it; recall
+  // marks facts that were never verified or went stale.
+  try {
+    db.exec("ALTER TABLE memory_chunks ADD COLUMN verified_at INTEGER");
   } catch {
     /* column already exists */
   }

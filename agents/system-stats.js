@@ -2,14 +2,14 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 // Agent: System status (CPU/memory/disks)
-// Call: run_agent({script:"system-stats.js"})
-// In: no args (or path to /proc snapshot)
+// Call: run_agent({script:"system-stats.js"}) — live /proc + df
+//     | run_agent({script:"system-stats.js", args:["/path/to/snapshot.txt"]})
+// In: no args — live stats (meminfo, loadavg, df); or a path to a saved
+//     snapshot file (name containing meminfo | loadavg | df | smartctl)
 // Out: stdout: resource summary
 
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-const require = createRequire(import.meta.url);
-const { format } = require('util');
+import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
 // Parser parameters
 const MAX_WIDTH = 80;
@@ -26,15 +26,10 @@ function parseMemValue(valueStr) {
 }
 
 function bytesToHuman(bytes) {
-  if (bytes >= 1024 ** 4) return `${(bytes / (1024 ** 4)).toFixed(2)} TB`;
-  if (bytes >= 1024 ** 3) return `${(bytes / (1024 ** 3)).toFixed(2)} GB`;
-  if (bytes >= 1024 ** 2) return `${(bytes / (1024 ** 2)).toFixed(2)} MB`;
+  if (bytes >= 1024 ** 4) return `${(bytes / 1024 ** 4).toFixed(2)} TB`;
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(2)} MB`;
   return `${bytes} kB`;
-}
-
-function parsePercentage(line) {
-  const match = line.match(/(\d+(\.\d+)?)\s*%/);
-  return match ? parseFloat(match[1]) : null;
 }
 
 function formatTable(headers, rows, colWidths) {
@@ -174,20 +169,30 @@ function parseSmartctl(content) {
 // Main logic
 try {
   const filePath = process.argv[2];
-  if (!filePath) throw new Error('Specify a file path (e.g.: node script.js uploads/meminfo.txt)');
-  const content = readFileSync(filePath, 'utf-8');
-  const ext = filePath.split('/').pop().toLowerCase();
-
-  if (ext.includes('meminfo') || ext.includes('mem')) {
-    parseMeminfo(content);
-  } else if (ext.includes('loadavg') || ext.includes('load')) {
-    parseLoadavg(content);
-  } else if (ext.includes('df') || ext.includes('disk')) {
-    parseDf(content);
-  } else if (ext.includes('smartctl') || ext.includes('smart')) {
-    parseSmartctl(content);
+  if (!filePath) {
+    // Live mode — the header's "no args" contract.
+    if (existsSync('/proc/meminfo')) parseMeminfo(readFileSync('/proc/meminfo', 'utf-8'));
+    if (existsSync('/proc/loadavg')) parseLoadavg(readFileSync('/proc/loadavg', 'utf-8'));
+    try {
+      parseDf(execSync('df -h -P', { encoding: 'utf-8', timeout: 5000 }));
+    } catch {
+      /* df unavailable in this sandbox — skip the disk section */
+    }
   } else {
-    throw new Error(`Unsupported file type: ${ext}. Expected extensions: meminfo, loadavg, df, smartctl.`);
+    const content = readFileSync(filePath, 'utf-8');
+    const ext = filePath.split('/').pop().toLowerCase();
+
+    if (ext.includes('meminfo') || ext.includes('mem')) {
+      parseMeminfo(content);
+    } else if (ext.includes('loadavg') || ext.includes('load')) {
+      parseLoadavg(content);
+    } else if (ext.includes('df') || ext.includes('disk')) {
+      parseDf(content);
+    } else if (ext.includes('smartctl') || ext.includes('smart')) {
+      parseSmartctl(content);
+    } else {
+      throw new Error(`Unsupported file type: ${ext}. Expected extensions: meminfo, loadavg, df, smartctl.`);
+    }
   }
 } catch (err) {
   console.error(`Error: ${err.message}`);

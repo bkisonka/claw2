@@ -187,6 +187,22 @@ export const MEMORY_FORGET_TOOL: OpenAI.Chat.ChatCompletionTool = {
   },
 };
 
+export const MEMORY_TOUCH_TOOL: OpenAI.Chat.ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "memory_touch",
+    description:
+      "Mark a fact as verified right now: you confirmed with the user (or from fresh context) that it is still true. Recall marks facts that were never verified or went stale (older than ~30 days) with a re-check demand — memory_touch clears it. Call it whenever a recalled fact still holds.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "id of the memory record (from memory_search output or the Relevant memory block)" },
+      },
+      required: ["id"],
+    },
+  },
+};
+
 export const CHRONICLE_REMEMBER_TOOL: OpenAI.Chat.ChatCompletionTool = {
   type: "function",
   function: {
@@ -924,6 +940,7 @@ export function getChatTools(config: Claw2Config): OpenAI.Chat.ChatCompletionToo
     tools.push(REMEMBER_TOOL);
     tools.push(MEMORY_SEARCH_TOOL);
     tools.push(MEMORY_FORGET_TOOL);
+    tools.push(MEMORY_TOUCH_TOOL);
   }
   if (isChronicleRecallEnabled(config)) {
     tools.push(CHRONICLE_REMEMBER_TOOL);
