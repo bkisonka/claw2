@@ -3,7 +3,7 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.1] - 2026-11-22
 
 Everything below ships in one cut: the fork/duplicate-chats feature and a
 security remediation pass (external audit + follow-up code audit).
