@@ -19,6 +19,11 @@ if [ "$(id -u)" = "0" ]; then
       chown -R node:node "$d" 2>/dev/null || true
     fi
   done
+  # Pre-create the local embedding model cache (compose points
+  # CLAW2_EMBED_CACHE here): the embed daemon creates it lazily on its first
+  # start, but the volume should be visible and node-writable from boot.
+  mkdir -p /app/.claw2/models
+  chown node:node /app/.claw2/models 2>/dev/null || true
   # gosu changes uid/gid but not the environment: give the node process its
   # home directory (the embedding model cache lives in ~/.claw2).
   export HOME=/home/node

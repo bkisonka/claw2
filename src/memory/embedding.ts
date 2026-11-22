@@ -56,11 +56,22 @@ function resolveLocalModelCacheDir(config: Claw2Config): string {
 }
 
 export function resolveLocalEmbeddingModel(config: Claw2Config): string {
-  return (
+  const configured =
     config.memory?.embeddingModel?.trim() ||
     process.env.CLAW2_MEMORY_EMBEDDING_MODEL?.trim() ||
-    DEFAULT_LOCAL_EMBEDDING_MODEL
-  );
+    "";
+  // Local embeddings load an ONNX model from a HuggingFace repo id
+  // ("Xenova/bge-small-en-v1.5"). A name without "/" is an HTTP-API model id
+  // (e.g. "text-embedding-3-small" from the shipped config example): with
+  // backend: sqlite the provider resolves to local and that name would make
+  // the daemon try to download a nonexistent repo. Ignore it with a warning.
+  if (configured.includes("/")) return configured;
+  if (configured) {
+    console.error(
+      `[memory] embeddingModel "${configured}" is not a HuggingFace repo id — using ${DEFAULT_LOCAL_EMBEDDING_MODEL} for local embeddings (set embeddingModel to an HF repo or switch the provider to http)`
+    );
+  }
+  return DEFAULT_LOCAL_EMBEDDING_MODEL;
 }
 
 async function getLocalPipeline(config: Claw2Config): Promise<FeaturePipeline> {

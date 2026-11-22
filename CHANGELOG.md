@@ -3,6 +3,20 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **API-style embedding model names no longer reach the local daemon**: with
+  `backend: sqlite` the provider resolves to local, and a config still
+  carrying `embeddingModel: text-embedding-3-small` (the HTTP default from
+  the shipped example) would make the daemon try to download a nonexistent
+  HuggingFace repo. Non-repo ids (no "/") are now ignored with a warning and
+  the default bge-small model is used.
+- **The compose volume pre-creates `.claw2/models`**: the embedding model
+  cache directory is visible and node-writable from boot, not only after
+  the daemon's lazy first start.
+
 ## [0.2.7] - 2026-11-22
 
 ### Added

@@ -11,6 +11,28 @@
 import assert from "node:assert/strict";
 import { describe, it } from "vitest";
 import { embedDaemonMatches, type SharedEmbedHealthInfo } from "./embed-daemon.js";
+import { DEFAULT_LOCAL_EMBEDDING_MODEL, resolveLocalEmbeddingModel } from "./embedding.js";
+import type { Claw2Config } from "../config/types.js";
+
+describe("resolveLocalEmbeddingModel", () => {
+  const cfg = (memory?: Claw2Config["memory"]): Claw2Config => ({ memory }) as Claw2Config;
+
+  it("accepts a HuggingFace repo id and defaults to bge-small", () => {
+    assert.equal(
+      resolveLocalEmbeddingModel(cfg({ embeddingModel: "Xenova/bge-small-en-v1.5" })),
+      "Xenova/bge-small-en-v1.5"
+    );
+    assert.equal(resolveLocalEmbeddingModel(cfg()), DEFAULT_LOCAL_EMBEDDING_MODEL);
+  });
+
+  it("ignores HTTP-API model names — they are not HF repos (the sqlite-backend trap)", () => {
+    assert.equal(
+      resolveLocalEmbeddingModel(cfg({ enabled: true, backend: "sqlite", embeddingModel: "text-embedding-3-small" })),
+      DEFAULT_LOCAL_EMBEDDING_MODEL,
+      "an API-style id must not reach the local daemon"
+    );
+  });
+});
 
 describe("embedDaemonMatches", () => {
   const want = { model: "Xenova/bge-small-en-v1.5", dim: 384 };
