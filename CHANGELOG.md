@@ -3,6 +3,22 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **ocr.js — the browser worker was the real problem**: the pinned
+  dist/worker.min.js is the BROWSER build (expects DOM globals) and dies in
+  Node worker_threads even from a local path ("addEventListener is not a
+  function"). The script no longer passes workerPath/corePath at all: in
+  Node, tesseract.js resolves its own node worker and the local core from
+  node_modules; only the pinned language data downloads, cached once via
+  cachePath in the persistent output volume.
+- **The image ships tzdata**: debian-slim has no /usr/share/zoneinfo, so a
+  TZ env like Europe/Moscow silently resolved to UTC inside the container —
+  save-docx file names and model-visible dates read a day off around
+  midnight regardless of the .env setting.
+
 ## [0.2.12] - 2026-11-23
 
 ### Removed

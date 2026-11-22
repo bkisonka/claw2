@@ -84,7 +84,10 @@ ENV CLAW2_CONFIG_PATH=/app/.claw2/claw2.yaml
 # gosu: the entrypoint (docker-entrypoint.sh) starts as root only to fix the
 # ownership of bind mounts, then drops to `node` — application code never
 # runs as root.
-RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+# tzdata: slim images ship without /usr/share/zoneinfo, so a TZ env
+# (Europe/Moscow) silently resolves to UTC — model-visible dates and
+# save-docx file names read a day off around midnight.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu tzdata \
     && rm -rf /var/lib/apt/lists/*
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

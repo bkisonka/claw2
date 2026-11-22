@@ -8,26 +8,16 @@
 //     argv[4]?=txt name in output
 // Out: stdout: JSON { ok, text, confidence, savedTo? }
 //
-// Node's Worker requires a LOCAL script path, so CDN URLs for the tesseract
-// worker fail outright. Runtime assets (worker, core wasm, lang data) are
-// downloaded once — pinned versions only — into a persistent cache under the
-// output volume and referenced as local files after that.
+// Node notes: do NOT pass workerPath/corePath. The dist/worker.min.js is
+// the BROWSER worker (expects DOM globals — addEventListener) and dies in
+// worker_threads; in Node tesseract.js resolves its own node worker and the
+// local tesseract.js-core from node_modules. The only network touch is the
+// language data (pinned 4.0.0 by default), cached persistently via cachePath
+// so one-off skill containers download it once.
 
 import { createWorker } from "tesseract.js";
-import { createWriteStream, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-
-const TESSERACT_JS_VERSION = "5.1.1";
-const TESSERACT_CORE_VERSION = "5.1.1";
-const TESSDATA_BASE = "https://tessdata.projectnaptha.com/4.0.0";
-const CORE_FILES = [
-  "tesseract-core.wasm.js",
-  "tesseract-core-simd.wasm.js",
-  "tesseract-core-lstm.wasm.js",
-  "tesseract-core-simd-lstm.wasm.js",
-];
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const imagePath = process.argv[2]?.trim();
 const lang = process.argv[3]?.trim() || "eng+rus";
@@ -43,57 +33,12 @@ if (!existsSync(imagePath)) {
   process.exit(1);
 }
 
-const cacheDir = join(process.env.OUTPUT_DIR || "output", ".tesseract-cache");
-
-async function fetchToFile(url, dest) {
-  const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(120_000) });
-  if (!res.ok || !res.body) throw new Error(`download failed: HTTP ${res.status} for ${url}`);
-  const part = `${dest}.part`;
-  await pipeline(Readable.fromWeb(res.body), createWriteStream(part));
-  renameSync(part, dest);
-}
-
-/** Download once into the cache, then always serve the local path. */
-async function ensureAsset(url, rel) {
-  const dest = join(cacheDir, rel);
-  if (existsSync(dest) && statSync(dest).size > 0) return dest;
-  mkdirSync(dirname(dest), { recursive: true });
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      await fetchToFile(url, dest);
-      return dest;
-    } catch (err) {
-      lastErr = err;
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 1000 * attempt));
-    }
-  }
-  throw lastErr;
-}
+const cacheDir = join(process.env.OUTPUT_DIR || "output", ".tesseract-cache", "lang");
 
 let worker;
 try {
-  const workerPath = await ensureAsset(
-    `https://cdn.jsdelivr.net/npm/tesseract.js@${TESSERACT_JS_VERSION}/dist/worker.min.js`,
-    `tesseract.js@${TESSERACT_JS_VERSION}/worker.min.js`
-  );
-  for (const f of CORE_FILES) {
-    await ensureAsset(
-      `https://cdn.jsdelivr.net/npm/tesseract.js-core@${TESSERACT_CORE_VERSION}/${f}`,
-      `tesseract.js-core@${TESSERACT_CORE_VERSION}/${f}`
-    );
-  }
-  const corePath = join(cacheDir, `tesseract.js-core@${TESSERACT_CORE_VERSION}`);
-  const langs = lang.split("+").map((l) => l.trim()).filter(Boolean);
-  for (const code of langs) {
-    await ensureAsset(
-      `${TESSDATA_BASE}/${code}.traineddata.gz`,
-      `tessdata-4.0.0/${code}.traineddata.gz`
-    );
-  }
-  const langPath = join(cacheDir, "tessdata-4.0.0");
-
-  worker = await createWorker(langs.join("+"), 1, { workerPath, corePath, langPath });
+  mkdirSync(cacheDir, { recursive: true });
+  worker = await createWorker(lang, 1, { cachePath: cacheDir });
   const { data } = await worker.recognize(imagePath);
   await worker.terminate();
   const text = data.text?.trim() ?? "";
