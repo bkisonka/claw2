@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 import type { Components } from "react-markdown";
+import { signFilesUrl } from "../lib/filesToken";
 import type { MouseEvent, ReactNode } from "react";
 import { CodeBlock, normalizeLang } from "./CodeBlock";
 
@@ -23,11 +24,13 @@ function isHttpUrl(href: string): boolean {
 }
 
 function LinkAnchor({
-  href,
+  href: hrefRaw,
   children,
   onOpenLink,
   ...props
 }: LinkProps & { onOpenLink?: MarkdownLinkHandler }) {
+  // /files links are navigations without auth headers — sign like media.
+  const href = hrefRaw && hrefRaw.includes("/files/") ? signFilesUrl(hrefRaw) : hrefRaw;
   return (
     <a
       {...props}

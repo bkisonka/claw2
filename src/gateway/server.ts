@@ -12,6 +12,8 @@ import { saveUploadedDocuments, type IncomingDocument } from "./documents.js";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import type { Claw2Config } from "../config/types.js";
 import { applyUserConfigPolicy } from "../config/user-config-policy.js";
+import { assertPublicUrl } from "../security/url-guard.js";
+import { FILES_TOKEN_TTL_MS, signFilesToken, verifyFilesToken } from "./files-token.js";
 import { getConfigPath, loadConfig, loadConfigRaw } from "../config/load.js";
 import { resetMemoryStore } from "../memory/index.js";
 import { resolveEffectiveTtsEngine, resolveTtsEngine, resolveVoiceSttUrl, resolveVoiceTtsUrl, resolveSttLocal, resolveTtsLocal, resolveSttModel, resolveSttApiKey, resolveTtsModel, resolveTtsApiKey, resolveTtsVoice, fetchTtsVoiceOptions, openaiAudioBase } from "../config/voice.js";
@@ -122,7 +124,7 @@ import {
   resolveAgentsFilePath,
   resolveAgentsFileSafe,
 } from "../agents/paths.js";
-import { noFollowFlag } from "../security/safe-fs.js";
+import { noFollowFlag, safeRealPath, verifyComponents } from "../security/safe-fs.js";
 
 const DOWNLOAD_ALLOWED_SUBDIRS = ["output", "uploads"];
 const SESSION_FILES_OUTPUT_MAX = 100;
@@ -236,6 +238,32 @@ function getEffectiveConfig(
  * key must not ride along — otherwise every request exfiltrates it. The flags
  * set here are deny-only (a tenant can set them, but that only strips keys).
  */
+/**
+ * Hosted-mode SSRF gate for tenant-overridden server-side endpoints: an LLM
+ * baseURL is fetched BY THE GATEWAY on every turn (with the chat context in
+ * the body). DNS-aware check (assertPublicUrl) — literal private IPs and
+ * hostnames resolving into private ranges are refused.
+ * Returns the refusal message, or null when allowed.
+ */
+async function assertTenantLlmEndpointPublic(
+  config: Claw2Config,
+  userId: string,
+  effective: Claw2Config
+): Promise<string | null> {
+  if (!isRegistrationMode(config)) return null;
+  const repo = getAuthRepo(config);
+  if (!repo) return null;
+  const userConfig = await getCachedUserConfig(repo, userId);
+  const allowed = applyUserConfigPolicy(userConfig);
+  const llm = allowed?.llm as { baseURL?: unknown } | undefined;
+  const raw = llm?.baseURL;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const normalized = raw.trim().replace(/\/+$/, "");
+  const url = /\/v\d+$/.test(normalized) ? normalized : `${normalized}/v1`;
+  const guard = await assertPublicUrl(url, false);
+  return guard.ok ? null : `llm.baseURL is not allowed: ${guard.error}`;
+}
+
 function applyTenantSecretGuards(merged: Claw2Config, overrides: Partial<Claw2Config>): void {
   if (!isRegistrationIntended(merged)) return;
   const llm = overrides.llm as Record<string, unknown> | undefined;
@@ -1259,6 +1287,15 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       return;
     }
 
+    if (req.method === "GET" && p === "/api/files-token") {
+      // Short-lived signed token for header-less media loads (see /files gate).
+      const secret =
+        config.gateway?.auth?.sessionSecret?.trim() || config.gateway?.auth?.apiKey?.trim() || "";
+      const exp = Date.now() + FILES_TOKEN_TTL_MS;
+      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+      res.end(JSON.stringify({ k: signFilesToken(secret, userId, exp), exp }));
+      return;
+    }
     if (req.method === "POST" && p === "/chat") {
       let activeRun: ReturnType<typeof beginActiveChatRun> | undefined;
       let onRequestAborted: (() => void) | undefined;
@@ -1559,6 +1596,25 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           Array.isArray(raw) && raw.length > 0
             ? saveUploadedDocuments(raw as IncomingDocument[], sessionId, effectiveConfig)
             : [];
+        const tenantEndpointError = await assertTenantLlmEndpointPublic(config, userId, effectiveConfig);
+        if (tenantEndpointError) {
+          if (useStream) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+              "Access-Control-Allow-Origin": corsOrigin,
+              "X-Session-Id": sessionId,
+            });
+            res.write(`data: ${JSON.stringify({ error: tenantEndpointError, code: "endpoint_not_allowed" })}\n\n`);
+            res.write("data: [DONE]\n\n");
+            res.end();
+          } else {
+            res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+            res.end(JSON.stringify({ error: tenantEndpointError, code: "endpoint_not_allowed" }));
+          }
+          return;
+        }
         const chatStartMs = Date.now();
         const llmReady = assessLlmConfigured(effectiveConfig);
         if (!llmReady.ok) {
@@ -3728,6 +3784,12 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           const userConfig = await getCachedUserConfig(repo, userId);
           effective = getEffectiveConfig(config, userConfig);
         }
+        const tenantEndpointError = await assertTenantLlmEndpointPublic(config, userId, effective);
+        if (tenantEndpointError) {
+          res.writeHead(403, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: tenantEndpointError, code: "endpoint_not_allowed", models: [] }));
+          return;
+        }
         const llm = effective.llm;
         const baseURL = (llm?.baseURL?.trim() || process.env.OPENAI_BASE_URL?.trim() || "").replace(/\/+$/, "");
         // resolveLlmApiKey honors the tenant guard (noOperatorApiKeyFallback):
@@ -4291,6 +4353,20 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.end("Forbidden");
         return;
       }
+      // Header-less media loads authenticate via the signed token (k):
+      // browser <img>/<audio>/<a> cannot send API-key/JWT headers. Auth-off
+      // single-owner deployments (no secret to sign with) stay open as before.
+      if (authEffective || registrationGateActive) {
+        const filesUrl = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
+        const k = filesUrl.searchParams.get("k") ?? "";
+        const filesSecret =
+          config.gateway?.auth?.sessionSecret?.trim() || config.gateway?.auth?.apiKey?.trim() || "";
+        if (!verifyFilesToken(filesSecret, k)) {
+          res.writeHead(401, { "Content-Type": TEXT_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end("Unauthorized");
+          return;
+        }
+      }
       const fullPath = resolveAgentsFileSafe(agentsDir, rel);
       if (!fullPath) {
         res.writeHead(404, { "Content-Type": TEXT_TYPE });
@@ -4302,6 +4378,15 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         // O_NOFOLLOW closes the check-then-open race on the final component:
         // an agent-writable output dir must not become a bridge to arbitrary
         // host files via /files/.
+        // Swap detection between the component walk and the open: a planted
+        // symlink in an intermediate directory would redirect this read with
+        // gateway privileges. dev/ino mismatch -> refuse.
+        const reWalk = safeRealPath(fullPath);
+        if (!reWalk.ok || !verifyComponents(reWalk.components)) {
+          res.writeHead(404, { "Content-Type": TEXT_TYPE });
+          res.end("Not Found");
+          return;
+        }
         const lst = lstatSync(fullPath);
         if (lst.isSymbolicLink() || !lst.isFile()) {
           res.writeHead(404, { "Content-Type": TEXT_TYPE });
@@ -4545,6 +4630,31 @@ export function startGateway(configRef: { current: Claw2Config }): void {
       );
     }
     console.error("POST /chat — body: { message, sessionId? }");
+    // Fail-early surface for the sandbox-boundary config conflicts that would
+    // otherwise fail per skill run with guard rejections.
+    const siblingRoot = process.env.CLAW2_SIBLING_HOST_ROOT?.trim();
+    if (siblingRoot) {
+      const hostPath = config.uploads?.hostPath?.trim();
+      if (hostPath) {
+        const resolvedHost = resolve(hostPath);
+        const resolvedRoot = resolve(siblingRoot);
+        if (!resolvedHost.startsWith(resolvedRoot.endsWith("/") ? resolvedRoot : resolvedRoot + "/")) {
+          console.error(
+            "[gateway] CONFIG CONFLICT: uploads.hostPath (" + resolvedHost + ") is outside the" +
+              " compose sandbox bind roots (" + resolvedRoot + "). The docker guard rejects such" +
+              " binds — skill runs with uploads will fail. Move uploads inside " + resolvedRoot +
+              " or add the host path to CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC."
+          );
+        }
+      }
+    }
+    if ((process.env.DOCKER_HOST ?? "").trim().startsWith("tcp://") && !siblingRoot) {
+      console.error(
+        "[gateway] CONFIG CONFLICT: DOCKER_HOST is remote but CLAW2_SIBLING_HOST_ROOT is not set." +
+          " Skill sandbox binds cannot be mapped to host paths — every skill run will fail" +
+          " (set CLAW2_SIBLING_HOST_ROOT to the host directory that contains agents/ and data/)."
+      );
+    }
     if (config.channels?.telegram?.enabled) {
       try {
         startTelegramBot(config);

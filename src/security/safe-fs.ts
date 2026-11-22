@@ -23,7 +23,7 @@
  * module is the "what will the kernel actually open" guarantee, not an
  * access-control list.
  */
-import { constants as fsConstants, lstatSync, realpathSync } from "node:fs";
+import { constants as fsConstants, lstatSync, realpathSync, type Stats } from "node:fs";
 import { parse, resolve } from "node:path";
 
 export interface SafeRealPath {
@@ -31,6 +31,9 @@ export interface SafeRealPath {
   /** Canonical path: deepest existing prefix realpath'ed + the lexical tail. */
   path: string;
   error?: string;
+  /** Identity of every existing component (dev+ino) — re-checkable to detect
+   * a symlink swap between the walk and the actual open (TOCTOU detection). */
+  components?: { path: string; dev: number; ino: number }[];
 }
 
 /** O_NOFOLLOW is POSIX; on platforms without it the flag is a no-op (0). */
@@ -53,10 +56,11 @@ export function safeRealPath(resolved: string): SafeRealPath {
   const parts = rel.split(/[/\\]/).filter(Boolean);
   let built = parsed.root;
   let lastExisting = parsed.root;
+  const components: { path: string; dev: number; ino: number }[] = [];
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i]!;
     const candidate = built.endsWith("/") ? built + part : `${built}/${part}`;
-    let st: { isSymbolicLink(): boolean };
+    let st: Stats;
     try {
       st = lstatSync(candidate);
     } catch (err) {
@@ -84,14 +88,39 @@ export function safeRealPath(resolved: string): SafeRealPath {
     }
     built = candidate;
     lastExisting = built;
+    components.push({ path: built, dev: st.dev, ino: st.ino });
   }
   // Every component exists and none is a symlink: canonicalize (mounts,
   // case normalization) and return. realpath cannot escape here — no links.
   try {
-    return { ok: true, path: realpathSync(lastExisting) };
+    return { ok: true, path: realpathSync(lastExisting), components };
   } catch (err) {
     return { ok: false, path: lastExisting, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/**
+ * TOCTOU detection: re-lstat every component and compare dev/ino with the
+ * walk-time identities. A planted symlink (or any swap) between the walk and
+ * this check changes the identity — the caller must abort the operation.
+ * Kernel-level elimination would need openat(RESOLVE_NO_SYMLINKS), which
+ * Node does not expose; detection + abort shrinks the exploitable window to
+ * the gap between this check and the final O_NOFOLLOW open.
+ */
+export function verifyComponents(
+  components: { path: string; dev: number; ino: number }[] | undefined
+): boolean {
+  if (!components) return true; // non-existent tail — nothing to verify
+  for (const c of components) {
+    let st: Stats;
+    try {
+      st = lstatSync(c.path);
+    } catch {
+      return false; // component vanished
+    }
+    if (st.isSymbolicLink() || st.dev !== c.dev || st.ino !== c.ino) return false;
+  }
+  return true;
 }
 
 export { O_NOFOLLOW };

@@ -3,6 +3,7 @@
 
 import type { ReactNode } from "react";
 import type { DisplayCell } from "./messageCells";
+import { signFilesUrl } from "./filesToken";
 
 export type CellSegment =
   | { kind: "text"; value: string }
@@ -27,14 +28,17 @@ export function splitCellPlaceholders(content: string): CellSegment[] {
   return out;
 }
 
-/** Relative /files/... → absolute against apiBase (empty apiBase = same-origin). */
+/** Relative /files/... → absolute against apiBase (empty apiBase = same-origin),
+ * signed with the short-lived files token (browser media loads carry no auth
+ * headers — see lib/filesToken.ts). */
 export function resolveMediaSrc(url: string, apiBase: string): string {
   const trimmed = url.trim();
   if (!trimmed) return trimmed;
   if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
-    return `${apiBase.replace(/\/$/, "")}${trimmed}`;
+    const abs = `${apiBase.replace(/\/$/, "")}${trimmed}`;
+    return signFilesUrl(abs);
   }
-  return trimmed;
+  return signFilesUrl(trimmed);
 }
 
 export function renderCellSegments(

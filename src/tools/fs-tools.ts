@@ -22,7 +22,7 @@ import {
 import { dirname, resolve } from "node:path";
 import type { Claw2Config } from "../config/types.js";
 import { isPathAllowed, resolvePathAliases } from "../security/path-allowed.js";
-import { noFollowFlag, safeRealPath } from "../security/safe-fs.js";
+import { noFollowFlag, safeRealPath, verifyComponents } from "../security/safe-fs.js";
 
 const MAX_FILE_SIZE_READ = 512 * 1024; // 512 KB
 const MAX_FILE_SIZE_WRITE = 1024 * 1024; // 1 MB
@@ -43,7 +43,10 @@ function getResolvedPath(config: Claw2Config, pathArg: string): string {
  * components and re-authorize the canonical path (a link must not redirect
  * an allowed path to a disallowed location).
  */
-function resolveSafePath(config: Claw2Config, pathArg: string): { path: string; error?: string } {
+function resolveSafePath(
+  config: Claw2Config,
+  pathArg: string
+): { path: string; error?: string; components?: { path: string; dev: number; ino: number }[] } {
   if (!isPathAllowed(pathArg, config)) return { path: "", error: "path not allowed" };
   const lexical = getResolvedPath(config, pathArg);
   const real = safeRealPath(lexical);
@@ -51,13 +54,14 @@ function resolveSafePath(config: Claw2Config, pathArg: string): { path: string; 
   // Canonical path must satisfy the same policy (defense in depth: mounts and
   // canonicalization may move the path — it must stay within the same roots).
   if (!isPathAllowed(real.path, config)) return { path: "", error: "path not allowed" };
-  return { path: real.path };
+  return { path: real.path, components: real.components };
 }
 
 export function toolRead(config: Claw2Config, pathArg: string, encoding?: string): { ok: boolean; content?: string; error?: string } {
   const safe = resolveSafePath(config, pathArg);
   if (safe.error) return { ok: false, error: safe.error };
   try {
+    if (!verifyComponents(safe.components)) return { ok: false, error: "path changed during access (possible symlink swap)" };
     const enc = encoding === "base64" ? "base64" : "utf-8";
     // Numeric flag is valid at runtime; @types/node admits strings only.
     const content = readFileSync(safe.path, {
@@ -83,7 +87,9 @@ export function toolWrite(config: Claw2Config, pathArg: string, content: string,
     mkdirSync(dirname(safe.path), { recursive: true });
     // The target dir may have been created through a planted symlink — re-verify.
     const re = safeRealPath(safe.path);
-    if (!re.ok) return { ok: false, error: `unsafe path: ${re.error ?? "unresolvable"}` };
+    if (!re.ok || !verifyComponents(re.components)) {
+      return { ok: false, error: `unsafe path: ${re.error ?? "path changed during access"}` };
+    }
     const enc = encoding === "base64" ? "base64" : "utf-8";
     writeFileSync(re.path, content, {
       encoding: enc === "base64" ? "base64" : "utf-8",
@@ -105,6 +111,7 @@ export function toolEdit(
   const safe = resolveSafePath(config, pathArg);
   if (safe.error) return { ok: false, error: safe.error };
   try {
+    if (!verifyComponents(safe.components)) return { ok: false, error: "path changed during access (possible symlink swap)" };
     const content = readFileSync(safe.path, {
       encoding: "utf-8",
       flag: noFollowFlag(O_RDONLY) as unknown as string,
@@ -131,6 +138,7 @@ export function toolListDir(
   const safe = resolveSafePath(config, pathArg);
   if (safe.error) return { ok: false, error: safe.error };
   try {
+    if (!verifyComponents(safe.components)) return { ok: false, error: "path changed during access (possible symlink swap)" };
     const st = statSync(safe.path);
     if (!st.isDirectory()) return { ok: false, error: "not a directory" };
     const entries = readdirSync(safe.path);
