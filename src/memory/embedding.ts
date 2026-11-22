@@ -126,22 +126,28 @@ function extractVector(output: unknown, expectedDim: number): number[] {
 }
 
 async function getLocalEmbedding(config: Claw2Config, text: string): Promise<number[]> {
-  const { ensureSharedEmbedDaemon, sharedEmbedBaseURL, SHARED_EMBED_MODEL } =
-    await import("./ensure-shared-embed.js");
-  const baseURL = await ensureSharedEmbedDaemon(config);
-  const model = resolveLocalEmbeddingModel(config) || SHARED_EMBED_MODEL;
-  const client = new OpenAI({
-    apiKey: "local",
-    baseURL: baseURL || sharedEmbedBaseURL(),
-    timeout: EMBEDDING_REQUEST_TIMEOUT_MS,
+  const { ensureSharedEmbedDaemon } = await import("./ensure-shared-embed.js");
+  const base = await ensureSharedEmbedDaemon(config);
+  // Plain fetch, deliberately NOT the OpenAI SDK: the daemon is our own
+  // OpenAI-compatible endpoint. The SDK layer stayed unauditable in the
+  // 96-dim investigation — the daemon verifiably pads every vector to its
+  // dim (direct probes returned 384) while gateway-side reads through the
+  // SDK saw 96 — so the request now goes through nothing but fetch.
+  const res = await fetch(`${base}/embeddings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: "Bearer local" },
+    body: JSON.stringify({ input: text.slice(0, 8192) }),
+    signal: AbortSignal.timeout(EMBEDDING_REQUEST_TIMEOUT_MS),
   });
-  const response = await client.embeddings.create({
-    model,
-    input: text.slice(0, 8192),
-  });
-  const vec = response.data[0]?.embedding;
-  if (!vec || !Array.isArray(vec)) throw new Error("Empty embedding from shared daemon");
-  return vec;
+  if (!res.ok) {
+    throw new Error(`Embedding daemon HTTP ${res.status}`);
+  }
+  const data = (await res.json()) as { data?: Array<{ embedding?: unknown }> };
+  const vec = data.data?.[0]?.embedding;
+  if (!Array.isArray(vec) || vec.length === 0) {
+    throw new Error("Empty embedding from shared daemon");
+  }
+  return vec as number[];
 }
 
 async function getHttpEmbedding(
@@ -159,6 +165,11 @@ async function getHttpEmbedding(
     const response = await embeddingClient.embeddings.create({
       model,
       input: text.slice(0, 8192),
+      // Explicit float: without it the OpenAI SDK silently requests
+      // encoding_format=base64 and base64-decodes the response — correct for
+      // the real OpenAI API, garbage for OpenAI-compatible servers that
+      // answer with a JSON array (Ollama, vLLM, LM Studio, our own daemon).
+      encoding_format: "float",
     });
     const vec = response.data[0]?.embedding;
     if (!vec || !Array.isArray(vec)) throw new Error("Empty embedding");

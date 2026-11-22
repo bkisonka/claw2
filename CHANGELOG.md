@@ -3,6 +3,20 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **"Embedding dim mismatch: got 96, expected 384" — root cause found and
+  removed**: the OpenAI SDK silently sends `encoding_format=base64` when an
+  embeddings call omits it, then base64-decodes the response. Servers that
+  answer with a plain JSON array (our local daemon, Ollama, vLLM, LM Studio)
+  got their JSON string run through the base64 decoder — garbage floats of a
+  wrong, content-dependent length (96 for bge-small's 384). Local embeddings
+  now use a plain fetch against the daemon (no SDK in the path), and the
+  HTTP provider passes `encoding_format: "float"` explicitly so the SDK
+  returns the response as-is.
+
 ## [0.2.9] - 2026-11-22
 
 ### Fixed
