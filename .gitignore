@@ -36,6 +36,12 @@ pwa/android/keystore.properties
 pwa/android/*.keystore
 pwa/android/app/src/main/assets/public/
 
+# Local audit report (unpatched security findings — never publish)
+AUDIT.md
+
+# ZCode session state
+.zcode/
+
 # OS noise
 .DS_Store
 Thumbs.db
