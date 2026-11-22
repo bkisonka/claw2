@@ -34,8 +34,9 @@ cd claw2
 
 # 1. Environment: the model API key and the gateway access key.
 cp .env.example .env
-openssl rand -hex 24   # → CLAW2_GATEWAY_API_KEY
-nano .env
+openssl rand -hex 24   # generate the gateway key
+nano .env              # paste it into .env as CLAW2_GATEWAY_API_KEY=<generated key>;
+                       # put your model provider key into OPENAI_API_KEY
 
 # 2. Configuration: create the agent config from the example.
 cp .claw2/claw2.gateway.yaml.example .claw2/claw2.yaml

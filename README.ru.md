@@ -35,8 +35,9 @@ cd claw2
 
 # 1. Окружение: ключ модели и ключ доступа к шлюзу.
 cp .env.example .env
-openssl rand -hex 24   # → CLAW2_GATEWAY_API_KEY
-nano .env
+openssl rand -hex 24   # сгенерируйте ключ шлюза
+nano .env              # вставьте его в .env строкой CLAW2_GATEWAY_API_KEY=<сгенерированный ключ>;
+                       # ключ провайдера модели — в OPENAI_API_KEY
 
 # 2. Конфигурация: создайте конфиг агента из примера.
 cp .claw2/claw2.gateway.yaml.example .claw2/claw2.yaml
