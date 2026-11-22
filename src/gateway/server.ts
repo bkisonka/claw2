@@ -2061,6 +2061,51 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       }
       return;
     }
+    if (req.method === "POST" && p === "/chat/duplicate") {
+      // Fork a chat: full duplicate (no up_to_count) or a branch cut at the first
+      // up_to_count messages. Files stay shared — the copy carries /files/ links only.
+      let chatRepo = getChatRepository();
+      if (!chatRepo && config.gateway?.chatsDbPath) {
+        chatRepo = initDb(resolve(process.cwd(), config.gateway.chatsDbPath));
+      }
+      if (!chatRepo) {
+        res.writeHead(503, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "Chats DB not configured (gateway.chatsDbPath)" }));
+        return;
+      }
+      try {
+        const body = await parseBody(req);
+        const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        const sessionId = typeof data.session_id === "string" ? data.session_id.trim() : "";
+        if (!sessionId) {
+          res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "session_id required" }));
+          return;
+        }
+        const title = typeof data.title === "string" && data.title.trim() ? data.title.trim() : null;
+        const upToCount =
+          typeof data.up_to_count === "number" && Number.isFinite(data.up_to_count)
+            ? Math.max(0, Math.floor(data.up_to_count))
+            : undefined;
+        const newSessionId = generateSessionId();
+        const newId = chatRepo.duplicateChat(userId, sessionId, newSessionId, {
+          title,
+          upToCount,
+        });
+        if (!newId) {
+          res.writeHead(404, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Chat not found" }));
+          return;
+        }
+        const chat = chatRepo.listChats(userId).find((c) => c.id === newId) ?? null;
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ sessionId: newId, chat }));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
     if (req.method === "DELETE" && p === "/chat") {
       const deleteUrl = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
       const sessionId = deleteUrl.searchParams.get("session_id")?.trim();
@@ -3753,10 +3798,25 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return resolveAgentsFilePath(agentsDir, img.path) != null;
         });
         const fromMsgs = collectChatDocuments(messages);
-        const fromDisk = collectSessionPrefixedDocuments(sessionId, {
-          outputDir,
-          uploadsDir,
-        });
+        // Forked chats share files with their ancestors (links suffice), so disk
+        // files saved under the ancestors' session prefixes belong here too.
+        const ancestorSessionIds: string[] = [];
+        let forkCursor = sessionId;
+        for (let depth = 0; depth < 10; depth++) {
+          const parent = chatRepo.getForkParent(forkCursor, userId);
+          if (!parent) break;
+          ancestorSessionIds.push(parent);
+          forkCursor = parent;
+        }
+        const fromDisk = mergeChatDocuments(
+          collectSessionPrefixedDocuments(sessionId, {
+            outputDir,
+            uploadsDir,
+          }),
+          ...ancestorSessionIds.map((id) =>
+            collectSessionPrefixedDocuments(id, { outputDir, uploadsDir })
+          )
+        );
         const documents = mergeChatDocuments(fromMsgs, fromDisk).filter(
           (d) => resolveAgentsFilePath(agentsDir, d.path) != null
         );

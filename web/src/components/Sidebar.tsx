@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 import type { ProjectListItemApi } from "../api/project";
@@ -20,6 +21,7 @@ import {
   IconDownload,
   IconEdit,
   IconFile,
+  IconFork,
   IconMore,
   IconMenu,
   IconPin,
@@ -69,6 +71,31 @@ function chatsInProject(chats: ChatItem[], projectId: string): ChatItem[] {
   return chats.filter((chat) => chat.projectId === projectId).sort(compareChatItems);
 }
 
+/** Fork lineage metadata for a chat row (expansion toggle + tooltip). */
+interface ForkRowMeta {
+  parentTitle?: string;
+  childCount: number;
+  expanded: boolean;
+  onToggle: () => void;
+}
+
+/**
+ * Group forked chats by their parent (only parents visible in the same list —
+ * a fork whose parent is elsewhere renders top-level). Children in chain order.
+ */
+function buildForkChildren(list: ChatItem[]): Map<string, ChatItem[]> {
+  const ids = new Set(list.map((c) => c.id));
+  const map = new Map<string, ChatItem[]>();
+  for (const chat of list) {
+    if (!chat.forkedFrom || !ids.has(chat.forkedFrom)) continue;
+    const children = map.get(chat.forkedFrom);
+    if (children) children.push(chat);
+    else map.set(chat.forkedFrom, [chat]);
+  }
+  for (const children of map.values()) children.sort((a, b) => a.updatedAt - b.updatedAt);
+  return map;
+}
+
 interface SidebarProps {
   open?: boolean;
   chats: ChatItem[];
@@ -86,6 +113,7 @@ interface SidebarProps {
   onDeleteChat?: (chatId: string) => void;
   onExportChat?: (chatId: string) => void;
   onExportClawCache?: (chatId: string) => void;
+  onDuplicateChat?: (chatId: string, opts?: { upToCount?: number; title?: string }) => Promise<string | null>;
   onChatProjectChange?: (chatId: string, projectId: string | null) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
@@ -119,6 +147,7 @@ export function Sidebar({
   onDeleteChat,
   onExportChat,
   onExportClawCache,
+  onDuplicateChat,
   onChatProjectChange,
   onChatPinnedChange,
   onChatFavoritedChange,
@@ -153,6 +182,8 @@ export function Sidebar({
   } | null>(null);
   const [newChatMenuOpen, setNewChatMenuOpen] = useState(false);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
+  /** Fork subtrees are expanded by default; the set holds collapsed chat ids. */
+  const [collapsedForkIds, setCollapsedForkIds] = useState<Set<string>>(new Set());
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectFormOpen, setProjectFormOpen] = useState(false);
   const [projectNameDraft, setProjectNameDraft] = useState("");
@@ -371,6 +402,15 @@ export function Sidebar({
     });
   };
 
+  const toggleForkExpand = (chatId: string) => {
+    setCollapsedForkIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(chatId)) next.delete(chatId);
+      else next.add(chatId);
+      return next;
+    });
+  };
+
   const dynamicClickLock = useRef(false);
 
   const handleDynamicItem = async (item: DynamicSidebarItem) => {
@@ -491,6 +531,24 @@ export function Sidebar({
           </span>
           {isPinned ? t("sidebar.unpin") : t("sidebar.pin")}
         </button>
+        <button
+          type="button"
+          className="layout-sidebar-chat-item-menu-btn"
+          role="menuitem"
+          title={t("sidebar.duplicateChatHint")}
+          onClick={() => {
+            closeMenu();
+            const ok = window.confirm(t("sidebar.duplicateChatConfirm", { title: chat.title }));
+            if (ok) void onDuplicateChat?.(chat.id);
+            // Native confirm steals keyboard focus on Windows Electron even on Cancel.
+            else void restoreShellFocus();
+          }}
+        >
+          <span className="layout-sidebar-chat-item-menu-icon shell-nav-ico" aria-hidden>
+            <IconFork />
+          </span>
+          {t("sidebar.duplicateChat")}
+        </button>
         <button type="button" className="layout-sidebar-chat-item-menu-btn" role="menuitem" onClick={() => { onExportChat?.(chat.id); closeMenu(); }}>
           <span className="layout-sidebar-chat-item-menu-icon shell-nav-ico" aria-hidden><IconDownload /></span>
           {t("sidebar.exportMd")}
@@ -561,7 +619,7 @@ export function Sidebar({
     );
   };
 
-  const renderChatRow = (chat: ChatItem, nested = false) => {
+  const renderChatRow = (chat: ChatItem, nested = false, forkMeta?: ForkRowMeta) => {
     const streaming = streamingChatIds.includes(chat.id);
     const attention = !streaming && attentionChatIds.includes(chat.id);
     const statusTitle = streaming
@@ -569,13 +627,16 @@ export function Sidebar({
       : attention
         ? t("sidebar.chatReady")
         : undefined;
+    const rowTitle = forkMeta?.parentTitle
+      ? `${chat.title}\n${t("sidebar.forkedFromTitle", { title: forkMeta.parentTitle })}`
+      : chat.title;
     return (
     <div
       key={chat.id}
       className={`layout-sidebar-chat-item-row${nested ? " layout-sidebar-chat-item-row-nested" : ""}${currentChatId === chat.id ? " layout-sidebar-chat-item-active" : ""}${openMenuId === chat.id ? " layout-sidebar-chat-item-row--menu-open" : ""}${streaming ? " layout-sidebar-chat-item-row--streaming" : ""}${attention ? " layout-sidebar-chat-item-row--attention" : ""}`}
       ref={openMenuId === chat.id ? menuRef : undefined}
     >
-      <button type="button" className={`layout-sidebar-chat-item${nested ? " layout-sidebar-chat-item-nested" : ""}`} onClick={() => handleSelectChat(chat.id)} title={chat.title}>
+      <button type="button" className={`layout-sidebar-chat-item${nested ? " layout-sidebar-chat-item-nested" : ""}`} onClick={() => handleSelectChat(chat.id)} title={rowTitle}>
         <span className="layout-sidebar-chat-item-title">{chat.title}</span>
         {chat.favorited ? (
           <span className="layout-sidebar-chat-item-badge layout-sidebar-chat-item-badge--star" title={t("sidebar.unfavorite")} aria-hidden>
@@ -597,6 +658,22 @@ export function Sidebar({
           </span>
         ) : null}
       </button>
+      {forkMeta && forkMeta.childCount > 0 ? (
+        <button
+          type="button"
+          className="layout-sidebar-chat-item-fork-toggle"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            forkMeta.onToggle();
+          }}
+          aria-expanded={forkMeta.expanded}
+          aria-label={forkMeta.expanded ? t("sidebar.collapse") : t("sidebar.expand")}
+          title={forkMeta.expanded ? t("sidebar.collapse") : t("sidebar.expand")}
+        >
+          <span className="shell-nav-ico" aria-hidden><IconChevron open={forkMeta.expanded} /></span>
+        </button>
+      ) : null}
       <button
         type="button"
         className="layout-sidebar-chat-item-actions"
@@ -615,8 +692,43 @@ export function Sidebar({
     );
   };
 
-  const allChats = searchQuery.trim() ? chats : chats.filter((chat) => !chat.projectId);
-  const allChatGroups = groupChatsByDate(allChats, t);
+  /** A chat row followed by its fork children (recursively, in chain order). */
+  const renderForkSubtree = (
+    chat: ChatItem,
+    childrenMap: Map<string, ChatItem[]>,
+    depth: number,
+    parentTitle?: string
+  ): ReactNode => {
+    const children = childrenMap.get(chat.id) ?? [];
+    const expanded = !collapsedForkIds.has(chat.id);
+    const childNodes =
+      expanded && children.length > 0
+        ? children.map((child) => renderForkSubtree(child, childrenMap, depth + 1, chat.title))
+        : null;
+    return (
+      <div
+        key={chat.id}
+        className={depth > 0 ? "layout-sidebar-fork-node layout-sidebar-fork-node--nested" : "layout-sidebar-fork-node"}
+        style={depth > 0 ? { marginLeft: 14 } : undefined}
+      >
+        {renderChatRow(
+          chat,
+          depth > 0,
+          children.length > 0
+            ? { parentTitle, childCount: children.length, expanded, onToggle: () => toggleForkExpand(chat.id) }
+            : undefined
+        )}
+        {childNodes}
+      </div>
+    );
+  };
+
+  const searchMode = !!searchQuery.trim();
+  const allChats = searchMode ? chats : chats.filter((chat) => !chat.projectId);
+  // Forked chats render nested under their parent; search stays a flat list.
+  const allForkChildren = searchMode ? new Map<string, ChatItem[]>() : buildForkChildren(allChats);
+  const allChatTop = allChats.filter((chat) => !(chat.forkedFrom && allForkChildren.has(chat.forkedFrom)));
+  const allChatGroups = groupChatsByDate(allChatTop, t);
 
   return (
     <aside className={`layout-sidebar ${open ? "" : "layout-sidebar-closed"}`} aria-label={t("sidebar.aria")}>
@@ -852,7 +964,16 @@ export function Sidebar({
                     )}
                     {expanded && (
                       <div className="layout-sidebar-project-chats">
-                        {projectChats.length === 0 ? <div className="layout-sidebar-placeholder layout-sidebar-project-placeholder">{t("sidebar.noChats")}</div> : projectChats.map((chat) => renderChatRow(chat, true))}
+                        {projectChats.length === 0 ? (
+                          <div className="layout-sidebar-placeholder layout-sidebar-project-placeholder">{t("sidebar.noChats")}</div>
+                        ) : (
+                          (() => {
+                            const projectForkChildren = buildForkChildren(projectChats);
+                            return projectChats
+                              .filter((chat) => !(chat.forkedFrom && projectForkChildren.has(chat.forkedFrom)))
+                              .map((chat) => renderForkSubtree(chat, projectForkChildren, 0));
+                          })()
+                        )}
                       </div>
                     )}
                   </div>
@@ -919,7 +1040,7 @@ export function Sidebar({
                   : allChatGroups.map((group) => (
                     <div key={group.label} className="layout-sidebar-chat-group">
                       <div className="layout-sidebar-chat-group-label">{group.label}</div>
-                      {group.items.map((chat) => renderChatRow(chat))}
+                      {group.items.map((chat) => renderForkSubtree(chat, allForkChildren, 0))}
                     </div>
                   ))}
           </div>

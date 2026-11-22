@@ -19,6 +19,7 @@ import {
   fetchChatHistory,
   fetchSearchResults,
   deleteChat,
+  duplicateChat,
   updateChatProject,
   updateChatBrowserPageKey,
   updateChatPinned,
@@ -553,6 +554,7 @@ export function AuthenticatedArea() {
                     : old?.model?.trim() || null,
                 pinned: typeof c.pinned === "boolean" ? c.pinned : !!old?.pinned,
                 favorited: typeof c.favorited === "boolean" ? c.favorited : !!old?.favorited,
+                forkedFrom: c.forked_from_chat_id ?? null,
                 historyEvicted: old?.historyEvicted,
               };
             });
@@ -1013,6 +1015,49 @@ export function AuthenticatedArea() {
     reclaimComposerFocus();
   }, [reclaimComposerFocus]);
 
+  /**
+   * Fork a chat: full duplicate, or a branch cut at the first `upToCount` messages
+   * (fork-from-message). Files stay shared (links suffice); the fork inherits
+   * project/model/prompt context and opens immediately after creation.
+   */
+  const handleDuplicateChat = useCallback(
+    async (chatId: string, opts?: { upToCount?: number; title?: string }): Promise<string | null> => {
+      const id = chatId.trim();
+      if (!id) return null;
+      const source = chatsRef.current.find((c) => c.id === id);
+      const baseTitle = (source?.title || "").trim();
+      const fallbackTitle = baseTitle ? `${baseTitle}${t("sidebar.duplicateChatSuffix")}` : "";
+      try {
+        const { sessionId: newId, chat } = await duplicateChat(id, {
+          upToCount: opts?.upToCount,
+          title: opts?.title ?? fallbackTitle,
+        });
+        const forkItem: ChatItem = {
+          id: newId,
+          title: (chat?.title || "").trim() || fallbackTitle || newId,
+          updatedAt: chat?.updated_at ?? Date.now(),
+          messages: [],
+          projectId: chat?.project_id ?? source?.projectId ?? undefined,
+          browserPageKey: chat?.browser_page_key ?? source?.browserPageKey ?? null,
+          model: chat?.model ?? source?.model ?? null,
+          pinned: false,
+          favorited: false,
+          forkedFrom: chat?.forked_from_chat_id ?? id,
+        };
+        historyLastAccessedRef.current.set(newId, Date.now());
+        setChats((prev) => [...prev, forkItem].sort(compareChatItems));
+        handleSelectChat(newId);
+        return newId;
+      } catch (err) {
+        window.alert(err instanceof Error ? err.message : t("sidebar.duplicateChatFailed"));
+        return null;
+      } finally {
+        reclaimComposerFocus();
+      }
+    },
+    [handleSelectChat, reclaimComposerFocus, t]
+  );
+
   useEffect(() => {
     const api = window.claw2Desktop;
     if (!api?.onMenu) return;
@@ -1222,6 +1267,7 @@ export function AuthenticatedArea() {
     onDeleteChat: handleDeleteChat,
     onExportChat: handleExportChat,
     onExportClawCache: handleExportClawCache,
+    onDuplicateChat: handleDuplicateChat,
     onChatProjectChange: handleChatProjectChange,
     onChatPinnedChange: handleChatPinnedChange,
     onChatFavoritedChange: handleChatFavoritedChange,
@@ -1257,6 +1303,7 @@ export function AuthenticatedArea() {
     onDeleteChat: handleDeleteChat,
     onChatProjectChange: handleChatProjectChange,
     onExportChat: handleExportChat,
+    onDuplicateChat: handleDuplicateChat,
     onNewChat: handleNewChat,
     onProjectCreated: handleProjectCreated,
     onProjectUpdated: handleProjectUpdated,

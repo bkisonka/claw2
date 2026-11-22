@@ -156,6 +156,19 @@ export function IconTrash(p: IconProps) {
   );
 }
 
+/** Fork/branch (git-branch): trunk with a branch splitting off to the side. */
+export function IconFork(p: IconProps) {
+  return (
+    <svg {...base(p)}>
+      <circle cx="6" cy="4" r="2" />
+      <circle cx="6" cy="20" r="2" />
+      <circle cx="18" cy="6" r="2" />
+      <path d="M6 6v12" />
+      <path d="M18 8a8 8 0 0 1-8 8H6" />
+    </svg>
+  );
+}
+
 export function IconEdit(p: IconProps) {
   return (
     <svg {...base(p)}>

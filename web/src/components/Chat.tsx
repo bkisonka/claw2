@@ -460,6 +460,8 @@ export interface ChatProps {
   browserPageKey?: string | null;
   /** Open a past chat from an Insight card. */
   onOpenPastChat?: (chatId: string) => void;
+  /** Fork the chat: create a new chat carrying the first upToCount messages of the history. */
+  onForkFrom?: (upToCount: number) => void;
   /** Per-chat model override (null = settings default). */
   chatModel?: string | null;
   onChatModelChange?: (model: string | null) => void;
@@ -494,6 +496,7 @@ export function Chat({
   browserChatTitle = null,
   browserPageKey = null,
   onOpenPastChat,
+  onForkFrom,
   chatModel = null,
   onChatModelChange,
 }: ChatProps) {
@@ -694,6 +697,20 @@ export function Chat({
   const [visionError, setVisionError] = useState<string | null>(null);
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [chatCtxMenu, setChatCtxMenu] = useState<ContextMenuState | null>(null);
+  /** Fork from a message: count DB-aligned messages up to and including index (visit markers are client-only, not stored). */
+  const handleForkFromMessage = (index: number) => {
+    if (!onForkFrom) return;
+    const upToCount = messages
+      .slice(0, index + 1)
+      .filter((m) => m.role === "user" || m.role === "assistant").length;
+    if (upToCount <= 0) return;
+    if (!window.confirm(t("chat.forkConfirm"))) {
+      // Native confirm steals keyboard focus on Windows Electron even on Cancel.
+      void restoreShellFocus();
+      return;
+    }
+    onForkFrom(upToCount);
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const visionStreamRef = useRef<MediaStream | null>(null);
@@ -1861,31 +1878,50 @@ export function Chat({
                 </ul>
               )}
             </div>
-            {msg.role === "assistant" && msg.content && (
+            {(msg.role === "user" || (msg.role === "assistant" && msg.content)) && (
               <div className="chat-msg-actions">
+                {msg.role === "assistant" && msg.content && (
+                  <button
+                    type="button"
+                    className={`chat-msg-copy${copiedMessageIndex === i ? " chat-msg-copy--done" : ""}`}
+                    onClick={() => {
+                      const raw = msg.content;
+                      if (!raw) return;
+                      const text = markdownToPlainText(raw);
+                      navigator.clipboard.writeText(text).then(
+                        () => {
+                          setCopiedMessageIndex(i);
+                          setTimeout(() => setCopiedMessageIndex(null), 2000);
+                        },
+                        () => {}
+                      );
+                    }}
+                    title={t("chat.copyTitle")}
+                    aria-label={t("chat.copyAria")}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                    {copiedMessageIndex === i ? t("common.copied") : t("common.copy")}
+                  </button>
+                )}
                 <button
                   type="button"
-                  className={`chat-msg-copy${copiedMessageIndex === i ? " chat-msg-copy--done" : ""}`}
-                  onClick={() => {
-                    const raw = msg.content;
-                    if (!raw) return;
-                    const text = markdownToPlainText(raw);
-                    navigator.clipboard.writeText(text).then(
-                      () => {
-                        setCopiedMessageIndex(i);
-                        setTimeout(() => setCopiedMessageIndex(null), 2000);
-                      },
-                      () => {}
-                    );
-                  }}
-                  title={t("chat.copyTitle")}
-                  aria-label={t("chat.copyAria")}
+                  className="chat-msg-fork"
+                  onClick={() => handleForkFromMessage(i)}
+                  disabled={busy}
+                  title={t("chat.forkHint")}
+                  aria-label={t("chat.forkAria")}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    <circle cx="6" cy="4" r="2" />
+                    <circle cx="6" cy="20" r="2" />
+                    <circle cx="18" cy="6" r="2" />
+                    <path d="M6 6v12" />
+                    <path d="M18 8a8 8 0 0 1-8 8H6" />
                   </svg>
-                  {copiedMessageIndex === i ? t("common.copied") : t("common.copy")}
+                  {t("chat.forkTitle")}
                 </button>
               </div>
             )}

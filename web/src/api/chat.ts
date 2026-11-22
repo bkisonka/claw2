@@ -15,6 +15,8 @@ export interface ChatListItemApi {
   model?: string | null;
   pinned?: boolean;
   favorited?: boolean;
+  /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
+  forked_from_chat_id?: string | null;
 }
 
 /** Message from GET /chat/history. */
@@ -418,6 +420,35 @@ export async function deleteChat(sessionId: string): Promise<boolean> {
   const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
   return data.ok === true;
+}
+
+/**
+ * Fork a chat: full duplicate when upToCount is omitted, or a branch carrying
+ * only the first upToCount messages (fork-from-message). Files stay shared.
+ */
+export async function duplicateChat(
+  sessionId: string,
+  opts?: { upToCount?: number; title?: string }
+): Promise<{ sessionId: string; chat: ChatListItemApi | null }> {
+  const id = sessionId.trim();
+  if (!id) throw new Error("session_id required");
+  const res = await fetch(`${apiBase}/chat/duplicate`, {
+    method: "POST",
+    headers: chatHeaders(),
+    body: JSON.stringify({
+      session_id: id,
+      ...(typeof opts?.upToCount === "number" ? { up_to_count: Math.max(0, Math.floor(opts.upToCount)) } : {}),
+      ...(opts?.title?.trim() ? { title: opts.title.trim() } : {}),
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    sessionId?: string;
+    chat?: ChatListItemApi | null;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  if (!data.sessionId) throw new Error("Missing sessionId in duplicate response");
+  return { sessionId: data.sessionId, chat: data.chat ?? null };
 }
 
 /** Attach a chat to a project or detach it (projectId === null). */

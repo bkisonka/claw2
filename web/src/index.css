@@ -682,6 +682,35 @@ body {
   background: rgba(13, 125, 61, 0.18);
 }
 
+.chat-msg-fork {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.chat-msg-fork:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+  background: var(--surface);
+}
+
+.chat-msg-fork:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.chat-msg-fork svg {
+  flex-shrink: 0;
+}
+
 .chat-msg-file-name {
   display: inline-flex;
   align-items: center;
@@ -1748,6 +1777,35 @@ body {
   flex: 0 0 auto;
   max-width: 28px;
   min-width: 28px;
+}
+
+.layout-sidebar-chat-item-fork-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.layout-sidebar-chat-item-fork-toggle:hover {
+  color: var(--text-primary);
+}
+
+.layout-sidebar-chat-item-fork-toggle svg {
+  display: block;
+}
+
+/* Fork tree: nested chats carry a connector line (chain of reasoning). */
+.layout-sidebar-fork-node--nested {
+  border-left: 1px solid var(--border);
+  padding-left: 3px;
 }
 
 .layout-sidebar-search {

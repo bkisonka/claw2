@@ -20,6 +20,8 @@ export interface ChatListItem {
   pinned?: boolean;
   /** Favorited (star). */
   favorited?: boolean;
+  /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
+  forked_from_chat_id?: string | null;
 }
 
 export interface ProjectListItem {
@@ -125,7 +127,22 @@ export interface ChatRepository {
   ): TranscriptReadResultRow;
   /** History of one chat (for GET /chat/history). If the chat does not belong to the user - an empty array.*/
   getChatHistory(chatId: string, userId: string): SessionMessage[];
-  /** Delete the chat and all its messages. Returns true if the chat belonged to the user and was deleted.*/
+  /**
+   * Fork a chat: create a copy of its row and message history (full, or only the
+   * first upToCount messages when given) under the newChatId. Metadata (project,
+   * model, browser_page_key, prompt context) is carried over; pinned/favorited are
+   * reset. Returns the new chat id, or null if the source chat does not belong to
+   * the user.
+   */
+  duplicateChat(
+    userId: string,
+    sourceChatId: string,
+    newChatId: string,
+    opts?: { title?: string | null; upToCount?: number }
+  ): string | null;
+  /** forked_from_chat_id of the chat (or null). Used to walk the fork chain upward.*/
+  getForkParent(chatId: string, userId: string): string | null;
+  /** Delete the chat and all its messages. Children forks are re-attached to the deleted chat's parent (graft). Returns true if the chat belonged to the user and was deleted.*/
   deleteChat(chatId: string, userId: string): boolean;
   /** Link the chat to a project or unlink it (projectId === null). Returns true if the chat is found and belongs to user.*/
   updateChatProject(chatId: string, userId: string, projectId: string | null): boolean;
@@ -232,6 +249,7 @@ function mapChatListRow(r: {
   model?: string | null;
   pinned?: number | null;
   favorited?: number | null;
+  forked_from_chat_id?: string | null;
 }): ChatListItem {
   return {
     id: r.id,
@@ -242,6 +260,7 @@ function mapChatListRow(r: {
     model: typeof r.model === "string" && r.model.trim() ? r.model.trim() : null,
     pinned: Number(r.pinned ?? 0) === 1,
     favorited: Number(r.favorited ?? 0) === 1,
+    forked_from_chat_id: r.forked_from_chat_id ?? null,
   };
 }
 
@@ -453,10 +472,10 @@ export class SqliteChatRepository implements ChatRepository {
     const hasProject = projectId !== undefined && projectId !== null && projectId !== "";
     const stmt = hasProject
       ? this.db.prepare(
-          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited FROM chats WHERE user_id = ? AND project_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
+          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id FROM chats WHERE user_id = ? AND project_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
         )
       : this.db.prepare(
-          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited FROM chats WHERE user_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
+          "SELECT id, title, updated_at, project_id, browser_page_key, model, pinned, favorited, forked_from_chat_id FROM chats WHERE user_id = ? ORDER BY pinned DESC, favorited DESC, updated_at DESC"
         );
     const rows = (hasProject ? stmt.all(userId, projectId) : stmt.all(userId)) as Array<{
       id: string;
@@ -467,6 +486,7 @@ export class SqliteChatRepository implements ChatRepository {
       model?: string | null;
       pinned?: number | null;
       favorited?: number | null;
+      forked_from_chat_id?: string | null;
     }>;
     return rows.map((r) => mapChatListRow(r));
   }
@@ -886,6 +906,88 @@ export class SqliteChatRepository implements ChatRepository {
     return this.getMessages(chatId, userId);
   }
 
+  duplicateChat(
+    userId: string,
+    sourceChatId: string,
+    newChatId: string,
+    opts?: { title?: string | null; upToCount?: number }
+  ): string | null {
+    const src = this.db
+      .prepare(
+        "SELECT id, project_id, title, browser_page_key, model, prompt_summary, prompt_covered_count FROM chats WHERE id = ? AND user_id = ?"
+      )
+      .get(sourceChatId, userId) as
+      | {
+          id: string;
+          project_id?: string | null;
+          title: string;
+          browser_page_key?: string | null;
+          model?: string | null;
+          prompt_summary?: string | null;
+          prompt_covered_count?: number | null;
+        }
+      | undefined;
+    if (!src) return null;
+    const id = newChatId.trim();
+    if (!id) return null;
+    const title = opts?.title != null && opts.title.trim() ? opts.title.trim() : src.title;
+    const upTo =
+      typeof opts?.upToCount === "number" && Number.isFinite(opts.upToCount)
+        ? Math.max(0, Math.floor(opts.upToCount))
+        : null;
+    const now = Date.now();
+    const tx = this.db.transaction(() => {
+      this.db
+        .prepare(
+          "INSERT INTO chats (id, user_id, project_id, title, browser_page_key, model, pinned, favorited, updated_at, created_at, prompt_summary, prompt_covered_count, forked_from_chat_id) VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?)"
+        )
+        .run(
+          id,
+          userId,
+          src.project_id ?? null,
+          title,
+          src.browser_page_key ?? null,
+          src.model ?? null,
+          now,
+          now,
+          src.prompt_summary ?? null,
+          src.prompt_covered_count ?? 0,
+          sourceChatId
+        );
+      // Copy the message history with original meta/created_at (media cells and
+      // /files/... references keep working); the fork shares files, links suffice.
+      const copyInto = (table: "messages" | "transcript_messages"): void => {
+        if (upTo === 0) return;
+        if (upTo == null) {
+          this.db
+            .prepare(
+              `INSERT INTO ${table} (chat_id, role, content, meta, created_at)
+               SELECT ?, role, content, meta, created_at FROM ${table} WHERE chat_id = ? ORDER BY id`
+            )
+            .run(id, sourceChatId);
+        } else {
+          this.db
+            .prepare(
+              `INSERT INTO ${table} (chat_id, role, content, meta, created_at)
+               SELECT ?, role, content, meta, created_at FROM ${table} WHERE chat_id = ? ORDER BY id LIMIT ?`
+            )
+            .run(id, sourceChatId, upTo);
+        }
+      };
+      copyInto("messages");
+      copyInto("transcript_messages");
+    });
+    tx();
+    return id;
+  }
+
+  getForkParent(chatId: string, userId: string): string | null {
+    const row = this.db
+      .prepare("SELECT forked_from_chat_id FROM chats WHERE id = ? AND user_id = ?")
+      .get(chatId, userId) as { forked_from_chat_id?: string | null } | undefined;
+    return row?.forked_from_chat_id ?? null;
+  }
+
   updateChatProject(chatId: string, userId: string, projectId: string | null): boolean {
     const existing = this.db.prepare("SELECT id FROM chats WHERE id = ? AND user_id = ?").get(chatId, userId);
     if (!existing) return false;
@@ -1004,7 +1106,13 @@ export class SqliteChatRepository implements ChatRepository {
   deleteChat(chatId: string, userId: string): boolean {
     const ok = this.db.prepare("SELECT 1 FROM chats WHERE id = ? AND user_id = ?").get(chatId, userId);
     if (!ok) return false;
+    const parent = this.getForkParent(chatId, userId);
     const del = this.db.transaction(() => {
+      // Graft: children forks re-attach to the deleted chat's parent so the fork
+      // tree stays connected instead of breaking in the middle of the chain.
+      this.db
+        .prepare("UPDATE chats SET forked_from_chat_id = ? WHERE forked_from_chat_id = ? AND user_id = ?")
+        .run(parent, chatId, userId);
       this.db.prepare("DELETE FROM messages WHERE chat_id = ?").run(chatId);
       this.db.prepare("DELETE FROM transcript_messages WHERE chat_id = ?").run(chatId);
       this.db.prepare("DELETE FROM insight_events WHERE chat_id = ? OR past_chat_id = ?").run(chatId, chatId);

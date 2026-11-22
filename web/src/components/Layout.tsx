@@ -58,6 +58,7 @@ interface LayoutProps {
   onDeleteChat?: (chatId: string) => void;
   onExportChat?: (chatId: string) => void;
   onExportClawCache?: (chatId: string) => void;
+  onDuplicateChat?: (chatId: string, opts?: { upToCount?: number; title?: string }) => Promise<string | null>;
   onChatProjectChange?: (chatId: string, projectId: string | null) => void;
   onChatPinnedChange?: (chatId: string, pinned: boolean) => void;
   onChatFavoritedChange?: (chatId: string, favorited: boolean) => void;
@@ -86,6 +87,7 @@ export function Layout({
   onDeleteChat,
   onExportChat,
   onExportClawCache,
+  onDuplicateChat,
   onChatProjectChange,
   onChatPinnedChange,
   onChatFavoritedChange,
@@ -204,6 +206,7 @@ export function Layout({
         onDeleteChat={onDeleteChat}
         onExportChat={onExportChat}
         onExportClawCache={onExportClawCache}
+        onDuplicateChat={onDuplicateChat}
         onChatProjectChange={onChatProjectChange}
         onChatPinnedChange={onChatPinnedChange}
         onChatFavoritedChange={onChatFavoritedChange}

@@ -27,6 +27,8 @@ export interface ChatItem {
   pinned?: boolean;
   /** Favorited (star in sidebar). */
   favorited?: boolean;
+  /** Fork lineage: id of the chat this one was duplicated/branched from; null = original. */
+  forkedFrom?: string | null;
   /** Transcript payload was dropped from memory and must be reloaded before display. */
   historyEvicted?: boolean;
 }

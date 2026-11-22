@@ -30,6 +30,8 @@ export type ChatPageOutletContext = {
   onDeleteChat: (chatId: string) => void;
   onChatProjectChange: (chatId: string, projectId: string | null) => void;
   onExportChat: (chatId: string) => void;
+  /** Fork the chat: full duplicate, or a branch cut at the first upToCount messages. */
+  onDuplicateChat: (chatId: string, opts?: { upToCount?: number; title?: string }) => Promise<string | null>;
   onNewChat: (projectId?: string | null) => void;
   onProjectCreated: (project: ProjectListItemApi) => void;
   onProjectUpdated: (project: ProjectListItemApi) => void;
@@ -142,6 +144,11 @@ function ChatPageContent() {
           browserChatTitle={ctx.browserChatTitle}
           browserPageKey={ctx.browserPageKey}
           onOpenPastChat={ctx.onOpenPastChat}
+          onForkFrom={(upToCount) => {
+            const sid = currentChatId ?? "";
+            if (!sid) return;
+            void ctx.onDuplicateChat(sid, { upToCount });
+          }}
           chatModel={currentChat?.model ?? null}
           onChatModelChange={(model) => {
             const sid = currentChatId ?? "";

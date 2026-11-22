@@ -39,12 +39,15 @@ CREATE TABLE IF NOT EXISTS chats (
   created_at INTEGER NOT NULL,
   prompt_summary TEXT,
   prompt_covered_count INTEGER NOT NULL DEFAULT 0,
+  /** Fork lineage: id of the chat this one was duplicated/branched from; NULL = original. */
+  forked_from_chat_id TEXT,
   FOREIGN KEY (user_id) REFERENCES users(id),
   FOREIGN KEY (project_id) REFERENCES projects(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_chats_user_updated ON chats(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chats_project ON chats(project_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chats_forked_from ON chats(forked_from_chat_id);
 
 -- Messages (role, content, meta = JSON for cells, etc.)
 CREATE TABLE IF NOT EXISTS messages (
