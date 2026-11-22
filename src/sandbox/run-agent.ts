@@ -338,7 +338,20 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
       }
     }
   }
-  if (!sidecarRunning || !sidecarEnvMatches || !sidecarNetworksMatch) {
+  // The sidecar outlives `compose up --build`: containers pin the image ID
+  // they were created from, so after an update the tag points at a new image
+  // while the running sidecar still executes the old one. Recreate when the
+  // running container's image no longer equals the current tag's image.
+  let sidecarImageMatches = false;
+  if (sidecarRunning && sidecarEnvMatches && sidecarNetworksMatch) {
+    const sidecarImage = dockerSpawnSync(["container", "inspect", "-f", "{{.Image}}", EGRESS_SIDECAR]);
+    const currentImage = dockerSpawnSync(["image", "inspect", "-f", "{{.Id}}", image]);
+    sidecarImageMatches =
+      sidecarImage.status === 0 &&
+      currentImage.status === 0 &&
+      sidecarImage.stdout.trim() === currentImage.stdout.trim();
+  }
+  if (!sidecarRunning || !sidecarEnvMatches || !sidecarNetworksMatch || !sidecarImageMatches) {
     dockerSpawnSync(["rm", "-f", EGRESS_SIDECAR]);
     const sidecarCmd = [
       "run",

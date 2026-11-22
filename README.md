@@ -182,10 +182,21 @@ and a single `systemctl` entry point — see [docs/systemd.md](docs/systemd.md).
 ```bash
 git pull
 docker compose up -d --build
+docker image prune -f   # optional: drop the old dangling image
 ```
 
+If you edited files git tracks (most commonly `compose.yml` — the port
+binding), stash first: `git stash` → `git pull` → `git stash pop`.
+
 Your configuration, conversations and memory live in mounted volumes
-(`.claw2/`, `data/`) and are never touched by an update.
+(`.claw2/`, `data/`) and are never touched by an update. Database schema
+changes, when an update ships them, are applied automatically the first
+time the gateway starts.
+
+The egress-guard sidecar container is recreated automatically once a skill
+runs after the image changed (a container keeps the image it was created
+from). On versions without that check, remove it once after updating:
+`docker rm -f claw2-egress-sidecar`.
 
 ## Skills
 

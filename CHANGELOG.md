@@ -25,6 +25,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - New chats showed the "New chat" placeholder in the sidebar instead of the
   derived title when a per-chat model override had created the row first; the
   placeholder now gives way to the derived/loaded title.
+- **Updates no longer leave a stale egress sidecar**: a container keeps the
+  image it was created from, so after `docker compose up -d --build` the
+  running sidecar kept executing the old code. A skill run now recreates the
+  sidecar when its image no longer matches the current tag. The README
+  "Updating" section documents the full procedure (stash tracked-file edits,
+  optional image prune, automatic schema migrations).
 - **The sidebar fork tree stays still during generation**: stream progress
   used to re-sort the chat list on every chunk (updatedAt ticks), visibly
   reshuffling the tree and moving the selected chat around. Progress now
