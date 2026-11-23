@@ -3,14 +3,15 @@
 
 // Agent: Keyless web search (fallback chain)
 // Call: run_agent({script:"web-search.js", args:["query","--limit=10"]})
-// In: argv[2]=query; optional --limit=N, --engine=ddg-lite|ddg-html|wikipedia
+// In: argv[2]=query; optional --limit=N, --engine=bing|ddg-lite|ddg-html|wikipedia
 // Out: stdout: JSON [{title,url,snippet}] (empty array only with --engine forced)
 //
-// Honest contract: this is a KEYLESS fallback, not a search API. Datacenter
-// IPs get anti-bot pages from most engines, so the chain tries DuckDuckGo
-// first (works from residential networks) and falls back to the Wikipedia
-// API (always reachable, encyclopedic scope only). For production-quality
-// web search configure the gateway `search` tool (Tavily / SearXNG).
+// Honest contract: this is a KEYLESS fallback, not a search API. The chain
+// starts with Bing's RSS output (structural XML, no map and no bot-check
+// from datacenter IPs) and falls back to DuckDuckGo (works from residential
+// networks) and the Wikipedia API (always reachable, encyclopedic scope
+// only). For production-quality web search configure the gateway `search`
+// tool (Tavily / SearXNG).
 
 const query = process.argv[2] || 'default';
 const limit = Math.min(
@@ -50,6 +51,54 @@ async function fetchWithTimeout(url, options = {}) {
   }
 }
 
+function textOf(block, tag) {
+  return block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, 'i'))?.[1] ?? '';
+}
+
+function stripCdata(s) {
+  const m = s.match(/^<!\[CDATA\[([\s\S]*)\]\]>$/);
+  return stripTags(m ? m[1] : s);
+}
+
+// Bing RSS wraps result links in bing.com/apiclick.aspx?…&url=<encoded> —
+// unwrap to the direct URL so the model does not fetch through Bing.
+function unwrapBingLink(link) {
+  try {
+    const u = new URL(link);
+    if (u.hostname === 'www.bing.com' && /apiclick/i.test(u.pathname + u.search)) {
+      const target = u.searchParams.get('url');
+      if (target && /^https?:\/\//i.test(target)) return target;
+    }
+  } catch { /* not a parseable URL — keep as is */ }
+  return link;
+}
+
+// Bing RSS: structural XML with title/link/description. On queries with no
+// real hits Bing pads the feed with unrelated "popular" items instead of an
+// empty one, so at least one query token must appear in the output —
+// otherwise this is an honest failure and the chain moves on.
+async function searchViaBingRSS() {
+  const url = `https://www.bing.com/search?format=rss&count=${limit}&q=${encodeURIComponent(query)}`;
+  const xml = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
+  const results = [];
+  for (const m of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
+    const block = m[1];
+    const title = stripCdata(textOf(block, 'title'));
+    const link = unwrapBingLink(stripCdata(textOf(block, 'link')));
+    const snippet = stripCdata(textOf(block, 'description'));
+    if (!title || !/^https?:\/\//.test(link)) continue;
+    results.push({ title, url: link, snippet });
+    if (results.length >= limit) break;
+  }
+  if (results.length === 0) throw new Error('No results parsed');
+  const haystack = results.map(r => `${r.title} ${r.snippet} ${r.url}`).join(' ').toLowerCase();
+  const tokens = query.toLowerCase().split(/[^a-zа-яё0-9]+/).filter(t => t.length >= 3);
+  if (!tokens.some(t => haystack.includes(t))) {
+    throw new Error('No relevant results (feed padded with unrelated items)');
+  }
+  return results;
+}
+
 async function searchViaDDGLite() {
   const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
   const html = await fetchWithTimeout(url, { headers: { 'User-Agent': USER_AGENT } });
@@ -71,6 +120,7 @@ async function searchViaDDGHTML() {
   const body = new URLSearchParams({ q: query }).toString();
   const html = await fetchWithTimeout('https://html.duckduckgo.com/html/', {
     method: 'POST',
+    body,
     headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' }
   });
   const results = [];
@@ -104,12 +154,13 @@ async function searchViaWikipedia() {
 }
 
 const engines = [
+  { name: 'bing', fn: searchViaBingRSS },
   { name: 'ddg-lite', fn: searchViaDDGLite },
   { name: 'ddg-html', fn: searchViaDDGHTML },
   { name: 'wikipedia', fn: searchViaWikipedia },
 ];
 
-const engineMap = { 'ddg-lite': 0, 'ddg-html': 1, wikipedia: 2 };
+const engineMap = { bing: 0, 'ddg-lite': 1, 'ddg-html': 2, wikipedia: 3 };
 
 (async () => {
   try {
@@ -119,6 +170,8 @@ const engineMap = { 'ddg-lite': 0, 'ddg-html': 1, wikipedia: 2 };
     if (forcedIdx !== undefined) {
       results = await engines[forcedIdx].fn();
       usedEngine = engines[forcedIdx].name;
+    } else if (engineArg.toLowerCase() !== 'auto') {
+      throw new Error(`Unknown engine "${engineArg}" (valid: auto, ${engines.map(e => e.name).join(', ')})`);
     } else {
       // Collect the per-engine reasons: a bare "all failed" hides exactly
       // the diagnostics the caller needs (which engine hit a bot-check).

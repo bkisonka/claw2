@@ -3,6 +3,20 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **web-search.js searches from datacenter IPs**: Bing's RSS output is the
+  first engine of the chain (`format=rss` — structural XML, no map and no
+  bot-check from datacenter IPs); apiclick wrappers are unwrapped to direct
+  URLs, CDATA is cleaned, and a feed padded with unrelated "popular" items
+  on a no-hit query is rejected honestly — at least one query token must
+  appear in the results. The ddg-html engine actually sends its POST body
+  now: it was built but dropped from the request, so every call went out
+  empty and parsed nothing. `--engine=<unknown>` fails with the list of
+  valid engine names instead of silently falling back to the auto chain.
+
 ## [0.2.16] - 2026-11-23
 
 ### Fixed
