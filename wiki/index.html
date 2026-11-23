@@ -293,6 +293,14 @@
         return div.innerHTML;
       }
 
+      // Pages are fetched relative to the wiki ROOT, not the current URL:
+      // a deep link like /wiki/ru/How-To/X must not resolve the fetch to
+      // .../How-To/pages/... (which used to serve the shell itself back).
+      function wikiRoot() {
+        const m = location.pathname.match(/^(.*\/wiki\/)/);
+        return m ? m[1] : location.pathname.replace(/[^/]*$/, "");
+      }
+
       async function loadPage(page) {
         const lang = page.startsWith("ru/") ? "ru" : "en";
         const ui = UI[lang];
@@ -302,7 +310,7 @@
         );
         content.textContent = ui.loading;
         try {
-          const res = await fetch("pages/" + page);
+          const res = await fetch(wikiRoot() + "pages/" + page);
           if (!res.ok) throw new Error("HTTP " + res.status);
           const md = await res.text();
           const html = marked.parse(md, { mangle: false, headerIds: true });
@@ -338,9 +346,15 @@
 
       (function init() {
         const lang = detectLang();
-        const page = pageFromHash(lang);
+        // Deep links like /wiki/ru/How-To/Page (path form, no .md, no hash):
+        // route them into the hash so the right page opens instead of Home.
         if (!location.hash || location.hash === "#") {
-          location.replace("#/" + page);
+          const deep = location.pathname.match(/\/wiki\/(en|ru)\/(.+)$/);
+          if (deep) {
+            location.replace("#/" + deep[1] + "/" + deep[2].replace(/\/$/, "") + ".md");
+            return;
+          }
+          location.replace("#/" + pageFromHash(lang));
           return;
         }
         // Normalize legacy #/Home.md → #/en/Home.md (or ru)

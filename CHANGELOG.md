@@ -3,6 +3,22 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **The built-in wiki no longer renders itself inside itself**: a deep link
+  like `/wiki/ru/How-To/Page` (path form, no hash) made the shell fetch
+  pages relative to the deep path — the gateway's unknown-subpath fallback
+  answered with the shell HTML and HTTP 200, so the shell parsed ITSELF as
+  the page (nested shell, eternal "Loading…", mixed EN/RU from the inner
+  shell's language detection). The shell now resolves page fetches from the
+  wiki root and routes deep links into the hash; the gateway answers a miss
+  under `/wiki/pages/**` with a plain 404.
+- **docs/wiki now syncs into the shipped wiki**: `scripts/sync-wiki.mjs`
+  (wired into `npm run build`) copies docs/wiki/{en,ru} → wiki/pages — the
+  0.2.14 companion guide had silently never reached the deployment.
+
 ## [0.2.14] - 2026-11-23
 
 ### Added

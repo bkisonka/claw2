@@ -4518,6 +4518,16 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           );
           return;
         }
+        // A miss inside pages/ must NOT fall back to the shell: the shell
+        // fetches pages relative to its URL, and a deep link like
+        // /wiki/ru/How-To/X resolves the fetch to .../How-To/pages/ru/X —
+        // serving the shell HTML with 200 made the shell render itself as
+        // page content (nested shell, eternal "Loading…"). 404 breaks the loop.
+        if (sub.startsWith("pages/")) {
+          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Not found");
+          return;
+        }
         // Unknown sub-path under a configured wiki: shell handles hash routing.
         res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
         res.end(readFileSync(join(wikiPath, "index.html"), "utf-8"));

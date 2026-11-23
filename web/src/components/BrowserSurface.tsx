@@ -1395,7 +1395,7 @@ export function BrowserSurface({
               <code className="browser-companion-cmd">cd extension &amp;&amp; npm install &amp;&amp; npm run build</code>
               <a
                 className="browser-companion-link"
-                href="/wiki/ru/How-To/Companion-Extension"
+                href="/wiki/#/ru/How-To/Companion-Extension.md"
                 target="_blank"
                 rel="noopener noreferrer"
               >
