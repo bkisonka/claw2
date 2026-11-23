@@ -3,6 +3,23 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.16] - 2026-11-23
+
+### Fixed
+
+- **Skills no longer depend on the directory compose is launched from.** The
+  compose file baked `${PWD}` — the caller's directory, not the project's —
+  into the sandbox bind roots, while the volumes themselves followed
+  `compose.yml`. Launched from anywhere else (`docker compose -f
+  <repo>/compose.yml up -d`, which is how the update watcher ran it), the
+  gateway asked for host paths that did not exist: the daemon created empty
+  root-owned directories in their place and every skill died before its
+  first line on `Cannot find module '/app/.claw2-egress-preload.cjs'`. The
+  gateway and the docker guard now read the host paths from the gateway
+  container's own `/app/agents` and `/app/data` mounts on the daemon, so
+  they cannot drift from the volumes. The update watcher runs compose from
+  the project directory as well.
+
 ## [0.2.15] - 2026-11-23
 
 ### Fixed
