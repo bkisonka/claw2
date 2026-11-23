@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>claw2 companion</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 480px; margin: 48px auto; color: #eee; background: #17171a; }
+      h1 { font-size: 20px; }
+      label { display: block; margin: 16px 0 4px; font-size: 13px; color: #aaa; }
+      input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px; border: 1px solid #444; background: #1f1f23; color: #eee; font-size: 14px; }
+      button { margin-top: 16px; padding: 8px 16px; border-radius: 8px; border: none; background: #7b66ff; color: #fff; font-size: 14px; cursor: pointer; }
+      button.secondary { background: #333; }
+      #status { margin-top: 12px; font-size: 13px; min-height: 18px; }
+      #status.ok { color: #7ee08a; }
+      #status.err { color: #ff8a8a; }
+      p.hint { font-size: 12px; color: #888; }
+    </style>
+  </head>
+  <body>
+    <h1>claw2 companion</h1>
+    <label for="gateway">Gateway URL</label>
+    <input id="gateway" placeholder="http://127.0.0.1:8080" spellcheck="false" />
+    <label for="apikey">Gateway API key (gateway.auth.apiKey)</label>
+    <input id="apikey" type="password" placeholder="the key from your .env / settings" spellcheck="false" />
+    <p class="hint">The key is stored in the extension's local storage and sent only to the gateway above. Page scripts never see it.</p>
+    <button id="save">Save</button>
+    <button id="test" class="secondary">Test connection</button>
+    <div id="status"></div>
+    <script src="options.js"></script>
+  </body>
+</html>

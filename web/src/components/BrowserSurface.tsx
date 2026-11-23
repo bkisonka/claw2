@@ -1384,8 +1384,24 @@ export function BrowserSurface({
         {hasDesktopBrowser ? (
           <div ref={hostRef} className="browser-view-host" aria-label={t("browser.viewLabel")} />
         ) : (
-          <div className="browser-desktop-only">
-            <p>{t("browser.desktopOnly")}</p>
+          <div className="browser-desktop-only browser-companion-screen">
+            <p className="browser-companion-title">{t("browser.companionTitle")}</p>
+            <ol className="browser-companion-steps">
+              <li>{t("browser.companionStep1")}</li>
+              <li>{t("browser.companionStep2")}</li>
+              <li>{t("browser.companionStep3")}</li>
+            </ol>
+            <div className="browser-companion-actions">
+              <code className="browser-companion-cmd">cd extension &amp;&amp; npm install &amp;&amp; npm run build</code>
+              <a
+                className="browser-companion-link"
+                href="/wiki/ru/How-To/Companion-Extension"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t("browser.companionWiki")}
+              </a>
+            </div>
           </div>
         )}
         {overlayOpen ? (

@@ -1515,6 +1515,13 @@ body.layout-sidebar-resizing-body {
   background: transparent;
 }
 
+.browser-companion-screen { text-align: left; max-width: 520px; gap: 14px; display: flex; flex-direction: column; }
+.browser-companion-title { font-size: 17px; font-weight: 600; color: var(--text-primary); }
+.browser-companion-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13.5px; color: var(--text-secondary); }
+.browser-companion-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.browser-companion-cmd { font-size: 12.5px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.browser-companion-link { font-size: 13px; color: var(--accent); }
+
 .browser-desktop-only {
   position: absolute;
   inset: 0;

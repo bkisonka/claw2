@@ -97,6 +97,10 @@ If you use a local model server on the host (for example Ollama on port
 - **A mobile web client.** A standalone installable web application (under
   `/pwa/`) that runs entirely in the browser and talks to the model provider
   directly — handy on a phone, at home or over the network.
+- **A browser companion.** A tiny Chromium extension (`extension/`) puts
+  claw2 onto the real web: a pill on every page opens a chat overlay with
+  the composer at the bottom, and the model receives the page's text and
+  your selection (see the wiki's Companion Extension guide).
 - **Messengers.** A Telegram bot can serve as another door into the same
   agent; voices messages are understood and answered with speech when a
   speech service is configured.

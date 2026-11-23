@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "claw2 companion",
+  "version": "0.1.0",
+  "description": "claw2 chat over any page: composer at the bottom, chat as an overlay, page context for the model.",
+  "default_locale": "en",
+  "permissions": ["storage", "contextMenus", "tabs"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "action": {
+    "default_title": "claw2 companion — settings"
+  }
+}

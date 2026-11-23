@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Browser companion extension (Chromium, MV3)**: the web deployment gets
+  its "open web" story without shipping an engine — a tiny extension
+  (`extension/`, load-unpacked) puts a claw2 pill on every page: a chat
+  panel as an overlay with the composer pinned to the bottom, page text and
+  selection attached to every turn (the server's existing `<<<EXT>>>`
+  untrusted-content isolation applies), "Ask claw2 about selection" context
+  menu, `open_browser` navigates the tab, and the chat continues across
+  navigation (session per tab) and shows up in the sidebar bound to the
+  page. Networking lives only in the background service worker (page CSP
+  cannot block it); the API key is stored in the extension's local storage.
+  The W-mode stub in the browser deployment now shows the companion
+  onboarding instead of "desktop only". Wiki guides (en/ru); gateway
+  unchanged.
+
+## [0.2.13] - 2026-11-23
+
 ### Fixed
 
 - **web-search.js keeps its diagnostics**: the auto chain collected engine
