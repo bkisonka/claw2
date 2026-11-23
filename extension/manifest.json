@@ -3,7 +3,6 @@
   "name": "claw2 companion",
   "version": "0.1.0",
   "description": "claw2 chat over any page: composer at the bottom, chat as an overlay, page context for the model.",
-  "default_locale": "en",
   "permissions": ["storage", "contextMenus", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": {
