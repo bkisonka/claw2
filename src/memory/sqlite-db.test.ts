@@ -12,10 +12,13 @@
  */
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openMemorySqlite, resolveMemorySqlitePath } from "./sqlite-db.js";
+import { closeMemorySqlite, openMemorySqlite, resolveMemorySqlitePath, resolveSqliteVecPath } from "./sqlite-db.js";
 import type { Claw2Config } from "../config/types.js";
+
+const require = createRequire(import.meta.url);
 
 const dir = mkdtempSync(join(tmpdir(), "claw2-memory-sqlite-"));
 const config = {
@@ -55,6 +58,36 @@ try {
     join(dir, "memory.sqlite"),
     "CLAW2_MEMORY_SQLITE_PATH must win"
   );
+
+  // 6. CLAW2_SQLITE_VEC_PATH: the extension installed or built by hand
+  //    (FreeBSD — the package has no binary for it) takes the place of the
+  //    package's own. On a platform the package knows, its binary stands in
+  //    for the hand-built one: only the path is what differs. An installer
+  //    on a platform without a binary exports the variable before the tests.
+  const fromInstaller = process.env.CLAW2_SQLITE_VEC_PATH;
+  if (!fromInstaller) assert.equal(resolveSqliteVecPath(), null, "no explicit path by default");
+  const explicit =
+    fromInstaller ?? (require("sqlite-vec") as { getLoadablePath?: () => string }).getLoadablePath?.();
+  assert.ok(explicit, "an extension file to load explicitly");
+  process.env.CLAW2_SQLITE_VEC_PATH = explicit;
+  assert.equal(resolveSqliteVecPath(), explicit, "the explicit path is resolved as given");
+  closeMemorySqlite();
+  const db3 = openMemorySqlite(config);
+  const version = (db3.prepare("SELECT vec_version() AS v").get() as { v: string }).v;
+  assert.ok(version.length > 0, "the extension from the explicit path answers vec_version()");
+
+  // 7. A wrong explicit path is that error, not a fallback to the package.
+  closeMemorySqlite();
+  const missing = join(dir, "no-such-vec0.so");
+  process.env.CLAW2_SQLITE_VEC_PATH = missing;
+  assert.throws(
+    () => openMemorySqlite(config),
+    (err: unknown) => err instanceof Error && err.message.includes(missing),
+    "the load error must name the missing file"
+  );
+  // Leave the installer's setting for whatever runs next.
+  if (fromInstaller) process.env.CLAW2_SQLITE_VEC_PATH = fromInstaller;
+  else delete process.env.CLAW2_SQLITE_VEC_PATH;
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }

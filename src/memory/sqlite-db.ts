@@ -55,7 +55,25 @@ export function resolveEmbeddingProvider(config: Claw2Config): "local" | "http" 
   return "http";
 }
 
+/**
+ * Extension to load when the npm package cannot name one. sqlite-vec ships
+ * binaries for darwin, linux and windows only and throws on any other
+ * platform; there (FreeBSD) it is built by hand and its path is given in
+ * CLAW2_SQLITE_VEC_PATH. Empty when the package is to be asked.
+ */
+export function resolveSqliteVecPath(): string | null {
+  const explicit = process.env.CLAW2_SQLITE_VEC_PATH?.trim();
+  return explicit ? resolve(explicit) : null;
+}
+
 function loadSqliteVec(db: Database.Database): void {
+  // The explicit path wins, and a wrong one is simply the error it is: no
+  // fallback to the package, which has no binary for the platform anyway.
+  const explicit = resolveSqliteVecPath();
+  if (explicit) {
+    db.loadExtension(explicit);
+    return;
+  }
   const sqliteVec = require("sqlite-vec") as {
     load: (db: Database.Database) => void;
     getLoadablePath?: () => string;
