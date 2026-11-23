@@ -29,12 +29,21 @@ document.getElementById("test")?.addEventListener("click", () => {
     statusEl.className = "";
     statusEl.textContent = "…";
     try {
-      const res = await fetch(`${base}/health`, { headers: { "X-API-Key": key } });
+      // /health answers plain "ok" unless JSON is requested explicitly.
+      const res = await fetch(`${base}/health`, {
+        headers: { "X-API-Key": key, Accept: "application/json" },
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { ok?: boolean; version?: string };
-      if (data.ok !== true) throw new Error("gateway answered, but not ok");
+      const text = await res.text();
+      try {
+        const data = JSON.parse(text) as { ok?: boolean };
+        if (data.ok === false) throw new Error("gateway answered, but not ok");
+      } catch (parseErr) {
+        if (parseErr instanceof Error && parseErr.message.startsWith("gateway answered")) throw parseErr;
+        if (text.trim() !== "ok") throw new Error("unexpected health answer");
+      }
       statusEl.className = "ok";
-      statusEl.textContent = `Connected${data.version ? ` (claw2 ${data.version})` : ""}.`;
+      statusEl.textContent = "Connected.";
     } catch (err) {
       statusEl.className = "err";
       statusEl.textContent = `Failed: ${err instanceof Error ? err.message : String(err)}`;
