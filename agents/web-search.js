@@ -120,6 +120,9 @@ const engineMap = { 'ddg-lite': 0, 'ddg-html': 1, wikipedia: 2 };
       results = await engines[forcedIdx].fn();
       usedEngine = engines[forcedIdx].name;
     } else {
+      // Collect the per-engine reasons: a bare "all failed" hides exactly
+      // the diagnostics the caller needs (which engine hit a bot-check).
+      const failures = [];
       for (const eng of engines) {
         try {
           results = await eng.fn();
@@ -127,13 +130,20 @@ const engineMap = { 'ddg-lite': 0, 'ddg-html': 1, wikipedia: 2 };
             usedEngine = eng.name;
             break;
           }
-        } catch {
-          continue;
+        } catch (e) {
+          failures.push(`${eng.name}: ${e.message}`);
         }
+      }
+      if (!usedEngine && failures.length > 0) {
+        throw new Error(
+          `All engines failed (${failures.join("; ")}). ` +
+          'Keyless search is best-effort (datacenter IPs get bot-checks): ' +
+          'configure the gateway search tool (tools.tavily.apiKey / tools.searxng.url) for reliable results.'
+        );
       }
     }
     if (!results || results.length === 0) {
-      throw new Error('All engines failed. Keyless search is best-effort (datacenter IPs get bot-checks): configure the gateway search tool (Tavily/SearXNG) for reliable results.');
+      throw new Error('No results. Keyless search is best-effort: configure the gateway search tool (Tavily/SearXNG) for reliable results.');
     }
     console.log(JSON.stringify(results));
     console.error(`[web-search] engine=${usedEngine} results=${results.length}`);

@@ -3,6 +3,17 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **web-search.js keeps its diagnostics**: the auto chain collected engine
+  failures silently, so the model saw a bare "All engines failed" and had
+  to re-run each engine by hand to learn which one hit the bot-check. The
+  final error now carries every engine's reason
+  ("ddg-lite: bot-check page; ddg-html: No results parsed; …") plus the
+  pointer to the configured gateway search tool.
+
 ## [0.2.13] - 2026-11-23
 
 ### Fixed
