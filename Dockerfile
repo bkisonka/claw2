@@ -14,8 +14,11 @@ RUN npm ci
 
 COPY tsconfig.json ./
 COPY src ./src
-# post-build step lives in scripts/ (see package.json build script)
-COPY scripts/copy-gateway-sql.cjs ./scripts/
+# post-build steps live in scripts/ (see the package.json build script):
+# SQL schema copies + the docs/wiki → wiki/pages sync (the docs tree is its
+# source; the runtime stage ships wiki/ from the build context either way).
+COPY scripts/copy-gateway-sql.cjs scripts/sync-wiki.mjs ./scripts/
+COPY docs/wiki ./docs/wiki
 RUN npm run build
 
 COPY web/package.json web/package-lock.json ./web/

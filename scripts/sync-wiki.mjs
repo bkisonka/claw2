@@ -15,6 +15,13 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = join(root, "docs", "wiki");
 const dst = join(root, "wiki", "pages");
 
+if (!existsSync(src)) {
+  // Environments that ship the pre-synced wiki/ without the docs tree
+  // (partial build contexts): nothing to do.
+  console.log("wiki: docs/wiki not present — sync skipped");
+  process.exit(0);
+}
+
 for (const lang of readdirSync(src).filter((d) => d === "en" || d === "ru")) {
   const from = join(src, lang);
   const to = join(dst, lang);
