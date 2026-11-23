@@ -30,10 +30,12 @@ services:
       # .claw2 — иначе после каждой пересборки она заново скачивается.
       - CLAW2_EMBED_CACHE=/app/.claw2/models
       # Hard skill sandbox (sibling containers): talk to the host docker via
-      # the validating API guard, and map container paths to host paths for
-      # sibling binds (${PWD} = the directory you run compose from).
+      # the validating API guard. Sibling binds need HOST paths: the gateway
+      # reads them from its own mounts on the daemon (the service's
+      # container_name), so they always follow the volumes in this file.
+      # ${PWD} followed the directory compose was launched from instead.
       - DOCKER_HOST=tcp://docker-guard:2375
-      - CLAW2_SIBLING_HOST_ROOT=${PWD}
+      - CLAW2_SIBLING_SOURCE_CONTAINER=claw2
     volumes:
       - ./.claw2:/app/.claw2
       # data/ keeps chat databases when gateway.chatsDbPath points here;
@@ -72,13 +74,15 @@ services:
   # allowlist AND structural validation of every container creation — the
   # hardening profile is mandatory (cap-drop ALL, no-new-privileges,
   # read-only rootfs), privilege widening is rejected, bind sources must sit
-  # inside the compose sandbox roots (${PWD}/agents, ${PWD}/data) with targets
-  # under /app. A generic socket-proxy with CONTAINERS=1+POST=1 would still
-  # admit a privileged host-mounting container create — this one does not.
+  # inside the gateway container's own /app/agents and /app/data binds (its
+  # compose volumes) with targets under /app. A generic socket-proxy with
+  # CONTAINERS=1+POST=1 would still admit a privileged host-mounting
+  # container create — this one does not.
   # Валидирующий guard docker API (наш код, образ claw2): allowlist endpoint'ов
   # и структурная валидация каждого создания контейнера — профиль изоляции
   # обязателен, расширение привилегий отклоняется, источники bind'ов — только
-  # внутри корней песочницы compose и только под /app в контейнере.
+  # внутри собственных монтирований /app/agents и /app/data контейнера шлюза
+  # (его тома compose) и только под /app в контейнере.
   docker-guard:
     image: claw2:latest
     build: .
@@ -95,8 +99,10 @@ services:
       # Anti self-removal: container-scoped API ops on this name are refused.
       - CLAW2_DOCKER_GUARD_SELF_NAME=claw2-docker-guard
       # Sandbox bind roots: skill containers may only mount host paths from
-      # the compose working directory's agents/ and data/ trees.
-      - CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC=${PWD}/agents:${PWD}/data
+      # the gateway container's own agents/ and data/ trees. They are read
+      # from its mounts, so they follow the volumes instead of the directory
+      # compose was launched from.
+      - CLAW2_DOCKER_GUARD_SANDBOX_CONTAINER=claw2
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:

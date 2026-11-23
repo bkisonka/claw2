@@ -18,8 +18,14 @@
  *      hardening profile is mandatory (cap-drop ALL, no-new-privileges,
  *      read-only rootfs), privilege widening is rejected (privileged, cap-add,
  *      devices, host namespaces, published ports), and bind sources must sit
- *      inside the operator-declared sandbox roots (CLAW2_DOCKER_GUARD_ALLOWED_
- *      BIND_SRC) with container targets under /app (or the sidecar script).
+ *      inside the sandbox roots with container targets under /app (or the
+ *      sidecar script). The roots are either the operator's list
+ *      (CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC) or — compose delivery — the
+ *      /app/agents and /app/data binds of the gateway container itself
+ *      (CLAW2_DOCKER_GUARD_SANDBOX_CONTAINER): the daemon's view of the
+ *      compose volumes. The gateway can neither alter those mounts nor
+ *      impersonate the container (create is restricted to skill/sidecar
+ *      names), so this cannot widen the policy.
  *
  * Runs in its own container with read-only access to docker.sock and no other
  * capabilities; it never talks to the application database or the network
@@ -183,6 +189,28 @@ function validateContainerNetworks(
     }
   }
   return { ok: true };
+}
+
+/** Container paths whose host counterparts (the gateway's binds) are the sandbox roots. */
+const SANDBOX_ROOT_MOUNTS = ["/app/agents", "/app/data"];
+
+/**
+ * Sandbox roots from the gateway container's inspect payload: the sources of
+ * its bind mounts at /app/agents and /app/data — the daemon's view of the
+ * compose volumes, so the roots cannot drift from what the gateway actually
+ * serves, whatever directory compose was launched from. Bind mounts only: a
+ * named volume's source is a volume name, not a host path.
+ */
+export function sandboxRootsFromMounts(info: unknown): string[] {
+  if (!isRecord(info) || !Array.isArray(info.Mounts)) return [];
+  const roots: string[] = [];
+  for (const destination of SANDBOX_ROOT_MOUNTS) {
+    const mount = info.Mounts.find(
+      (m): m is Record<string, unknown> => isRecord(m) && m.Type === "bind" && m.Destination === destination
+    );
+    if (mount && typeof mount.Source === "string" && mount.Source.startsWith("/")) roots.push(mount.Source);
+  }
+  return roots;
 }
 
 /** Validate one bind spec ("src:dst[:opts]") against the sandbox roots. */
@@ -367,6 +395,11 @@ function jsonError(res: ServerResponse, status: number, message: string): void {
 export interface DockerGuardServerOptions {
   socketPath?: string;
   allowedBindSrc?: string[];
+  /**
+   * Gateway container (CLAW2_DOCKER_GUARD_SANDBOX_CONTAINER): with no explicit
+   * allowedBindSrc, the sandbox roots are its /app/agents and /app/data binds.
+   */
+  sandboxContainer?: string;
   /** Own container name: container-scoped operations targeting it are refused (anti self-removal). */
   selfName?: string;
   /** Guard-side rejection hook (audit/console). */
@@ -442,12 +475,49 @@ function inspectEgressNetwork(socketPath: string, name: EgressNetwork): Promise<
   });
 }
 
+/** Read the sandbox roots off the gateway container; `error` means no bind may pass. */
+function inspectSandboxRoots(socketPath: string, container: string): Promise<{ roots: string[]; error?: string }> {
+  return new Promise((resolve) => {
+    const request = http.get({ socketPath, path: `/containers/${encodeURIComponent(container)}/json` }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        resolve({ roots: [], error: `cannot inspect sandbox container ${container} (HTTP ${res.statusCode})` });
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let size = 0;
+      res.on("data", (chunk: Buffer) => {
+        size += chunk.length;
+        if (size > MAX_CREATE_BODY_BYTES) request.destroy(new Error("container inspect response too large"));
+        else chunks.push(chunk);
+      });
+      res.on("error", () => resolve({ roots: [], error: `cannot read sandbox container ${container}` }));
+      res.on("end", () => {
+        try {
+          const roots = sandboxRootsFromMounts(JSON.parse(Buffer.concat(chunks).toString("utf-8")));
+          // No roots means no bind may pass — say why instead of refusing each bind.
+          resolve(
+            roots.length
+              ? { roots }
+              : { roots, error: `sandbox container ${container} has no bind mounts at ${SANDBOX_ROOT_MOUNTS.join(", ")}` }
+          );
+        } catch {
+          resolve({ roots: [], error: `invalid inspect response for sandbox container ${container}` });
+        }
+      });
+    });
+    request.setTimeout(5_000, () => request.destroy(new Error("container inspect timed out")));
+    request.on("error", () => resolve({ roots: [], error: `cannot inspect sandbox container ${container}` }));
+  });
+}
+
 export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): http.Server {
   const socketPath = opts.socketPath ?? "/var/run/docker.sock";
   const selfName = opts.selfName?.trim() || "claw2-docker-guard";
   const allowedBindSrc = (opts.allowedBindSrc ?? [])
     .map((p) => p.trim())
     .filter(Boolean);
+  const sandboxContainer = opts.sandboxContainer?.trim() ?? "";
 
   const forward = (
     req: IncomingMessage,
@@ -629,7 +699,14 @@ export function createDockerGuardServer(opts: DockerGuardServerOptions = {}): ht
         if (path === "/containers/create") {
           const names = new URLSearchParams(rawUrl.slice(rawUrl.indexOf("?") + 1)).getAll("name");
           const name = names.length === 1 ? names[0] : null;
-          const check = validateContainerCreateBody(body, allowedBindSrc, name === selfName ? null : name);
+          // Sandbox roots: the operator's list, else the gateway container's own binds.
+          let roots = allowedBindSrc;
+          if (roots.length === 0 && sandboxContainer) {
+            const derived = await inspectSandboxRoots(socketPath, sandboxContainer);
+            if (derived.error) return reject({ ok: false, error: derived.error });
+            roots = derived.roots;
+          }
+          const check = validateContainerCreateBody(body, roots, name === selfName ? null : name);
           if (!check.ok) return reject(check);
           const inner = await inspectEgressNetwork(socketPath, SKILL_EGRESS_NETWORK);
           if (!inner.ok) return reject(inner);
@@ -712,16 +789,24 @@ export function startDockerGuardFromEnv(): void {
     .split(":")
     .map((p) => p.trim())
     .filter(Boolean);
+  const sandboxContainer = process.env.CLAW2_DOCKER_GUARD_SANDBOX_CONTAINER?.trim() || "";
   const server = createDockerGuardServer({
     socketPath,
     allowedBindSrc,
+    sandboxContainer,
     selfName,
     onReject: (detail) => console.error(`[docker-guard] rejected: ${detail}`),
   });
   server.listen(port, "0.0.0.0", () => {
     console.error(
       `[docker-guard] listening on 0.0.0.0:${port} → ${socketPath}; ` +
-        `bind sources: ${allowedBindSrc.length ? allowedBindSrc.join(", ") : "(none)"}`
+        `bind sources: ${
+          allowedBindSrc.length
+            ? allowedBindSrc.join(", ")
+            : sandboxContainer
+              ? `binds of container ${sandboxContainer} at ${SANDBOX_ROOT_MOUNTS.join(", ")}`
+              : "(none)"
+        }`
     );
   });
 }

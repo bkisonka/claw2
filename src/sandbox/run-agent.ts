@@ -26,13 +26,21 @@ import { ensureEgressPreload, ensureEgressSidecar } from "./egress-preload-build
  * Sibling-sandbox mode (compose delivery): the gateway runs inside a
  * container and launches skill containers on the HOST docker through a
  * restricted API proxy (DOCKER_HOST). Container paths (/app/…) must be
- * mapped to host paths for sibling binds; the compose stack provides the
- * host root via CLAW2_SIBLING_HOST_ROOT. Without it, skill containers are
- * started with mounts from the gateway's own filesystem (host-installed
- * gateway, where container paths == host paths).
+ * mapped to host paths for sibling binds. The compose stack names the
+ * gateway's own container (CLAW2_SIBLING_SOURCE_CONTAINER) and the host
+ * paths are read from its mounts on the daemon — see siblingMounts().
+ * CLAW2_SIBLING_HOST_ROOT is the older flat mapping (/app/… → one root).
+ * Without either, skill containers are started with mounts from the
+ * gateway's own filesystem (host-installed gateway, where container paths
+ * == host paths).
  */
 function siblingHostRoot(): string {
   return process.env.CLAW2_SIBLING_HOST_ROOT?.trim() ?? "";
+}
+
+/** The gateway's own container (compose: container_name); its binds are the sibling bind sources. */
+function siblingSourceContainer(): string {
+  return process.env.CLAW2_SIBLING_SOURCE_CONTAINER?.trim() ?? "";
 }
 
 /** Absolute path without symlink (on macOS /tmp → /private/tmp) - otherwise --allow-fs-* does not match.*/
@@ -228,6 +236,105 @@ function dockerSpawnSync(args: string[], timeoutMs = 15_000): { status: number; 
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
+/** Container paths whose host counterparts (the gateway's binds) a skill may receive. */
+const SANDBOX_MOUNTS = ["/app/agents", "/app/data"];
+
+let cachedSiblingMounts: { container: string; mounts: Map<string, string> } | null = null;
+
+/**
+ * Sandbox mounts from `docker container inspect -f <template>` output, one
+ * `type<TAB>destination<TAB>source` line per mount.
+ */
+export function parseSiblingMounts(output: string): Map<string, string> {
+  const mounts = new Map<string, string>();
+  for (const line of output.split("\n")) {
+    const [type, destination, source] = line.split("\t");
+    // Bind mounts only: a named volume's source is a volume name, not a host path.
+    if (type === "bind" && destination && SANDBOX_MOUNTS.includes(destination) && source?.startsWith("/")) {
+      mounts.set(destination, source);
+    }
+  }
+  return mounts;
+}
+
+// Go templates keep escapes only inside quoted strings: a bare \t between the
+// fields is printed as two characters and every mount goes unparsed.
+const SIBLING_MOUNTS_TEMPLATE =
+  '{{range .Mounts}}{{.Type}}{{"\\t"}}{{.Destination}}{{"\\t"}}{{.Source}}{{"\\n"}}{{end}}';
+
+/**
+ * Container path → host path for the sandbox mounts, read from the gateway
+ * container itself on the daemon. The container cannot learn the host path of
+ * its volumes otherwise (${PWD} in compose is the caller's directory, not
+ * the project's — launched from elsewhere, it made the daemon create empty
+ * root-owned directories in place of the bind sources and every skill died
+ * on `--require /app/.claw2-egress-preload.cjs`). The daemon's view of this
+ * very container cannot drift from its volumes. Cached per container: mounts
+ * do not change while it lives. `error` is set when the container is named
+ * but cannot be read — the caller must then refuse to bind anything.
+ */
+function siblingMounts(): { mounts: Map<string, string>; error?: string } {
+  const container = siblingSourceContainer();
+  if (!container) return { mounts: new Map() };
+  if (cachedSiblingMounts?.container === container) return { mounts: cachedSiblingMounts.mounts };
+  const r = dockerSpawnSync(["container", "inspect", "-f", SIBLING_MOUNTS_TEMPLATE, container]);
+  if (r.status !== 0) {
+    return {
+      mounts: new Map(),
+      error: `cannot read the mounts of container ${container}: ${(r.stderr || r.stdout).trim().slice(0, 200)}`,
+    };
+  }
+  const mounts = parseSiblingMounts(r.stdout);
+  cachedSiblingMounts = { container, mounts };
+  return { mounts };
+}
+
+/** Everything sibling binds are made of; `enabled` is false on a host-installed gateway. */
+interface SiblingPaths {
+  enabled: boolean;
+  hostRoot: string;
+  mounts: ReadonlyMap<string, string>;
+  error?: string;
+}
+
+function siblingPaths(): SiblingPaths {
+  const hostRoot = siblingHostRoot();
+  if (hostRoot && !hostRoot.startsWith("/")) {
+    return { enabled: true, hostRoot, mounts: new Map(), error: "CLAW2_SIBLING_HOST_ROOT must be an absolute HOST path" };
+  }
+  if (!hostRoot && !siblingSourceContainer()) return { enabled: false, hostRoot, mounts: new Map() };
+  const { mounts, error } = siblingMounts();
+  return { enabled: true, hostRoot, mounts, error };
+}
+
+/**
+ * Host path for a container path under the sandbox mounts. The gateway's own
+ * mounts win (longest match); CLAW2_SIBLING_HOST_ROOT is the flat fallback
+ * for layouts without them. Anything else is null — a wrong directory must
+ * never be bound in silence.
+ */
+export function mapSandboxPathToHost(
+  src: string,
+  mounts: ReadonlyMap<string, string>,
+  hostRoot: string
+): string | null {
+  let mount: { destination: string; source: string } | null = null;
+  for (const [destination, source] of mounts) {
+    if (destination.length > (mount?.destination.length ?? 0) && (src === destination || src.startsWith(`${destination}/`))) {
+      mount = { destination, source };
+    }
+  }
+  if (mount) {
+    const rel = relative(mount.destination, src);
+    return rel === "" ? mount.source : join(mount.source, rel);
+  }
+  if (hostRoot) {
+    if (src === "/app") return hostRoot;
+    if (src.startsWith("/app/")) return hostRoot + src.slice("/app".length);
+  }
+  return null;
+}
+
 /** Never reuse (or replace) an existing network whose properties do not match. */
 function ensureDockerNetwork(name: typeof EGRESS_NET | typeof EGRESS_UPSTREAM_NET): { ok: true } | { ok: false; error: string } {
   let inspect = dockerSpawnSync(["network", "inspect", name]);
@@ -272,18 +379,17 @@ interface DockerEgressPrep {
  * Nothing is published to the host; works identically on Linux and
  * Docker Desktop.
  *
- * Sibling mode (gateway itself runs in a container, CLAW2_SIBLING_HOST_ROOT
- * set): binds must use HOST paths, so the preload is staged through a
- * host-visible mount (/app/data → <root>/data) and the sidecar runs from the
- * claw2 image itself (the bundle lives in dist/ inside the image).
+ * Sibling mode (gateway itself runs in a container, CLAW2_SIBLING_SOURCE_
+ * CONTAINER or CLAW2_SIBLING_HOST_ROOT set): binds must use HOST paths, so
+ * the preload is staged through the host-visible data mount (/app/data →
+ * its host path) and the sidecar runs from the claw2 image itself (the
+ * bundle lives in dist/ inside the image).
  */
 async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPrep | { ok: false; error: string }> {
   const preload = ensureEgressPreload();
   if (!preload.ok) return { ok: false, error: preload.error };
-  const hostRoot = siblingHostRoot();
-  if (hostRoot && !hostRoot.startsWith("/")) {
-    return { ok: false, error: "CLAW2_SIBLING_HOST_ROOT must be an absolute HOST path" };
-  }
+  const sibling = siblingPaths();
+  if (sibling.error) return { ok: false, error: sibling.error };
 
   const image = config.sandbox?.image ?? "node:20-alpine";
   const netErr = ensureDockerNetwork(EGRESS_NET);
@@ -294,16 +400,24 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
   // Preload for the skill container: in sibling mode stage it to the
   // host-visible data mount (the gateway's dist/ is not a host path).
   let preloadBindSrc = preload.path;
-  if (hostRoot) {
+  if (sibling.enabled) {
     try {
       copyFileSync(preload.path, "/app/data/egress-preload.cjs");
-      preloadBindSrc = join(hostRoot, "data", "egress-preload.cjs");
     } catch (err) {
       return {
         ok: false,
         error: `cannot stage egress preload to /app/data (sibling mode): ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+    const staged = mapSandboxPathToHost("/app/data/egress-preload.cjs", sibling.mounts, sibling.hostRoot);
+    if (staged === null) {
+      return {
+        ok: false,
+        error:
+          "cannot map /app/data/egress-preload.cjs to a host path: the gateway container has no bind mount at /app/data and CLAW2_SIBLING_HOST_ROOT is not set",
+      };
+    }
+    preloadBindSrc = staged;
   }
 
   // Sidecar: reuse a running one with the same egress settings, (re)start
@@ -386,7 +500,7 @@ async function prepareDockerEgress(config: Claw2Config): Promise<DockerEgressPre
       "--label",
       `claw2.egress.allow-private=${allowPrivate}`,
     ];
-    if (hostRoot) {
+    if (sibling.enabled) {
       // Sibling mode: the claw2 image carries dist/egress-sidecar.cjs.
       sidecarCmd.push(image, "node", "/app/dist/egress-sidecar.cjs");
     } else {
@@ -646,6 +760,13 @@ export async function runAgent(
   const injectedEnv: Record<string, string> = { ...options.env };
   injectedEnv.OUTPUT_DIR = "/app/output";
 
+  // Resolved up front: a gateway that cannot map its own mounts must fail
+  // before networks and the sidecar are touched.
+  const sibling = siblingPaths();
+  if (sibling.error) {
+    return { stdout: "", stderr: `Error: ${sibling.error}; refusing to bind a wrong directory`, exitCode: -1 };
+  }
+
   // Egress guard, hard tier (default on): the container joins a --internal
   // network — no external route at all — and reaches the guard proxy through
   // the network gateway IP (mounted preload + proxy env).
@@ -674,23 +795,18 @@ export async function runAgent(
   // Sibling mode: binds must reference HOST paths. Container paths under the
   // compose layout start with /app/ — anything else would silently mount a
   // wrong host directory, so refuse instead. A remote daemon (DOCKER_HOST)
-  // without a host root cannot map anything at all.
-  const hostRoot = siblingHostRoot();
+  // without host paths cannot map anything at all.
   const remoteDaemon = (process.env.DOCKER_HOST ?? "").trim().startsWith("tcp://");
-  if (remoteDaemon && !hostRoot) {
+  if (remoteDaemon && !sibling.enabled) {
     return {
       stdout: "",
       stderr:
-        "Error: the docker daemon is remote (DOCKER_HOST) but CLAW2_SIBLING_HOST_ROOT is not set; skill sandbox binds cannot be mapped to host paths (fail-closed)",
+        "Error: the docker daemon is remote (DOCKER_HOST) but neither CLAW2_SIBLING_SOURCE_CONTAINER nor CLAW2_SIBLING_HOST_ROOT is set; skill sandbox binds cannot be mapped to host paths (fail-closed)",
       exitCode: -1,
     };
   }
-  const mapToHost = (src: string): string | null => {
-    if (!hostRoot) return src;
-    if (src === "/app") return hostRoot;
-    if (src.startsWith("/app/")) return hostRoot + src.slice("/app".length);
-    return null;
-  };
+  const mapToHost = (src: string): string | null =>
+    sibling.enabled ? mapSandboxPathToHost(src, sibling.mounts, sibling.hostRoot) : src;
   const mountSpecs: Array<{ src: string; dst: string; opts: string }> = [
     { src: agentsDir, dst: "/app/agents", opts: "ro" },
     { src: outputDir, dst: "/app/output", opts: "" },
@@ -702,7 +818,7 @@ export async function runAgent(
     if (hostSrc === null) {
       return {
         stdout: "",
-        stderr: `Error: cannot map skill sandbox mount "${m.src}" to a host path (CLAW2_SIBLING_HOST_ROOT=${hostRoot}); refusing to bind a wrong directory`,
+        stderr: `Error: cannot map skill sandbox mount "${m.src}" to a host path (CLAW2_SIBLING_SOURCE_CONTAINER=${siblingSourceContainer()}, CLAW2_SIBLING_HOST_ROOT=${sibling.hostRoot}); refusing to bind a wrong directory`,
         exitCode: -1,
       };
     }

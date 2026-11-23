@@ -9,6 +9,7 @@
 import assert from "node:assert/strict";
 import {
   isAllowedDockerEndpoint,
+  sandboxRootsFromMounts,
   validateContainerCreateBody as checkContainerCreateBody,
   validateNetworkCreateBody,
   validateEgressNetworkInfo,
@@ -176,6 +177,47 @@ assert.equal(validateContainerCreateBody({ ...hardened, HostConfig: { ...hardene
   const outputNoOpts = structuredClone(hardened) as typeof hardened;
   (outputNoOpts.HostConfig as Record<string, unknown>).Binds = ["/host/claw2/agents/output:/app/output"];
   assert.equal(validateContainerCreateBody(outputNoOpts, ROOTS).ok, true, "output mount without opts stays allowed");
+}
+
+// Sandbox roots derived from the gateway container's own mounts: the compose
+// delivery without CLAW2_DOCKER_GUARD_ALLOWED_BIND_SRC. Regression for the
+// ${PWD} roots, which followed the directory compose was launched from.
+{
+  const inspect = {
+    Name: "/claw2",
+    Mounts: [
+      { Type: "bind", Source: "/srv/claw2public/.claw2", Destination: "/app/.claw2" },
+      { Type: "bind", Source: "/srv/claw2public/agents", Destination: "/app/agents" },
+      { Type: "volume", Source: "claw2-uploads", Destination: "/app/uploads" },
+      { Type: "bind", Source: "/etc/localtime", Destination: "/etc/localtime" },
+      { Type: "bind", Source: "/srv/claw2public/data", Destination: "/app/data" },
+    ],
+  };
+  assert.deepEqual(
+    sandboxRootsFromMounts(inspect),
+    ["/srv/claw2public/agents", "/srv/claw2public/data"],
+    "only the two sandbox binds, in a fixed order"
+  );
+  assert.deepEqual(sandboxRootsFromMounts({ Mounts: inspect.Mounts.slice(0, 2) }), ["/srv/claw2public/agents"], "a missing data mount narrows the roots");
+  assert.deepEqual(sandboxRootsFromMounts({ Mounts: [{ Type: "volume", Source: "claw2-agents", Destination: "/app/agents" }] }), [], "a named volume is not a host path");
+  assert.deepEqual(sandboxRootsFromMounts({ Mounts: [{ Type: "bind", Source: "agents", Destination: "/app/agents" }] }), [], "a relative source is not a host path");
+  assert.deepEqual(sandboxRootsFromMounts(null), []);
+  assert.deepEqual(sandboxRootsFromMounts({}), []);
+  assert.deepEqual(sandboxRootsFromMounts({ Mounts: "nope" }), []);
+  // The derived roots drive the same validation as the operator's list.
+  const derived = sandboxRootsFromMounts(inspect);
+  const byMounts = structuredClone(hardened) as typeof hardened;
+  (byMounts.HostConfig as Record<string, unknown>).Binds = [
+    "/srv/claw2public/agents:/app/agents:ro",
+    "/srv/claw2public/agents/output:/app/output",
+    "/srv/claw2public/data/egress-preload.cjs:/app/.claw2-egress-preload.cjs:ro",
+  ];
+  assert.equal(validateContainerCreateBody(byMounts, derived).ok, true, "binds under the gateway's own trees pass");
+  (byMounts.HostConfig as Record<string, unknown>).Binds = [
+    "/srv/claw2public/.claw2:/app/agents:ro",
+    "/tmp/agents:/app/agents:ro",
+  ];
+  assert.equal(validateContainerCreateBody(byMounts, derived).ok, false, "other mounts of the gateway and foreign trees stay rejected");
 }
 
 console.log("docker-guard.test.ts: ok");

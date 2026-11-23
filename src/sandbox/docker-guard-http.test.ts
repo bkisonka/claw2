@@ -33,6 +33,7 @@ try {
   const seen: { method: string; path: string; body: string }[] = [];
   let innerInternal = true;
   let outerAvailable = true;
+  let sandboxContainerAvailable = true;
   const daemon = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (c: Buffer) => chunks.push(c));
@@ -54,6 +55,22 @@ try {
           Driver: "bridge",
           Scope: "local",
         }]));
+      } else if (req.method === "GET" && req.url === "/containers/claw2/json") {
+        // The gateway container as the daemon sees it (sandbox-root lookup).
+        if (!sandboxContainerAvailable) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ message: "No such container: claw2" }));
+          return;
+        }
+        res.end(JSON.stringify({
+          Name: "/claw2",
+          Mounts: [
+            { Type: "bind", Source: "/srv/claw2public/.claw2", Destination: "/app/.claw2" },
+            { Type: "bind", Source: "/srv/claw2public/data", Destination: "/app/data" },
+            { Type: "bind", Source: "/etc/localtime", Destination: "/etc/localtime" },
+            { Type: "bind", Source: "/srv/claw2public/agents", Destination: "/app/agents" },
+          ],
+        }));
       } else if (req.url?.includes("/containers/json")) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify([
@@ -87,11 +104,11 @@ try {
   const base = `http://127.0.0.1:${addr && typeof addr === "object" ? addr.port : 0}`;
 
   const agentCreatePath = "/v1.47/containers/create?name=claw2-agent-e2e";
-  const post = (path: string, body: unknown): Promise<{ status: number; text: string }> =>
+  const postTo = (root: string, path: string, body: unknown): Promise<{ status: number; text: string }> =>
     new Promise((resolve, reject) => {
       const payload = JSON.stringify(body);
       const r = http.request(
-        `${base}${path}`,
+        `${root}${path}`,
         { method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } },
         (pres) => {
           const out: Buffer[] = [];
@@ -104,6 +121,7 @@ try {
       r.setTimeout(3000, () => reject(new Error("guard response timeout (deadlocked?)")));
       r.end(payload);
     });
+  const post = (path: string, body: unknown) => postTo(base, path, body);
 
   // LogConfig {Type:""} is what the docker CLI always sends (daemon default
   // driver); an explicit remote driver must still be refused.
@@ -274,6 +292,42 @@ try {
   const listedNames = (JSON.parse(listed.body) as { Names: string[] }[]).map((c) => c.Names[0]);
   assert.deepEqual(listedNames, [`/${EGRESS_SIDECAR_NAME}`], "foreign containers and the guard are filtered out");
 
+  // 14. Without an explicit root list the sandbox roots are the gateway
+  // container's own /app/agents and /app/data binds (compose delivery): the
+  // daemon's view of the volumes, independent of the directory compose was
+  // launched from. Binds under them pass, everything else is refused, and an
+  // unreadable gateway container fails closed instead of opening up.
+  const derivedGuard = createDockerGuardServer({ socketPath: sockPath, sandboxContainer: "claw2", selfName: "claw2-docker-guard" });
+  await new Promise<void>((resolve) => derivedGuard.listen(0, "127.0.0.1", resolve));
+  const derivedAddr = derivedGuard.address();
+  const derivedBase = `http://127.0.0.1:${derivedAddr && typeof derivedAddr === "object" ? derivedAddr.port : 0}`;
+  const underRoots = {
+    ...hardened,
+    HostConfig: {
+      ...hardened.HostConfig,
+      Binds: [
+        "/srv/claw2public/agents:/app/agents:ro",
+        "/srv/claw2public/agents/output:/app/output",
+        "/srv/claw2public/data/egress-preload.cjs:/app/.claw2-egress-preload.cjs:ro",
+      ],
+    },
+  };
+  seen.length = 0;
+  const r14 = await postTo(derivedBase, agentCreatePath, underRoots);
+  assert.equal(r14.status, 201, `binds under the gateway's own trees pass: ${r14.text}`);
+  assert.deepEqual(seen.map((s) => s.path), ["/containers/claw2/json", `/networks/${SKILL_EGRESS_NETWORK}`, agentCreatePath]);
+  const withBinds = (Binds: string[]) => ({ ...underRoots, HostConfig: { ...underRoots.HostConfig, Binds } });
+  const r14b = await postTo(derivedBase, agentCreatePath, withBinds(["/tmp/agents:/app/agents:ro"]));
+  assert.equal(r14b.status, 403, "binds outside the gateway's own trees stay rejected");
+  assert.match(r14b.text, /outside the allowed sandbox roots/);
+  assert.equal((await postTo(derivedBase, agentCreatePath, withBinds(["/srv/claw2public/.claw2:/app/x:ro"]))).status, 403, "other mounts of the gateway are not sandbox roots");
+  sandboxContainerAvailable = false;
+  const r14c = await postTo(derivedBase, agentCreatePath, underRoots);
+  assert.equal(r14c.status, 403, "unreadable gateway container fails closed");
+  assert.match(r14c.text, /cannot inspect sandbox container/);
+  sandboxContainerAvailable = true;
+
+  derivedGuard.close();
   guard.close();
   daemon.close();
 } finally {

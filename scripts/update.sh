@@ -51,7 +51,9 @@ update_once() {
     exit 1
   fi
   report 30 build "docker compose build"
-  if ! docker compose -f "$ROOT/compose.yml" up -d --build > >(note) 2>&1; then
+  # From the project directory, whatever directory the watcher was started
+  # from: compose resolves relative paths and the project name against it.
+  if ! (cd "$ROOT" && docker compose up -d --build) > >(note) 2>&1; then
     REPORT_EXTRA='"error": true' report 0 error "docker compose up --build failed"
     exit 1
   fi
