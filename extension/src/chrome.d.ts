@@ -24,7 +24,7 @@ declare namespace chrome {
       tab?: { id?: number };
     }
     function sendMessage(message: unknown): Promise<unknown>;
-    function connect(name?: string): Port;
+    function connect(connectInfo?: { name?: string }): Port;
     const onMessage: {
       addListener(cb: (message: unknown, sender: MessageSender) => void | Promise<unknown>): void;
     };

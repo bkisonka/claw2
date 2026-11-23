@@ -186,7 +186,7 @@ function mount(): void {
     const ctx = collectContext();
     const streaming = addMsg("assistant", "…");
 
-    const port = chrome.runtime.connect("claw2-chat");
+    const port = chrome.runtime.connect({ name: "claw2-chat" });
     abortPort = port;
     let full = "";
     port.onMessage.addListener((raw) => {
