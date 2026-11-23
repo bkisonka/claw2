@@ -3,9 +3,17 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.15] - 2026-11-23
 
 ### Fixed
+
+- **Companion extension install/connect fixes**: `default_locale` dropped
+  from the manifest (browsers refuse it without a `_locales` tree — the
+  Yandex.Browser report), the connection test sends
+  `Accept: application/json` (`/health` answers plain `ok` otherwise and
+  the JSON parse blew up), and the chat port connects via
+  `runtime.connect({ name })` — a bare string is parsed as an extension id
+  ("Invalid extension id: claw2-chat").
 
 - **The built-in wiki no longer renders itself inside itself**: a deep link
   like `/wiki/ru/How-To/Page` (path form, no hash) made the shell fetch
