@@ -5,7 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **FreeBSD packaging lives in its own repository**,
+  [bkisonka/claw2-freebsd](https://github.com/bkisonka/claw2-freebsd): a jail
+  template, a `pkg` package and an installer that builds from source. The
+  gateway, the web interface, the mobile web client and the skills in the
+  soft sandbox build and run natively (verified on FreeBSD 15.1-RELEASE:
+  build, the whole test suite and a live skill run).
+
 ### Fixed
+
+- **npm 12 no longer installs the gateway without its native modules.**
+  npm 12 blocks the install scripts of dependencies unless the project
+  lists them in `allowScripts`; without the list `npm ci` succeeds and the
+  gateway dies on its first `require("better-sqlite3")`. The three packages
+  of the project now name `better-sqlite3`, `bcrypt` and `esbuild` — by
+  name, so a version bump does not silently re-block them. Older npm
+  ignores the field and behaves as before.
+- **sqlite-vec can be loaded from an explicit path** (`CLAW2_SQLITE_VEC_PATH`)
+  on platforms the npm package ships no binary for, instead of failing
+  with "Unsupported platform".
 
 - **web-search.js searches from datacenter IPs**: Bing's RSS output is the
   first engine of the chain (`format=rss` — structural XML, no map and no

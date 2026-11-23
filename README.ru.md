@@ -133,6 +133,9 @@ docker compose up -d --build
   локального сервера вроде LM Studio или Ollama.
 
 Для сборки из исходников без Docker нужен Node.js 22.13 или новее (в CI используется Node.js 22).
+Для FreeBSD упаковка вынесена в отдельный репозиторий
+[bkisonka/claw2-freebsd](https://github.com/bkisonka/claw2-freebsd): готовый jail-шаблон,
+пакет и установщик; навыки работают в мягкой песочнице.
 
 ## Конфигурация
 

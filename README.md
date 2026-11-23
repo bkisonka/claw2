@@ -132,6 +132,9 @@ model provider and whatever the agent fetches on your behalf.
   local server such as LM Studio or Ollama.
 
 Building from source without Docker requires Node.js 22.13 or newer (CI uses Node.js 22).
+FreeBSD has its own packaging — a jail template, a package and an installer — in
+[bkisonka/claw2-freebsd](https://github.com/bkisonka/claw2-freebsd); skills run in the
+soft sandbox there.
 
 ## Configuration
 
