@@ -41,7 +41,9 @@ export default function App() {
   useEffect(() => {
     if (!isSingleUserClient() || !apiKey) return;
     let cancelled = false;
-    fetch(`${apiBase}/api/me`, {
+    // Probe with a route that EXISTS in key mode: /api/me answers 404 there
+    // (registration-only) and painted the console red on every load.
+    fetch(`${apiBase}/chat/list`, {
       headers: { "X-API-Key": apiKey, Authorization: `Bearer ${apiKey}` },
     })
       .then((res) => {

@@ -27,9 +27,10 @@ export function GatewayKeyGate() {
     setSubmitting(true);
     setError(null);
     // Verify before storing: the probe passes the auth gate only with a valid
-    // key (404 then means "/api/me does not exist in key mode" — expected).
+    // key. /chat/list exists in key mode (unlike registration-only /api/me,
+    // whose 404 painted the console on every check).
     try {
-      const res = await fetch(`${apiBase}/api/me`, {
+      const res = await fetch(`${apiBase}/chat/list`, {
         headers: { "X-API-Key": trimmed, Authorization: `Bearer ${trimmed}` },
       });
       if (res.status === 401 || res.status === 403) {
