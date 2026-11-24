@@ -5,7 +5,7 @@ import { memo, useState, useRef, useEffect, useCallback, useMemo, type PointerEv
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { sendMessageStream, readFileAsBase64, deleteChatImage, downloadChatFile, acceptInsightOffer, dismissInsightOffer, fetchIdleInsightOffer, postBrowserPageText, type DocumentToSend, type ChatCell, type ChatPageContextPayload, type InsightOfferApi, type ClientInsightContextPayload, type ToolStep } from "../api/chat";
+import { sendMessageStream, readFileAsBase64, deleteChatImage, downloadChatFile, acceptInsightOffer, dismissInsightOffer, fetchIdleInsightOffer, answerReadBrowserPage, answerHeadlessPageText, type DocumentToSend, type ChatCell, type ChatPageContextPayload, type InsightOfferApi, type ClientInsightContextPayload, type ToolStep } from "../api/chat";
 import { InsightCard, InsightOfferCard } from "./InsightCards";
 import { getConfig } from "../api/config";
 import { makeChatTitle } from "../store/chatList";
@@ -1363,55 +1363,8 @@ export function Chat({
         isWebSurface ? browserPageKey : null,
         inject,
         browserPageTextFull,
-        (requestId) => {
-          const browser = window.claw2Desktop?.browser;
-          const getPageText = browser?.getPageText;
-          if (!getPageText) {
-            void postBrowserPageText({ requestId, text: browserPageTextFull || "" });
-            return;
-          }
-          void (async () => {
-            try {
-              const deadline = Date.now() + 15_000;
-              while (Date.now() < deadline && browser.getState) {
-                const st = await browser.getState();
-                if (!st.isLoading && (st.url || "").trim() && st.url !== "about:blank") {
-                  await new Promise((r) => setTimeout(r, 450));
-                  break;
-                }
-                await new Promise((r) => setTimeout(r, 200));
-              }
-              const page = await getPageText();
-              await postBrowserPageText({
-                requestId,
-                url: page.url,
-                title: page.title,
-                text: page.ok ? page.text || "" : browserPageTextFull || "",
-                truncated: page.truncated,
-              });
-            } catch {
-              await postBrowserPageText({ requestId, text: browserPageTextFull || "" });
-            }
-          })();
-        },
-        (requestId, url) => {
-          const loadPageText = window.claw2Desktop?.browser?.loadPageText;
-          if (!loadPageText) {
-            void postBrowserPageText({ requestId, text: "" });
-            return;
-          }
-          void loadPageText(url, { timeoutMs: 18_000 })
-            .then((page) =>
-              postBrowserPageText({
-                requestId,
-                url: page.url || url,
-                title: page.title,
-                text: page.ok ? page.text || "" : "",
-                truncated: page.truncated,
-              })
-            )
-            .catch(() => postBrowserPageText({ requestId, text: "" }));
-        },
+        (requestId) => answerReadBrowserPage(requestId, browserPageTextFull || ""),
+        answerHeadlessPageText,
         chatModelRef.current,
         applyToolEvent
       );

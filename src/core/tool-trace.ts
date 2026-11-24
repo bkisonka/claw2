@@ -120,9 +120,34 @@ function traceLine(entry: ToolTraceEntry, index: number): string {
   return `${index + 1}. ${entry.name} ${entry.args || "{}"} → ${status}${duration}\n   result: ${result}`;
 }
 
-/** The block the model sees in the history instead of the raw tool messages. */
-export function formatToolTraceForHistory(entries: ToolTraceEntry[]): string {
-  return `[Tool steps of this turn]\n${entries.map(traceLine).join("\n")}`;
+/** Steps left out of a trace block that are still named at its top. */
+const OMITTED_STEP_NAMES = 30;
+
+/** `read a.txt`: the tool and the first text argument it was given — enough to tell the steps apart. */
+function stepLabel(entry: ToolTraceEntry): string {
+  const argument = /:\s*"((?:[^"\\]|\\.)*)"/.exec(entry.args)?.[1];
+  return argument ? `${entry.name} ${argument.length > 60 ? `${argument.slice(0, 60)}…` : argument}` : entry.name;
+}
+
+/**
+ * The block the model sees in the history instead of the raw tool messages.
+ * `omitted` are the steps left out for size: they are still named, so the
+ * model can tell what it no longer sees and repeat one if it needs it.
+ */
+export function formatToolTraceForHistory(
+  entries: ToolTraceEntry[],
+  omitted: readonly ToolTraceEntry[] = []
+): string {
+  const named = omitted.slice(-OMITTED_STEP_NAMES);
+  const count = `${omitted.length} earlier step${omitted.length === 1 ? "" : "s"} left out for size`;
+  const leftOut = named.length
+    ? `${count}${named.length < omitted.length ? ` — the last ${named.length}` : ""}: ${named.map(stepLabel).join(", ")}\n`
+    : "";
+  // Numbered by their place in the turn, so the steps that stay keep their numbers.
+  const lines = entries.map((entry, index) =>
+    traceLine(entry, Number.isInteger(entry.seq) && entry.seq >= 0 ? entry.seq : index)
+  );
+  return `[Tool steps of this turn]\n${leftOut}${lines.join("\n")}`;
 }
 
 /**
@@ -161,7 +186,8 @@ export interface TraceHistoryMessage {
 /**
  * Appends a trace block to the newest assistant turns that ran tools. Turns
  * beyond `maxTurns` get nothing; a block that would exceed `maxChars` loses
- * its oldest steps. Input messages are not modified.
+ * its oldest steps, which it names in its first line. Input messages are not
+ * modified.
  */
 export function withToolTraceHistory<T extends TraceHistoryMessage>(
   history: T[],
@@ -176,11 +202,12 @@ export function withToolTraceHistory<T extends TraceHistoryMessage>(
     const msg = out[i];
     if (!msg || msg.role !== "assistant" || !msg.tools?.length) continue;
     turnsLeft--;
-    let entries = msg.tools;
+    const all = msg.tools;
+    let entries = all;
     let block = formatToolTraceForHistory(entries);
     while (block.length > budget && entries.length > 1) {
       entries = entries.slice(1);
-      block = formatToolTraceForHistory(entries);
+      block = formatToolTraceForHistory(entries, all.slice(0, all.length - entries.length));
     }
     if (block.length > budget) continue;
     budget -= block.length;

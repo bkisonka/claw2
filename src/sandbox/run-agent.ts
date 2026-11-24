@@ -7,7 +7,7 @@
  * On the host - Node --permission; optional sandbox.hostFs (allowlist | full).
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -22,6 +22,49 @@ import {
 } from "./docker-guard.js";
 import { getEgressGuardProxy } from "./egress-proxy.js";
 import { ensureEgressPreload, ensureEgressSidecar } from "./egress-preload-build.js";
+
+/** `docker kill` clients still running; a shutdown waits for them, so no skill container outlives the gateway. */
+const pendingKills = new Set<ChildProcess>();
+/** A `docker kill` that gets no answer from the daemon is given up after this long. */
+const CONTAINER_KILL_TIMEOUT_MS = 10_000;
+
+/**
+ * Kills a skill container without blocking. The daemon may be slow to answer,
+ * and the event loop has the other turns to serve while it does.
+ */
+function killContainer(containerName: string): void {
+  const kill = spawn("docker", ["kill", containerName], { stdio: "ignore" });
+  pendingKills.add(kill);
+  const giveUp = setTimeout(() => kill.kill("SIGKILL"), CONTAINER_KILL_TIMEOUT_MS);
+  giveUp.unref();
+  const gone = () => {
+    clearTimeout(giveUp);
+    pendingKills.delete(kill);
+  };
+  // Without a handler, a docker that cannot be started would throw on the next tick.
+  kill.once("error", gone);
+  kill.once("close", gone);
+}
+
+/**
+ * Resolves when every `docker kill` issued so far has finished, or when `ms`
+ * runs out. The kills are issued before their turns settle, so a shutdown
+ * calls this after waiting for the turns.
+ */
+export function waitForContainerKills(ms: number): Promise<void> {
+  const waiting = [...pendingKills];
+  if (waiting.length === 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, ms));
+    timer.unref();
+    void Promise.all(waiting.map((kill) => new Promise<void>((done) => kill.once("close", () => done())))).then(
+      () => {
+        clearTimeout(timer);
+        resolve();
+      }
+    );
+  });
+}
 
 /**
  * Sibling-sandbox mode (compose delivery): the gateway runs inside a
@@ -925,13 +968,11 @@ export async function runAgent(
     // Kill by name first: `docker run --rm -i` keeps the container running
     // when only the CLI client dies, so SIGKILL to the CLI is not enough
     // for an infinite skill. Cancellation takes the same road as the timeout:
-    // the container is killed, not left running until its own deadline.
+    // the container is killed, not left running until its own deadline. The
+    // kill is asked for, not waited for: waiting here held the whole event
+    // loop until the daemon answered.
     const stop = (mark: "timeout" | "aborted") => {
-      try {
-        spawnSync("docker", ["kill", containerName], { timeout: 10_000 });
-      } catch {
-        /* best effort; fall through to killing the CLI */
-      }
+      killContainer(containerName);
       proc.kill("SIGKILL");
       settle({
         stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),

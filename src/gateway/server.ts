@@ -31,6 +31,7 @@ import {
 } from "../core/tool-trace.js";
 import { isAbortError, throwIfAborted } from "../core/abort.js";
 import {
+  isBrowserPageTextPending,
   resolveBrowserPageText,
   waitForBrowserPageText,
 } from "./browser-page-text-pending.js";
@@ -69,20 +70,25 @@ import {
   abortChatRun,
   beginChatRun,
   DEFAULT_CHAT_KEEPALIVE_MS,
+  DEFAULT_CHAT_RUN_MAX_MS,
+  DEFAULT_CHAT_RUN_SETTLE_WAIT_MS,
+  DEFAULT_MAX_CONCURRENT_CHAT_RUNS,
+  DEFAULT_SHUTDOWN_GRACE_MS,
   finishChatRun,
   getChatRun,
-  MAX_CONCURRENT_CHAT_RUNS,
+  hasStoredSuccessor,
+  isChatShuttingDown,
+  markChatRunStored,
   publishChatRun,
-  RUN_SETTLE_WAIT_MS,
   startSseKeepalive,
   subscribeChatRun,
   TOOL_STEP_ARGS_CHARS,
   toStepEvent,
   waitForChatRun,
-  DEFAULT_CHAT_RUN_MAX_MS,
   type ChatRun,
   type ChatRunEvent,
 } from "./chat-runs.js";
+import { installGracefulShutdown } from "./shutdown.js";
 import { applyPromptContext, limitHistoryForPrompt, nextPromptCoveredCount } from "./prompt-history.js";
 import { initDb, getChatRepository } from "./db/index.js";
 import { createTranscriptSessionAccess, isTranscriptToolsEnabled } from "../transcript/index.js";
@@ -1576,18 +1582,30 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
 
+        // The question of the turn. Known before anything is awaited, so a
+        // client that attaches while the turn is still being set up sees it.
+        const storedUserMessage = pageContext ? formatBrowserSelectionForHistory(message, pageContext) : message;
         activeSessionId = sessionId;
-        const begun = beginChatRun(sessionId, userId);
+        const maxConcurrentChatRuns =
+          config.gateway?.maxConcurrentChatRuns ?? DEFAULT_MAX_CONCURRENT_CHAT_RUNS;
+        const begun = beginChatRun(sessionId, userId, maxConcurrentChatRuns);
         if (!begun) {
-          res.writeHead(429, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          // A gateway that is stopping comes back in a moment; a full one does not.
+          const stopping = isChatShuttingDown();
+          res.writeHead(stopping ? 503 : 429, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(
-            JSON.stringify({
-              error: `Too many concurrent chats (limit ${MAX_CONCURRENT_CHAT_RUNS}). Wait for a running one to finish.`,
-            })
+            JSON.stringify(
+              stopping
+                ? { error: "Gateway is shutting down", code: "shutting_down" }
+                : {
+                    error: `Too many concurrent chats (limit ${maxConcurrentChatRuns}). Wait for a running one to finish.`,
+                  }
+            )
           );
           return;
         }
         const run = begun.run;
+        run.userMessage = storedUserMessage;
         activeRun = run;
         const signal = run.controller.signal;
         // A background turn outlives this request: a dropped connection only
@@ -1605,7 +1623,12 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         throwIfAborted(signal);
         // The turn this one superseded is stored first, so the new turn's history has it.
         if (begun.previous) {
-          await waitForChatRun(begun.previous, RUN_SETTLE_WAIT_MS);
+          const settleWaitMs = config.gateway?.chatRunSettleWaitMs ?? DEFAULT_CHAT_RUN_SETTLE_WAIT_MS;
+          if (!(await waitForChatRun(begun.previous, settleWaitMs))) {
+            console.error(
+              `[gateway] the previous turn of chat ${sessionId} is still stopping ${settleWaitMs} ms after it was superseded; the new turn starts without it in its history`
+            );
+          }
           throwIfAborted(signal);
         }
         const messageForTitle = message || pageContext?.text?.slice(0, 80) || "browser";
@@ -1701,10 +1724,6 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 : ""),
           pageContext
         );
-        const storedUserMessage = pageContext
-          ? formatBrowserSelectionForHistory(message, pageContext)
-          : message;
-        run.userMessage = storedUserMessage;
         // Browser page text is web content riding in the user message: mark
         // provenance so later turns (and the trifecta) know it is there.
         const userOrigin = pageContext ? { source: "browser-page" as const, untrusted: true } : undefined;
@@ -1901,6 +1920,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               setSessionPromptContext(sessionId, promptContext.summary, promptContext.coveredCount);
             }
           }
+          markChatRunStored(run);
           return userCells;
         };
 
@@ -1925,6 +1945,14 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const persistStoppedTurn = () => {
           const tools = foldToolEvents(toolEvents);
           if (!run.partialContent.trim() && tools.length === 0) return;
+          // Superseded, and the turn that replaced it is stored already: stored
+          // now, it would land after it as the chat's latest exchange.
+          if (hasStoredSuccessor(run)) {
+            console.error(
+              `[gateway] the superseded turn of chat ${sessionId} stopped after the new one was stored; it is not stored`
+            );
+            return;
+          }
           try {
             persistTurn({ content: run.partialContent, cells: [] }, tools);
           } catch (err) {
@@ -2426,6 +2454,19 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         res.write(frame({ snapshot: { userMessage: run.userMessage ?? "", content: run.partialContent, steps: run.steps } }));
       }
       if (run.sidebarUpdated) res.write(frame({ sidebarUpdated: true }));
+      // What the turn asked of a client's browser is asked again: a page it
+      // opened while nobody was listening, and a page-text request that is
+      // still waiting — the client that just connected can answer it.
+      if (run.missedOpenUrl) {
+        res.write(frame({ openBrowserUrl: run.missedOpenUrl }));
+        run.missedOpenUrl = undefined;
+      }
+      for (const request of run.pageRequests) {
+        if (!isBrowserPageTextPending(request.requestId)) continue;
+        res.write(
+          frame(request.url ? { headlessPageText: request } : { readBrowserPage: { requestId: request.requestId } })
+        );
+      }
       // No await between reading the run and subscribing: a turn that ends in
       // between would otherwise leave this stream waiting forever.
       const stopKeepalive = startSseKeepalive(res, config.gateway?.chatKeepaliveMs ?? DEFAULT_CHAT_KEEPALIVE_MS);
@@ -2700,7 +2741,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       try {
         // Stop the turn and let it store what it did before its chat disappears.
         const running = abortChatRun(sessionId, "Chat deleted");
-        if (running) await waitForChatRun(running, RUN_SETTLE_WAIT_MS);
+        if (running) await waitForChatRun(running, config.gateway?.chatRunSettleWaitMs ?? DEFAULT_CHAT_RUN_SETTLE_WAIT_MS);
         const deleted = chatRepo.deleteChat(sessionId, userId);
         if (deleted) releaseSessionRuntime(sessionId);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
@@ -4859,6 +4900,8 @@ export function startGateway(configRef: { current: Claw2Config }): void {
   const port = config.gateway?.port ?? 3000;
   const bind = (config.gateway?.bind ?? "").trim() || undefined;
   const server = createGatewayServer(configRef);
+  // A running chat turn must outlive the stop: docker stop, systemd and Ctrl+C end the gateway through it.
+  installGracefulShutdown({ graceMs: config.gateway?.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS });
 
   const onListening = (): void => {
     mkdirSync(resolveAgentsUploadsDir(config), { recursive: true });

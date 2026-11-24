@@ -77,7 +77,8 @@ function compactedResult(meta: ToolCallMeta | undefined, content: string, headCh
   const omitted = Math.max(0, content.length - headChars);
   return (
     `[compacted tool result: ${label} — ${omitted.toLocaleString("en-US")} characters omitted to stay inside the ` +
-    `context budget; call the tool again if you need the full output.]\n${content.slice(0, headChars)}`
+    "context budget; call the tool again if you need the full output — for a file, read(path, offset, limit) returns " +
+    `the missing lines.]\n${content.slice(0, headChars)}`
   );
 }
 

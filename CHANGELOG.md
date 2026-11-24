@@ -3,6 +3,68 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **A running turn survives a gateway restart.** `SIGTERM`/`SIGINT`
+  (`docker stop`, systemd, Ctrl+C) stop every running turn the way the Stop
+  button does — the turn is stored with its message, the text printed so far
+  and its tool steps — before the process exits, and the chat is there when
+  the gateway is back. Until then a new message is refused with
+  `503 {"code":"shutting_down"}`. `gateway.shutdownGraceMs` (default 8000,
+  inside the grace period `docker stop` gives by default) bounds the wait; a
+  turn that needs longer is named in the log. A `SIGKILL`, an OOM kill or a
+  power cut still lose the running turns, and a stored turn is not marked as
+  interrupted. The gateway is PID 1 of its container, and Node ignores
+  `SIGTERM` as PID 1 unless a handler is installed: `docker stop` used to
+  wait out the whole grace period and then kill it.
+- **`gateway.maxConcurrentChatRuns`** (default 8, 0 = off): how many turns
+  may run at once. It was a constant of the code.
+- **`gateway.chatRunSettleWaitMs`** (default 15000): how long a new turn
+  waits for the turn it superseded to be stored.
+
+### Changed
+
+- **The model is not limited to 30 tool steps per turn anymore.** Nothing in
+  the code counts its steps now: a turn is bounded by `gateway.chatRunMaxMs`
+  and its tool results by the context budget. `orchestrator.maxToolIterations`
+  still sets a ceiling for whoever wants one. A model that repeats a failing
+  call now goes on until the time cap instead of stopping at 30.
+- **Attach asks again for what the turn is still waiting for.** `GET
+  /chat/attach` replays the page-text requests (`readBrowserPage`,
+  `headlessPageText`) that no client has answered yet, and a page the turn
+  opened while no client was listening. A reloaded tab used to lose both and
+  the tool waited 18–20 s for its fallback.
+- **Stopping a skill no longer holds the gateway.** `docker kill` is issued
+  without blocking the event loop, which a slow daemon could freeze for up to
+  10 s — on every Stop. A shutdown waits for the kills to reach the daemon.
+- **The model is told what it no longer sees.** A compacted tool result says
+  that `read(path, offset, limit)` returns the missing lines, and a trace
+  block of the history names the steps it leaves out for size.
+- **The model is told to look before it reads.** To find something among
+  files — a local directory, a repository, a documentation site — it is to
+  get the listing first and read only the files the task needs, with
+  independent `read`/`web_fetch` calls in one response, instead of pulling
+  files one by one.
+
+### Fixed
+
+- **A superseded turn that stops late is not stored after its replacement.**
+  A superseded turn that stopped only after the new turn was already stored
+  was written behind it and read as the chat's latest exchange, in the
+  history and for the model. It is not stored now; the wait that ran out is
+  logged.
+- **The question of a turn is visible from its first moment.** A client that
+  attached while the turn was still being set up — it can wait up to
+  `chatRunSettleWaitMs` for the turn it superseded — got neither a snapshot
+  nor the question later.
+- **`read` past the end of a file says so**: `[no lines at offset 99: the
+  file has 12]` instead of the last line again, which read as "there is more".
+- **The compact prompt no longer offers the transcript tools while they are
+  switched off.** With `gateway.transcriptTools: false` its one tools line
+  still named `transcript_*`, a tool the schema does not have to call.
+
 ## [0.3.0] - 2026-11-24
 
 ### Added

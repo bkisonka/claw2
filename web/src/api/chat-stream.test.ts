@@ -159,6 +159,29 @@ describe("attachChatStream", () => {
     expect(onChunk).not.toHaveBeenCalled();
   });
 
+  it("hands the browser requests of the turn to the client that reconnected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        sse(
+          event({ openBrowserUrl: "https://example.test/opened" }) +
+            event({ readBrowserPage: { requestId: "read" } }) +
+            event({ headlessPageText: { requestId: "load", url: "https://example.test/page" } }) +
+            event({ done: true, sessionId: "s1", content: "done" })
+        )
+      )
+    );
+    const onOpenBrowserUrl = vi.fn();
+    const onReadBrowserPage = vi.fn();
+    const onHeadlessPageText = vi.fn();
+
+    await attachChatStream("s1", { onChunk: vi.fn(), onToolEvent: vi.fn(), onOpenBrowserUrl, onReadBrowserPage, onHeadlessPageText });
+
+    expect(onOpenBrowserUrl).toHaveBeenCalledWith("https://example.test/opened");
+    expect(onReadBrowserPage).toHaveBeenCalledWith("read");
+    expect(onHeadlessPageText).toHaveBeenCalledWith("load", "https://example.test/page");
+  });
+
   it("rejects a stream that ends without a terminal event", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(event({ content: "Partial" }))));
     await expect(attachChatStream("s1", { onChunk: vi.fn(), onToolEvent: vi.fn() })).rejects.toThrow(/interrupted/i);

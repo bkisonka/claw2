@@ -57,6 +57,11 @@ export function waitForBrowserPageText(
   });
 }
 
+/** Whether a page-text request is still waiting for a client to answer it. */
+export function isBrowserPageTextPending(requestId: string): boolean {
+  return pending.has(String(requestId || "").trim());
+}
+
 export function resolveBrowserPageText(
   requestId: string,
   payload: BrowserPageTextPayload | null

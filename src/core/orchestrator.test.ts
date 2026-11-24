@@ -153,6 +153,21 @@ describe("agent loop", () => {
     expect(result.toolIterations).toBe(3);
   });
 
+  it("does not count the tool calls of a turn unless a ceiling is configured", async () => {
+    const steps: Step[] = Array.from({ length: 40 }, (_, index) => ({
+      tool: [{ name: "read", args: { path: `f${index}.txt` } }],
+    }));
+    scriptModel([...steps, { content: "Done on the 41st call." }]);
+    vi.mocked(dispatchToolCall).mockResolvedValue("ok");
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "Done on the 41st call.", toolIterations: 40 });
+    expect(result.toolLimitReached).toBeUndefined();
+    expect(result.tools).toHaveLength(40);
+    expect(chat).toHaveBeenCalledTimes(41);
+  });
+
   it("ends with a final answer when the step budget is spent", async () => {
     const calls: Messages[] = [];
     const options: Array<ChatOptions | undefined> = [];

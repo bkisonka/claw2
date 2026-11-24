@@ -77,7 +77,9 @@ function sliceLines(text: string, lines: ReadLines): { ok: boolean; content?: st
   if (!text) return { ok: true, content: "[file is empty]" };
   // A trailing newline ends the last line; it does not start an empty one.
   const all = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
-  const start = Math.min(Math.max(1, wholeNumber(lines.offset, 1)), all.length);
+  const start = Math.max(1, wholeNumber(lines.offset, 1));
+  // Said outright: the last line again would read as if there were more.
+  if (start > all.length) return { ok: true, content: `[no lines at offset ${start}: the file has ${all.length}]` };
   const take = Math.min(Math.max(1, wholeNumber(lines.limit, DEFAULT_READ_LINES)), MAX_READ_LINES);
   const slice = all.slice(start - 1, start - 1 + take);
   const content = `[lines ${start}-${start + slice.length - 1} of ${all.length}]\n${slice.join("\n")}`;

@@ -13,7 +13,9 @@ import type { OrchestratorOptions } from "../core/orchestrator.js";
 import { runOrchestrator } from "../core/orchestrator.js";
 import type { ToolTraceEntry } from "../core/tool-trace.js";
 import { closeDb, initDb, type ChatRepository } from "./db/index.js";
+import { resetChatRunsForTest } from "./chat-runs.js";
 import { createGatewayServer } from "./server.js";
+import { shutdownGateway } from "./shutdown.js";
 
 vi.mock("../core/orchestrator.js", () => ({ runOrchestrator: vi.fn() }));
 
@@ -60,6 +62,7 @@ afterEach(async () => {
   server.closeAllConnections();
   await closed;
   closeDb();
+  resetChatRunsForTest();
   rmSync(dir, { force: true, recursive: true });
 });
 
@@ -171,6 +174,32 @@ function hangingTurn() {
     );
   });
   return { started, release: () => release?.() };
+}
+
+/**
+ * A turn that prints a little and then ignores being stopped — a tool that
+ * cannot be interrupted — until the test lets it give up.
+ */
+function stubbornTurn() {
+  let enter!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  let noteSuperseded!: () => void;
+  const superseded = new Promise<void>((resolve) => {
+    noteSuperseded = resolve;
+  });
+  let giveUp: (() => void) | null = null;
+  mockOrchestrator.mockImplementationOnce(
+    (options) =>
+      new Promise((_resolve, reject) => {
+        options.onStreamChunk?.("old ");
+        options.signal?.addEventListener("abort", () => noteSuperseded(), { once: true });
+        giveUp = () => reject(new DOMException("Aborted", "AbortError"));
+        enter();
+      })
+  );
+  return { entered, superseded, giveUp: () => giveUp?.() };
 }
 
 const toolStart = (frame: Frame) => frame.toolEvent != null;
@@ -474,7 +503,141 @@ describe("background chat turns", () => {
 
     const stream = tap(await postChat(true, sessionId));
     const terminal = await stream.waitFor((frame) => frame.done === true);
-    expect(terminal).toMatchObject({ done: true, error: expect.stringContaining("test write failure") });
+    expect(terminal).toMatchObject({ error: expect.stringContaining("test write failure") });
     expect(repo.getChatHistory(sessionId, "default")).toEqual([]);
+  });
+
+  it("attach during the setup of a turn already shows the question it answers", async () => {
+    configRef.current = { ...configRef.current, gateway: { chatRunSettleWaitMs: 3000 } };
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    // The new message supersedes the stubborn turn and waits for it to be stored.
+    mockOrchestrator.mockResolvedValue({ content: "new answer" });
+    void postChat(true, sessionId);
+    await stubborn.superseded;
+
+    const attached = tap(await fetch(`${base}/chat/attach?session_id=${sessionId}`));
+    expect(await attached.waitFor((frame) => frame.snapshot != null)).toEqual({
+      snapshot: { userMessage: `Question ${sessionId}`, content: "", steps: [] },
+    });
+
+    stubborn.giveUp();
+    expect(await attached.waitFor((frame) => frame.done === true)).toMatchObject({ done: true, content: "new answer" });
+  });
+
+  it("a superseded turn that stops only after the new one is stored does not land after it", async () => {
+    configRef.current = { ...configRef.current, gateway: { chatRunSettleWaitMs: 50 } };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    const first = tap(await postChat(true, sessionId));
+    await first.waitFor((frame) => frame.content === "old ");
+    mockOrchestrator.mockResolvedValue({ content: "new answer" });
+    const second = tap(await postChat(true, sessionId));
+    expect(await second.waitFor((frame) => frame.done === true)).toMatchObject({ done: true, content: "new answer" });
+
+    // Only now does the first turn give up.
+    stubborn.giveUp();
+    expect(await first.waitFor((frame) => frame.done === true)).toMatchObject({ done: true, code: "chat_cancelled" });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // Stored now, it would follow the new turn as the latest exchange of the chat.
+    expect(repo.getChatHistory(sessionId, "default").map((m) => m.content)).toEqual([`Question ${sessionId}`, "new answer"]);
+    const lines = logged.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes("still stopping 50 ms after it was superseded"))).toBe(true);
+    expect(lines.some((line) => line.includes("stopped after the new one was stored; it is not stored"))).toBe(true);
+    logged.mockRestore();
+  });
+
+  it("attach asks again for a page the turn is still waiting to read, and for a page it opened while nobody was there", async () => {
+    const sessionId = newSession();
+    const waiting: { page: Promise<unknown> | null; headless: Promise<unknown> | null } = { page: null, headless: null };
+    mockOrchestrator.mockImplementation(
+      (options) =>
+        new Promise((resolve) => {
+          options.onOpenBrowserUrl?.("https://example.test/opened");
+          waiting.page = options.requestBrowserPageText?.() ?? null;
+          waiting.headless = options.requestHeadlessPageText?.("https://example.test/headless") ?? null;
+          releaseAll.push(() => resolve({ content: "done" }));
+        })
+    );
+    // A non-stream client: nobody listens to what the turn asks for.
+    void postChat(false, sessionId);
+    await eventually(() => waiting.page != null && waiting.headless != null);
+
+    const attached = tap(await fetch(`${base}/chat/attach?session_id=${sessionId}`));
+    expect(await attached.waitFor((frame) => frame.readBrowserPage != null)).toEqual({
+      readBrowserPage: { requestId: expect.any(String) },
+    });
+    expect(await attached.waitFor((frame) => frame.headlessPageText != null)).toEqual({
+      headlessPageText: { requestId: expect.any(String), url: "https://example.test/headless" },
+    });
+    expect(attached.frames.some((frame) => frame.openBrowserUrl === "https://example.test/opened")).toBe(true);
+
+    // The client that reconnected answers the request for the page it shows.
+    const { requestId } = attached.frames.find((frame) => frame.readBrowserPage != null)!.readBrowserPage as { requestId: string };
+    expect(
+      await json("/api/chat/browser-page-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId, text: "page text" }),
+      })
+    ).toEqual({ status: 200, body: { ok: true } });
+    await expect(waiting.page).resolves.toMatchObject({ text: "page text" });
+
+    const late = tap(await fetch(`${base}/chat/attach?session_id=${sessionId}`));
+    // The headless request is still waiting: it is asked again.
+    await late.waitFor((frame) => frame.headlessPageText != null);
+    releaseAll.forEach((release) => release());
+    await late.waitFor((frame) => frame.done === true);
+    // An answered request and a page a client was already given are not repeated.
+    expect(late.frames.some((frame) => frame.readBrowserPage != null)).toBe(false);
+    expect(late.frames.some((frame) => frame.openBrowserUrl != null)).toBe(false);
+  });
+
+  it("a shutdown stops the running turns the way Stop does, so the chat is there after the restart", async () => {
+    const sessionId = newSession();
+    const turn = hangingTurn();
+    const stream = tap(await postChat(true, sessionId));
+    await stream.waitFor(toolStart);
+    await turn.started;
+    const exits: number[] = [];
+
+    await shutdownGateway("SIGTERM", { graceMs: 3000, exit: (code) => exits.push(code) });
+
+    // The client that was still attached sees the turn end…
+    expect(await stream.waitFor((frame) => frame.done === true)).toMatchObject({ done: true, code: "chat_cancelled" });
+    // …and the chat has the question, the text printed so far and the steps.
+    expect(repo.getChatHistory(sessionId, "default")).toEqual([
+      { role: "user", content: `Question ${sessionId}` },
+      { role: "assistant", content: "early " },
+    ]);
+    expect(repo.listToolCalls(sessionId, "default")).toHaveLength(1);
+    expect(exits).toEqual([0]);
+    // Until the gateway is back nothing starts, and nothing claims to be running.
+    const refused = await postChat(true, sessionId);
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toEqual({ error: "Gateway is shutting down", code: "shutting_down" });
+    const attach = await (await fetch(`${base}/chat/attach?session_id=${sessionId}`)).text();
+    expect(JSON.parse(attach.trim().slice(6))).toMatchObject({ done: true, noRun: true });
+  });
+
+  it("a shutdown that runs out of time says which turns are lost", async () => {
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exits: number[] = [];
+
+    await shutdownGateway("SIGTERM", { graceMs: 50, exit: (code) => exits.push(code) });
+
+    expect(exits).toEqual([0]);
+    const lines = logged.mock.calls.map((call) => String(call[0]));
+    expect(lines.some((line) => line.includes(`1 turn(s) did not stop in 50 ms and are lost: ${sessionId}`))).toBe(true);
+    logged.mockRestore();
+    stubborn.giveUp();
   });
 });

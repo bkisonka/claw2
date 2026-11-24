@@ -5,11 +5,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   abortChatRun,
   beginChatRun,
+  DEFAULT_MAX_CONCURRENT_CHAT_RUNS,
   finishChatRun,
   getChatRun,
   hasActiveChatRun,
-  MAX_CONCURRENT_CHAT_RUNS,
+  hasStoredSuccessor,
+  isChatShuttingDown,
+  markChatRunStored,
   publishChatRun,
+  resetChatRunsForTest,
+  stopChatRunsForShutdown,
   subscribeChatRun,
   toStepEvent,
   waitForChatRun,
@@ -28,6 +33,7 @@ function begin(sessionId = "session", userId = "user") {
 afterEach(() => {
   for (const run of started) if (!run.terminal) finishChatRun(run, {});
   started.length = 0;
+  resetChatRunsForTest();
 });
 
 describe("chat run registry", () => {
@@ -55,11 +61,19 @@ describe("chat run registry", () => {
     expect(getChatRun("session")).toBe(second.run);
   });
 
-  it(`refuses a ${MAX_CONCURRENT_CHAT_RUNS + 1}th concurrent session`, () => {
-    for (let i = 0; i < MAX_CONCURRENT_CHAT_RUNS; i++) begin(`session-${i}`);
+  it(`refuses a ${DEFAULT_MAX_CONCURRENT_CHAT_RUNS + 1}th concurrent session`, () => {
+    for (let i = 0; i < DEFAULT_MAX_CONCURRENT_CHAT_RUNS; i++) begin(`session-${i}`);
     expect(beginChatRun("one-too-many", "user")).toBeNull();
     // The same session again is not extra load.
     expect(beginChatRun("session-0", "user")).not.toBeNull();
+  });
+
+  it("takes the ceiling from the config: another number, or none", () => {
+    started.push(beginChatRun("a", "user", 1)!.run);
+    expect(beginChatRun("b", "user", 1)).toBeNull();
+    started.push(beginChatRun("c", "user", 0)!.run);
+    started.push(beginChatRun("d", "user", 0)!.run);
+    expect(getChatRun("d")).toBeDefined();
   });
 
   it("finishing notifies the subscribers once, resolves done and ignores a second finish", async () => {
@@ -141,11 +155,60 @@ describe("chat run registry", () => {
   it("waitForChatRun gives up after the timeout and returns at once for a finished turn", async () => {
     const run = begin().run;
     const started = Date.now();
-    await waitForChatRun(run, 20);
+    expect(await waitForChatRun(run, 20)).toBe(false);
     expect(Date.now() - started).toBeGreaterThanOrEqual(15);
     expect(Date.now() - started).toBeLessThan(500);
     finishChatRun(run, {});
-    await expect(waitForChatRun(run, 20)).resolves.toBeUndefined();
+    await expect(waitForChatRun(run, 20)).resolves.toBe(true);
+  });
+
+  it("a superseded turn knows whether the turn that replaced it is stored already", () => {
+    const first = begin().run;
+    expect(hasStoredSuccessor(first)).toBe(false);
+    const second = begin().run;
+    markChatRunStored(second);
+    expect(hasStoredSuccessor(first)).toBe(true);
+    // Through a chain: the third turn counts for the first one as well.
+    const third = begin().run;
+    second.stored = false;
+    markChatRunStored(third);
+    expect(hasStoredSuccessor(first)).toBe(true);
+    expect(hasStoredSuccessor(third)).toBe(false);
+  });
+
+  it("keeps the page-text requests of the turn and the page opened while nobody listened", () => {
+    const run = begin().run;
+    publishChatRun(run, { openBrowserUrl: "https://a.test/" });
+    publishChatRun(run, { readBrowserPage: { requestId: "read-1" } });
+    publishChatRun(run, { headlessPageText: { requestId: "headless-1", url: "https://b.test/" } });
+    publishChatRun(run, { openBrowserUrl: "https://c.test/" });
+    // No client was there: the page they missed is the last one opened.
+    expect(run.missedOpenUrl).toBe("https://c.test/");
+    subscribeChatRun(run, () => {});
+    publishChatRun(run, { openBrowserUrl: "https://d.test/" });
+    // A page a client saw is not repeated to the next one.
+    expect(run.missedOpenUrl).toBe("https://c.test/");
+    expect(run.pageRequests).toEqual([
+      { requestId: "read-1" },
+      { requestId: "headless-1", url: "https://b.test/" },
+    ]);
+  });
+
+  it("shutdown stops every turn, a superseded one too, refuses new ones and names what did not settle", async () => {
+    const first = begin().run;
+    const second = begin().run;
+    const stubborn = begin("other-session").run;
+    const stopping = stopChatRunsForShutdown("Gateway is shutting down", 50);
+    // The first was aborted when it was superseded; a signal keeps its first reason.
+    expect(first.controller.signal.reason).toBe("Superseded by a newer chat request");
+    expect(second.controller.signal.reason).toBe("Gateway is shutting down");
+    expect(stubborn.controller.signal.reason).toBe("Gateway is shutting down");
+    expect(isChatShuttingDown()).toBe(true);
+    expect(beginChatRun("later", "user")).toBeNull();
+
+    finishChatRun(first, {});
+    finishChatRun(second, {});
+    expect(await stopping).toEqual([stubborn]);
   });
 
   it("toStepEvent keeps the result text on the server and shortens the arguments", () => {

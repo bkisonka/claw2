@@ -119,6 +119,21 @@ describe("withToolTraceHistory", () => {
     expect(narrow[1]!.content).toBe("a");
   });
 
+  it("names the steps it leaves out for size, and the ones that stay keep their numbers", () => {
+    const steps = [
+      entry({ seq: 0, args: '{"path":"first.txt"}', result: "x".repeat(300) }),
+      entry({ seq: 1, name: "search", args: '{"query":"how to page a file"}', result: "y".repeat(300) }),
+      entry({ seq: 2, name: "write", args: '{"path":"third.txt"}', result: "z".repeat(300) }),
+    ];
+    const out = withToolTraceHistory([{ role: "assistant", content: "a", tools: steps }], 3, 500);
+    expect(out[0]!.content).toBe(
+      "a\n\n[Tool steps of this turn]\n" +
+        "2 earlier steps left out for size: read first.txt, search how to page a file\n" +
+        '3. write {"path":"third.txt"} → ok (12 ms)\n' +
+        `   result: ${"z".repeat(240)}…`
+    );
+  });
+
   it("can be switched off and ignores turns without tools", () => {
     const history = [
       { role: "user" as const, content: "q" },
@@ -143,5 +158,14 @@ describe("formatToolTraceForHistory", () => {
       '2. write {"path":"b.txt"} → error (1.5 s)',
       "   result: Error: disk full",
     ]);
+  });
+
+  it("names at most the nearest steps left out", () => {
+    const leftOut = Array.from({ length: 40 }, (_, index) => entry({ seq: index, args: `{"path":"f${index}.txt"}` }));
+    const block = formatToolTraceForHistory([entry({ seq: 40, args: '{"path":"last.txt"}' })], leftOut);
+    const [, named] = block.split("\n");
+    expect(named!.startsWith("40 earlier steps left out for size — the last 30: read f10.txt, read f11.txt")).toBe(true);
+    expect(named!.endsWith("read f38.txt, read f39.txt")).toBe(true);
+    expect(named).not.toContain("f9.txt");
   });
 });

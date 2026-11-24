@@ -27,6 +27,8 @@ import {
   touchChat,
   exportChatClawCache,
   renameChat,
+  answerHeadlessPageText,
+  answerReadBrowserPage,
   attachChatStream,
   cancelChat,
   type ToolStep,
@@ -134,6 +136,8 @@ export function AuthenticatedArea() {
   /** Sessions whose running turn this page is following through /chat/attach. */
   const attachingRef = useRef(new Set<string>());
   const attachAbortRef = useRef(new Map<string, AbortController>());
+  /** handleOpenBrowserUrl is defined further down; the attach stream reaches it through here. */
+  const openBrowserUrlRef = useRef<(url: string) => void>(() => {});
   const historyLoadPromisesRef = useRef(new Map<string, Promise<void>>());
   const historyLastAccessedRef = useRef(new Map<string, number>());
   const mainSurfaceRef = useRef(mainSurface);
@@ -728,6 +732,13 @@ export function AuthenticatedArea() {
                 steps = upsertToolStep(steps, step);
                 push();
               },
+              onSidebarUpdated: () => setSidebarRefreshKey((k) => k + 1),
+              onOpenBrowserUrl: (url) => openBrowserUrlRef.current(url),
+              // The gateway asks again for what the turn is still waiting for.
+              // After a reload the page the turn was sent with is gone: an
+              // empty answer lets the gateway fall back to what it has.
+              onReadBrowserPage: (requestId) => answerReadBrowserPage(requestId, ""),
+              onHeadlessPageText: answerHeadlessPageText,
             },
             controller.signal
           );
@@ -1241,6 +1252,7 @@ export function AuthenticatedArea() {
     },
     [location.pathname, navigate]
   );
+  openBrowserUrlRef.current = handleOpenBrowserUrl;
 
   const handleAddressSearch = useCallback(
     async (query: string) => {

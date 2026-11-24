@@ -74,7 +74,7 @@ describe("compactToolResults", () => {
     const messages = conversation();
     expect(compactToolResults(messages, meta, new Set(["c"]), { maxTotalChars: 5_000 })).toBe(2);
     expect(messages[2]!.content).toMatch(
-      /^\[compacted tool result: read \{"path":"a\.txt"\} — [0-9,]+ characters omitted to stay inside the context budget; call the tool again if you need the full output\.\]\nA+$/
+      /^\[compacted tool result: read \{"path":"a\.txt"\} — [0-9,]+ characters omitted to stay inside the context budget; call the tool again if you need the full output — for a file, read\(path, offset, limit\) returns the missing lines\.\]\nA+$/
     );
     expect(String(messages[4]!.content)).toContain('"path":"b.txt"');
     expect(messages[6]!.content).toBe("C".repeat(3_000));

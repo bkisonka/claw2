@@ -45,9 +45,20 @@ describe("read paging", () => {
     });
   });
 
-  it("clamps the window to the file and to the line cap", () => {
-    const beyond = toolRead(config, "uploads/lines.txt", undefined, { offset: 99, limit: 5 });
-    expect(beyond).toEqual({ ok: true, content: "[lines 12-12 of 12]\nline 12" });
+  it("clamps the line cap and says so when the offset is past the end of the file", () => {
+    // Not the last line again: a model paging by offset would read that as "there is more".
+    expect(toolRead(config, "uploads/lines.txt", undefined, { offset: 99, limit: 5 })).toEqual({
+      ok: true,
+      content: "[no lines at offset 99: the file has 12]",
+    });
+    expect(toolRead(config, "uploads/lines.txt", undefined, { offset: 13 })).toEqual({
+      ok: true,
+      content: "[no lines at offset 13: the file has 12]",
+    });
+    expect(toolRead(config, "uploads/lines.txt", undefined, { offset: 0, limit: 5 })).toEqual({
+      ok: true,
+      content: "[lines 1-5 of 12]\nline 1\nline 2\nline 3\nline 4\nline 5",
+    });
     const fromStart = toolRead(config, "uploads/lines.txt", undefined, { limit: 999_999 }) as { ok: boolean; content: string };
     expect(fromStart.ok).toBe(true);
     expect(fromStart.content.startsWith("[lines 1-12 of 12]\n")).toBe(true);

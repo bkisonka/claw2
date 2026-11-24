@@ -68,8 +68,6 @@ import {
   isTranscriptToolsEnabled,
 } from "../transcript/index.js";
 
-const DEFAULT_MAX_TOOL_ITERATIONS = 30;
-
 export interface OrchestratorOptions {
   config: Claw2Config;
   userMessage: string;
@@ -1037,7 +1035,16 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   if (dialIntent || getSipClient().getStatus().call) {
     injectTelephonyContext();
   }
-  const maxIterations = config.orchestrator?.maxToolIterations ?? DEFAULT_MAX_TOOL_ITERATIONS;
+  // Tool calls are not counted unless the operator caps them: the turn is
+  // bounded by its wall-clock cap (gateway.chatRunMaxMs) and its tool results
+  // by the context budget.
+  const configuredMaxIterations = config.orchestrator?.maxToolIterations;
+  const maxIterations =
+    typeof configuredMaxIterations === "number" &&
+    Number.isInteger(configuredMaxIterations) &&
+    configuredMaxIterations > 0
+      ? configuredMaxIterations
+      : Number.POSITIVE_INFINITY;
   let lastContent: string | null = null;
   /** The full text of the assistant's response for all iterations (for retrieving [CELL] even if the model was outputting them before calling the tools).*/
   let fullAssistantContent = "";

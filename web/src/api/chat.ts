@@ -149,6 +149,67 @@ export async function postBrowserPageText(payload: {
   return { ok: res.ok && data.ok !== false };
 }
 
+/**
+ * Answers a `readBrowserPage` request of a chat turn. The desktop app reads
+ * the page it shows now; the web client has only the text the page had when
+ * the turn was sent (`pageTextWhenSent`, empty after a reload) — an empty
+ * answer lets the gateway fall back to what it already has.
+ */
+export function answerReadBrowserPage(requestId: string, pageTextWhenSent: string): void {
+  const browser = window.claw2Desktop?.browser;
+  const getPageText = browser?.getPageText;
+  if (!getPageText) {
+    void postBrowserPageText({ requestId, text: pageTextWhenSent });
+    return;
+  }
+  void (async () => {
+    try {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline && browser.getState) {
+        const state = await browser.getState();
+        if (!state.isLoading && (state.url || "").trim() && state.url !== "about:blank") {
+          await new Promise((r) => setTimeout(r, 450));
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      const page = await getPageText();
+      await postBrowserPageText({
+        requestId,
+        url: page.url,
+        title: page.title,
+        text: page.ok ? page.text || "" : pageTextWhenSent,
+        truncated: page.truncated,
+      });
+    } catch {
+      await postBrowserPageText({ requestId, text: pageTextWhenSent });
+    }
+  })();
+}
+
+/**
+ * Answers a `headlessPageText` request of a chat turn: the desktop app loads
+ * the page itself, the web client leaves that to the gateway.
+ */
+export function answerHeadlessPageText(requestId: string, url: string): void {
+  const loadPageText = window.claw2Desktop?.browser?.loadPageText;
+  if (!loadPageText) {
+    void postBrowserPageText({ requestId, text: "" });
+    return;
+  }
+  void loadPageText(url, { timeoutMs: 18_000 })
+    .then((page) =>
+      postBrowserPageText({
+        requestId,
+        url: page.url || url,
+        title: page.title,
+        text: page.ok ? page.text || "" : "",
+        truncated: page.truncated,
+      })
+    )
+    .catch(() => postBrowserPageText({ requestId, text: "" }));
+}
+
 export async function sendMessage(
   message: string,
   sessionId?: string,
@@ -427,7 +488,11 @@ export interface AttachChatHandlers {
   onChunk: (text: string) => void;
   onToolEvent: (step: ToolStep) => void;
   onSidebarUpdated?: () => void;
+  /** A page the turn opened while no client was listening. */
   onOpenBrowserUrl?: (url: string) => void;
+  /** The gateway asks again for a page the turn is still waiting to read. */
+  onReadBrowserPage?: (requestId: string) => void;
+  onHeadlessPageText?: (requestId: string, url: string) => void;
 }
 
 /**
@@ -462,6 +527,11 @@ export async function attachChatStream(
     if (data.sidebarUpdated === true) handlers.onSidebarUpdated?.();
     const openUrl = trimmedString(data.openBrowserUrl);
     if (openUrl) handlers.onOpenBrowserUrl?.(openUrl);
+    const readRequestId = trimmedString(data.readBrowserPage?.requestId);
+    if (readRequestId) handlers.onReadBrowserPage?.(readRequestId);
+    const headlessRequestId = trimmedString(data.headlessPageText?.requestId);
+    const headlessUrl = trimmedString(data.headlessPageText?.url);
+    if (headlessRequestId && headlessUrl) handlers.onHeadlessPageText?.(headlessRequestId, headlessUrl);
     return undefined;
   });
 }
