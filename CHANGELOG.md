@@ -29,9 +29,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The steps fold stays closed.** While a turn runs, its header shows the
   steps one line at a time, advancing as they arrive: each new step slides
   up from below while the previous one slides out above, and between steps
-  the line stands still. The fold is there to read the whole list on click;
-  with reduced motion requested, the line swaps without animation. The fold
-  used to open on its own while the turn ran and grow with every step.
+  the line stands still. Once the turn is over, the header keeps the last
+  step's content beside the count and the total time. The fold is there to
+  read the whole list on click; with reduced motion requested, the line
+  swaps without animation. The fold used to open on its own while the turn
+  ran and grow with every step.
 - **The model is not limited to 30 tool steps per turn anymore.** Nothing in
   the code counts its steps now: a turn is bounded by `gateway.chatRunMaxMs`
   and its tool results by the context budget. `orchestrator.maxToolIterations`

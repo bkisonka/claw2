@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { ToolStep } from "../api/chat";
 import { useT } from "../i18n";
-import { formatStepDuration, isStepRunning, stepLine, toolStepSubject, totalStepDuration } from "../lib/toolSteps";
+import { formatStepDuration, isStepRunning, stepLine, stepMark, toolStepSubject, toolStepTitle, totalStepDuration } from "../lib/toolSteps";
 
 type Props = {
   steps: ToolStep[];
@@ -64,6 +64,9 @@ export function ChatToolSteps({ steps, running }: Props) {
   const count = t("chat.stepsCount", { count: steps.length });
   const totalLabel = formatStepDuration(total);
   const summary = totalLabel ? `${count} · ${totalLabel}` : count;
+  // Once the turn is over the header keeps the last step's content beside the
+  // count: what the agent finished with, without opening the fold.
+  const last = running ? null : steps[steps.length - 1];
 
   return (
     <div className="chat-tool-steps" data-running={running ? "true" : undefined}>
@@ -78,7 +81,11 @@ export function ChatToolSteps({ steps, running }: Props) {
           {open ? "▾" : "▸"}
         </span>
         <span className="chat-tool-steps-summary">{summary}</span>
-        {running ? (
+        {last ? (
+          <span className="chat-tool-steps-last" aria-hidden>
+            {stepMark(last)} {toolStepTitle(last)}
+          </span>
+        ) : running ? (
           <span className="chat-steps-cycler" aria-hidden>
             {shown.leaving ? (
               <span
