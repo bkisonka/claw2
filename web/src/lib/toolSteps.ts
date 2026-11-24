@@ -73,28 +73,14 @@ export function stepMark(step: ToolStep): string {
   return step.ok ? "✓" : "✕";
 }
 
-/**
- * The running header's ticker line: the nearest steps as
- * "run_agent download-file.js ✓924 ms", newest last, joined with arrows —
- * what the agent is doing, without opening the fold.
- */
-export function stepsTicker(steps: readonly ToolStep[], howMany = 8): string {
-  return steps
-    .slice(-howMany)
-    .map((step) => {
-      const mark = stepMark(step);
-      const duration = formatStepDuration(step.durationMs);
-      // A finished step carries its duration — succeeded or failed; a running
-      // or cut-short one has none to show.
-      const note = mark === "…" || mark === "–" || duration == null ? mark : `${mark}${duration}`;
-      return [toolStepTitle(step), note].filter(Boolean).join(" ");
-    })
-    .join(" → ");
-}
-
-/** Marquee duration for a ticker text: the longer the line, the more time it gets. */
-export function tickerDuration(text: string): string {
-  return `${Math.min(45, Math.max(8, Math.round(text.length / 30)))}s`;
+/** One step as a single header line: "run_agent download-file.js ✓924 ms". */
+export function stepLine(step: ToolStep): string {
+  const mark = stepMark(step);
+  const duration = formatStepDuration(step.durationMs);
+  // A finished step carries its duration — succeeded or failed; a running
+  // or cut-short one has none to show.
+  const note = mark === "…" || mark === "–" || duration == null ? mark : `${mark}${duration}`;
+  return [toolStepTitle(step), note].filter(Boolean).join(" ");
 }
 
 /** "12 ms" / "2.3 s"; null when the step has no duration (still running or interrupted). */
