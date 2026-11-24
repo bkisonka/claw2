@@ -46,11 +46,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   does not — a note asks it to change the approach or to answer with what it
   has. When step after step not one tool call succeeds, though no call
   repeats, it is told so on the fifth step and again every ten further ones,
-  and asked to stop calling tools and answer. The turn goes on;
+  and asked to stop calling tools and answer; after ten further failures
+  of the same call the note is said again — one note may be ignored. A
+  fresh note replaces the previous one instead of piling up in the prompt
+  for the rest of the turn, and it names every call in a live failing
+  streak, each with its own count. The turn goes on;
   `tool_repeated_failure` and `tool_fruitless_steps` go to the audit log.
-  Both notes come as user messages — providers are not required to accept a
-  system message in the middle of a dialogue — and the fruitless-steps note
-  offers a change of approach instead of commanding to stop.
+  The notes — and the step-budget note — come as user messages: providers
+  are not required to accept a system message in the middle of a dialogue,
+  and the fruitless-steps note offers a change of approach instead of
+  commanding to stop.
 - **Attach asks again for what the turn is still waiting for.** `GET
   /chat/attach` replays the page-text requests (`readBrowserPage`,
   `headlessPageText`) that no client has answered yet, and a page the turn

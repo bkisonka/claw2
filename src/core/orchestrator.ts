@@ -174,10 +174,16 @@ function toolLimitMessage(maxIterations: number): string {
 
 /** After this many failures in a row of one exact call, the model is told to stop repeating it. */
 const REPEATED_FAILURE_NOTICE_AFTER = 3;
+/** …and reminded again after this many further failures of the same call: one note may be ignored. */
+const REPEATED_FAILURE_REMIND_EVERY = 10;
 /** After this many steps in a row without one successful tool call, the model is told that nothing is working. */
 const FRUITLESS_STEPS_NOTICE_AFTER = 5;
 /** …and told again every this many further such steps: a note scrolls away, a loop does not. */
 const FRUITLESS_STEPS_REMIND_EVERY = 10;
+
+/** The openings notes are recognised by when their predecessor is withdrawn. */
+const REPEATED_NOTE_OPENING = "The same call failed again and again";
+const FRUITLESS_NOTE_OPENING = "Nothing has succeeded for";
 
 /**
  * The arguments as one text whatever the order of their keys: a call sent
@@ -198,13 +204,13 @@ function sameArgs(args: unknown): string {
 /** Appended to the turn when the same call keeps failing. The turn goes on; only the repeating is to stop. */
 function repeatedFailureMessage(failures: Array<{ name: string; count: number }>): string {
   const calls = failures.map((failure) => `${failure.name} (${failure.count} times in a row)`).join(", ");
-  return `The same call failed again and again: ${calls}. Sending it again with the same arguments will give the same result. Change the approach — other arguments, another tool, or first create what it needs — or answer the user with what you have and say what did not work.`;
+  return `${REPEATED_NOTE_OPENING}: ${calls}. Sending it again with the same arguments will give the same result. Change the approach — other arguments, another tool, or first create what it needs — or answer the user with what you have and say what did not work.`;
 }
 
 /** Appended when step after step not one tool call succeeds. The calls need not be the same. */
 function nothingSucceedsMessage(steps: number, failed: ReadonlyMap<string, number>): string {
   const calls = [...failed].map(([name, count]) => `${name} ×${count}`).join(", ");
-  return `Nothing has succeeded for ${steps} steps in a row (${calls}). These attempts are not making progress: either change the approach, or stop calling tools and answer the user with what you have — what you tried, what failed, and what could be done next.`;
+  return `${FRUITLESS_NOTE_OPENING} ${steps} steps in a row (${calls}). These attempts are not making progress: either change the approach, or stop calling tools and answer the user with what you have — what you tried, what failed, and what could be done next.`;
 }
 
 async function logHssResponseAnalysis(
@@ -1133,8 +1139,14 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
    * failing would go on until the wall-clock cap.
    */
   const failureStreak = new Map<string, number>();
-  /** The calls told about in their current streak of failures: said once, until they succeed. */
-  const toldAbout = new Set<string>();
+  /** The tool name of each streak, for the note that names the calls. */
+  const streakNames = new Map<string, string>();
+  /**
+   * The failures-in-a-row count at which each call was last told about: said
+   * at the threshold, then again after every REMIND_EVERY further failures —
+   * one note may be ignored. A success withdraws the call entirely.
+   */
+  const notedAt = new Map<string, number>();
   /**
    * Steps in a row in which not one tool call succeeded, and what failed in
    * them. It catches what the count per call cannot: a loop of calls that
@@ -1286,14 +1298,20 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         const failedInARow = ok ? 0 : (failureStreak.get(callKey) ?? 0) + 1;
         if (ok) {
           failureStreak.delete(callKey);
-          toldAbout.delete(callKey);
+          notedAt.delete(callKey);
         } else {
           failureStreak.set(callKey, failedInARow);
+          streakNames.set(callKey, name);
           fruitlessFailures.set(name, (fruitlessFailures.get(name) ?? 0) + 1);
         }
-        // Said once per streak, not with every further failure: notes pile up in the prompt.
-        if (failedInARow >= REPEATED_FAILURE_NOTICE_AFTER && !toldAbout.has(callKey)) {
-          toldAbout.add(callKey);
+        // Said at the threshold, then again after every ten further failures
+        // of the same call — but not with every failure: notes pile up.
+        const lastNotedAt = notedAt.get(callKey);
+        if (
+          failedInARow >= REPEATED_FAILURE_NOTICE_AFTER &&
+          (lastNotedAt == null || failedInARow - lastNotedAt >= REPEATED_FAILURE_REMIND_EVERY)
+        ) {
+          notedAt.set(callKey, failedInARow);
           repeatedFailures.push({ name, count: failedInARow });
         }
         // Stored and re-emitted copy: up to its own size from the raw result, secrets never leave the turn.
@@ -1333,7 +1351,13 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
             details: { name: failure.name, failedInARow: failure.count, iteration: iterations + 1 },
           });
         }
-        notes.push(repeatedFailureMessage(repeatedFailures));
+        // The note describes every call in a live failing streak — due for a
+        // re-say or not — so the model always sees the full picture.
+        const failingNow = [...failureStreak]
+          .filter(([, streak]) => streak >= REPEATED_FAILURE_NOTICE_AFTER)
+          .map(([key, streak]) => ({ name: streakNames.get(key) ?? key.slice(0, key.indexOf(":")), count: streak }))
+          .sort((first, second) => second.count - first.count);
+        notes.push(repeatedFailureMessage(failingNow));
       }
       if (nothingSucceeds) {
         auditLog(config, {
@@ -1345,6 +1369,21 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           },
         });
         notes.push(nothingSucceedsMessage(nothingSucceeds.steps, nothingSucceeds.failed));
+      }
+      if (notes.length) {
+        // A fresh note replaces the previous one of its kind: the guidance
+        // must not pile up in the prompt for the rest of the turn.
+        for (let i = messages.length - 1; i >= 0; i--) {
+          const m = messages[i];
+          if (!m || m.role !== "user") continue;
+          const text = String(m.content);
+          if (
+            (repeatedFailures.length && text.startsWith(REPEATED_NOTE_OPENING)) ||
+            (nothingSucceeds && text.startsWith(FRUITLESS_NOTE_OPENING))
+          ) {
+            messages.splice(i, 1);
+          }
+        }
       }
       messages.push(
         {
@@ -1414,7 +1453,9 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     type: "tool_limit_reached",
     details: { maxIterations, toolCalls: toolTrace.length },
   });
-  messages.push({ role: "system", content: toolLimitMessage(maxIterations) });
+  // As a user message, like the loop notes: providers are not required to
+  // accept a system message in the middle of a dialogue.
+  messages.push({ role: "user", content: toolLimitMessage(maxIterations) });
   const finalCallOptions = {
     signal,
     ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),

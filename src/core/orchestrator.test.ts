@@ -216,7 +216,7 @@ describe("agent loop", () => {
     const result = await run();
 
     expect(result).toMatchObject({ content: "done", toolIterations: 8 });
-    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 2]);
+    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 1]);
     expect(calls[4]!.at(-1)).toEqual({
       role: "user",
       content: expect.stringContaining("read (3 times in a row)"),
@@ -245,7 +245,7 @@ describe("agent loop", () => {
     const read = (path: string): Step => ({ tool: [{ name: "read", args: { path } }] });
     const calls: Messages[] = [];
     scriptModel(
-      [read("a"), read("b"), read("a"), read("b"), read("a"), read("b"), { content: "done" }],
+      [read("a"), read("b"), read("a"), read("b"), read("a"), read("b"), read("a"), { content: "done" }],
       (messages) => calls.push(messages.map((m) => ({ ...m })))
     );
     vi.mocked(dispatchToolCall).mockResolvedValue("Error: ENOENT");
@@ -253,9 +253,14 @@ describe("agent loop", () => {
     await run();
 
     expect(calls.slice(0, 5).map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 0]);
-    // a fails for the third time in the fifth step, b in the sixth.
+    // a reaches its third failure in the fifth step, b in the sixth; b's note
+    // replaces a's and names both live streaks (a: 3, b: 3 at that moment).
     expect(repeatedNotices(calls[5]!)).toHaveLength(1);
-    expect(repeatedNotices(calls[6]!)).toHaveLength(2);
+    expect(repeatedNotices(calls[6]!)).toHaveLength(1);
+    expect(calls[6]!.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining("read (3 times in a row), read (3 times in a row)"),
+    });
   });
 
   it("tells the model that nothing is working when step after step no call succeeds, though no call repeats", async () => {
@@ -274,9 +279,10 @@ describe("agent loop", () => {
 
     expect(result).toMatchObject({ content: "I could not read any of them.", toolIterations: 16 });
     expect(calls.every((messages) => repeatedNotices(messages).length === 0)).toBe(true);
-    // Said on the fifth fruitless step, then once every ten further ones — not with every step.
+    // Said on the fifth fruitless step, then once every ten further ones —
+    // each time replacing the old note, never stacking a second one.
     expect(calls.map((messages) => nothingWorksNotices(messages).length)).toEqual([
-      0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2,
+      0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     ]);
     expect(calls[5]!.at(-1)).toEqual({
       role: "user",
@@ -350,6 +356,99 @@ describe("agent loop", () => {
       userMessage: "question",
     });
     expect(readFileSync(boundedPath, "utf-8")).toContain('"maxIterations":7');
+
+    // The fruitless-steps note is audited as well.
+    const fruitlessPath = join(agentsDir, "audit-fruitless.log");
+    scriptModel([
+      { tool: [{ name: "read", args: { path: "m-0.txt" } }] },
+      { tool: [{ name: "read", args: { path: "m-1.txt" } }] },
+      { tool: [{ name: "read", args: { path: "m-2.txt" } }] },
+      { tool: [{ name: "read", args: { path: "m-3.txt" } }] },
+      { tool: [{ name: "read", args: { path: "m-4.txt" } }] },
+      { content: "None of them exist." },
+    ]);
+    vi.mocked(dispatchToolCall).mockImplementation(
+      async (_ctx, _state, _name, args) => `Error: ENOENT: ${(args as { path: string }).path}`
+    );
+    await runOrchestrator({
+      config: {
+        llm: { provider: "openai", model: "test-model" },
+        agentsDir,
+        audit: { logPath: fruitlessPath, logFormat: "json" },
+      } as Claw2Config,
+      userMessage: "question",
+    });
+    const fruitlessLog = readFileSync(fruitlessPath, "utf-8");
+    expect(fruitlessLog).toContain('"event":"tool_fruitless_steps"');
+    expect(fruitlessLog).not.toContain("maxIterations");
+  });
+
+  it("a fresh note replaces the previous one instead of piling up across streaks", async () => {
+    const failing: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    const good: Step = { tool: [{ name: "list_dir", args: { path: "agents" } }] };
+    const calls: Messages[] = [];
+    scriptModel(
+      [failing, failing, failing, good, failing, failing, failing, good, failing, failing, failing, { content: "done" }],
+      (messages) => calls.push(messages.map((m) => ({ ...m })))
+    );
+    let call = 0;
+    vi.mocked(dispatchToolCall).mockImplementation(async () => (++call % 4 === 0 ? "a.js" : "Error: ENOENT"));
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "done", toolIterations: 11 });
+    // A note per streak…
+    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+    // …and never more than one at a time: the fresh note replaced the old.
+    expect(calls.every((messages) => repeatedNotices(messages).length <= 1)).toBe(true);
+  });
+
+  it("re-says a repeated-failure note after ten further failures of the same call", async () => {
+    const failing: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    const calls: Messages[] = [];
+    scriptModel(
+      [...Array.from({ length: 13 }, () => failing), { content: "done" }],
+      (messages) => calls.push(messages.map((m) => ({ ...m })))
+    );
+    vi.mocked(dispatchToolCall).mockResolvedValue("Error: ENOENT");
+
+    await run();
+
+    // Said at the third failure…
+    expect(calls[3]!.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining("read (3 times in a row)"),
+    });
+    // …and again at the thirteenth, with the fresh count.
+    expect(calls[13]!.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining("read (13 times in a row)"),
+    });
+    // Between them the note stood alone.
+    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([
+      0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    ]);
+  });
+
+  it("the note names the streaks past the threshold, not one that failed twice", async () => {
+    const read = (path: string): Step => ({ tool: [{ name: "read", args: { path } }] });
+    const calls: Messages[] = [];
+    scriptModel(
+      [read("a"), read("b"), read("b"), ...Array.from({ length: 13 }, () => read("a")), { content: "done" }],
+      (messages) => calls.push(messages.map((m) => ({ ...m })))
+    );
+    vi.mocked(dispatchToolCall).mockResolvedValue("Error: ENOENT");
+
+    await run();
+
+    // a's streak: noticed at three, re-said at thirteen.
+    const notesAt = (i: number) => repeatedNotices(calls[i]!).map((message) => String(message.content));
+    expect(notesAt(5)[0]).toContain("read (3 times in a row)");
+    const fresh = notesAt(15);
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]).toContain("read (13 times in a row)");
+    // b failed only twice: below the threshold, it is not named.
+    expect(fresh[0]).not.toContain("read (2 times in a row)");
   });
 
   it("never notices a call that succeeds, however often it is repeated", async () => {
@@ -385,7 +484,7 @@ describe("agent loop", () => {
     expect(chat).toHaveBeenCalledTimes(3);
     expect(options.map((option) => option?.toolChoice ?? "auto")).toEqual(["auto", "auto", "none"]);
     expect(calls[2]!.at(-1)).toEqual({
-      role: "system",
+      role: "user",
       content: expect.stringContaining("The tool step budget for this turn is used up (2 steps)."),
     });
   });
