@@ -12,6 +12,7 @@ import { isTranscriptToolsEnabled } from "../transcript/index.js";
 import { assessLlmConfigured, resolveLlmApiKeyForClient } from "../config/llm-ready.js";
 import { isSearchToolEnabled, resolveBrowserSearchEngines } from "../tools/search.js";
 import {
+  createCommentStreamFilter,
   createReasoningStreamFilter,
   shouldDisableModelThinking,
   stripReasoningTags,
@@ -982,6 +983,8 @@ export type ChatToolChoice =
 export interface ChatOptions {
   /** Called for each piece of content during streaming (it’s more convenient to wait for a response, it’s clear that the model is working).*/
   onChunk?: (delta: string) => void;
+  /** Called for each finished <comment>…</comment> the model emits: service commentary for the progress UI, never part of the content. */
+  onComment?: (text: string) => void;
   /** Override tool_choice (for example force generate_image). Default is auto.*/
   toolChoice?: ChatToolChoice;
   signal?: AbortSignal;
@@ -998,6 +1001,7 @@ export async function chat(
   const thinkingDisabled = shouldDisableModelThinking(model, enableThinking);
   const maxTokens = config.llm?.maxTokens;
   const onChunk = options?.onChunk;
+  const onComment = options?.onComment;
   const toolChoice = options?.toolChoice ?? "auto";
   const signal = options?.signal;
   throwIfAborted(signal);
@@ -1079,6 +1083,7 @@ export async function chat(
       let maskedContent = "";
       let unmaskedEmitted = "";
       const reasoningFilter = createReasoningStreamFilter();
+      const commentFilter = createCommentStreamFilter(onComment);
       const toolCallsAccum: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
 
       const emitVisible = (visible: string) => {
@@ -1101,7 +1106,10 @@ export async function chat(
         const delta = chunk.choices[0]?.delta;
         if (!delta) continue;
         if (delta.content) {
-          const visible = reasoningFilter.push(delta.content);
+          // The comment filter runs after the reasoning one: <comment> inside
+          // <think> cannot happen, and narration outside <think> is routed to
+          // the progress UI instead of the visible content.
+          const visible = commentFilter.push(reasoningFilter.push(delta.content));
           emitVisible(visible);
         }
         if (delta.tool_calls?.length) {
@@ -1124,7 +1132,8 @@ export async function chat(
       }
 
       throwIfAborted(signal);
-      emitVisible(reasoningFilter.flush());
+      emitVisible(commentFilter.push(reasoningFilter.flush()));
+      emitVisible(commentFilter.flush());
 
       const toolCalls = toolCallsAccum.length > 0
         ? toolCallsAccum.map((tc) => ({ id: tc.id, type: "function" as const, function: tc.function }))

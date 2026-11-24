@@ -6,8 +6,11 @@
  */
 import assert from "node:assert/strict";
 import {
+  createCommentStreamFilter,
   createReasoningStreamFilter,
+  extractCommentBlocks,
   shouldDisableModelThinking,
+  stripCommentTags,
   stripReasoningTags,
 } from "./strip-reasoning.js";
 
@@ -44,3 +47,47 @@ import {
 }
 
 console.log("strip-reasoning.test.ts: ok");
+
+{
+  const seen: string[] = [];
+  const filter = createCommentStreamFilter((text) => seen.push(text));
+  let visible = filter.push("Working. <comment>Чит");
+  assert.equal(visible, "Working. ");
+  visible += filter.push("аю файл — сверяю</comment> Done");
+  assert.equal(visible, "Working.  Done");
+  assert.deepEqual(seen, ["Читаю файл — сверяю"]);
+}
+
+{
+  const seen: string[] = [];
+  const filter = createCommentStreamFilter((text) => seen.push(text));
+  let visible = filter.push("text <comment>partial comment");
+  assert.equal(visible, "text ");
+  visible += filter.flush();
+  assert.equal(visible, "text ");
+  assert.deepEqual(seen, ["partial comment"]);
+}
+
+{
+  const seen: string[] = [];
+  const filter = createCommentStreamFilter((text) => seen.push(text));
+  let visible = filter.push("a <comments>b</comments> c");
+  visible += filter.flush();
+  assert.equal(visible, "a <comments>b</comments> c");
+  assert.deepEqual(seen, []);
+}
+
+{
+  const { content, comments } = extractCommentBlocks("A <comment>один</comment> B <comment>два</comment>");
+  assert.equal(content, "A B");
+  assert.deepEqual(comments, ["один", "два"]);
+  const trailing = extractCommentBlocks("Answer <comment>незакрытый");
+  assert.equal(trailing.content, "Answer");
+  assert.deepEqual(trailing.comments, ["незакрытый"]);
+  assert.equal(extractCommentBlocks("plain").comments.length, 0);
+}
+
+{
+  assert.equal(stripCommentTags("x <comment>статус</comment> y"), "x y");
+  assert.equal(stripCommentTags("x <comment>статус"), "x");
+}

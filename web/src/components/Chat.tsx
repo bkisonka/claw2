@@ -423,6 +423,8 @@ export interface Message {
   toolLimitReached?: boolean;
   /** The gateway was restarting while the answer was written: the answer is cut short. */
   interruptedBy?: "gateway_restart";
+  /** The model's <comment> line that has not grown into a step yet. */
+  comment?: string;
 }
 
 export interface ChatProps {
@@ -1225,6 +1227,8 @@ export function Chat({
       { role: "assistant", content: "" },
     ];
     let streamTranscript: Message[] = messagesWithAssistantSlot;
+    /** The model's <comment> line that has not been attached to a step yet. */
+    const pendingCommentRef = { current: "" };
     const stillOnStreamSession = () => sessionIdRef.current === streamSessionId;
     let pendingStreamUi: { messages: Message[]; streaming: boolean } | null = null;
     let streamUiFrame: number | null = null;
@@ -1322,7 +1326,23 @@ export function Chat({
         const next = [...streamTranscript];
         const last = next[next.length - 1];
         if (last?.role !== "assistant") return;
-        next[next.length - 1] = { ...last, tools: upsertToolStep(last.tools ?? [], step) };
+        // The model's <comment> line precedes its step: attach it to the step
+        // it describes and clear the pending one.
+        const pending = pendingCommentRef.current;
+        const withComment = pending && step.type === "start" ? { ...step, comment: pending } : step;
+        if (step.type === "start") pendingCommentRef.current = "";
+        next[next.length - 1] = { ...last, tools: upsertToolStep(last.tools ?? [], withComment) };
+        streamTranscript = next;
+        applyStreamUi(next, true);
+        pushProgress(next);
+      };
+      /** The model's <comment> line before the next step: shown as the current activity. */
+      const applyStepComment = (text: string) => {
+        pendingCommentRef.current = text;
+        const next = [...streamTranscript];
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return;
+        next[next.length - 1] = { ...last, comment: text };
         streamTranscript = next;
         applyStreamUi(next, true);
         pushProgress(next);
@@ -1368,7 +1388,8 @@ export function Chat({
         (requestId) => answerReadBrowserPage(requestId, browserPageTextFull || ""),
         answerHeadlessPageText,
         chatModelRef.current,
-        applyToolEvent
+        applyToolEvent,
+        applyStepComment
       );
       if (replyWithVoice && !ttsAbortedRef.current && mountedRef.current && stillOnStreamSession()) {
         flushTtsBuffer();
@@ -1854,7 +1875,7 @@ export function Chat({
                   <>
                 {hasToolSteps && toolSteps ? (
                   <>
-                    <ChatToolSteps steps={toolSteps} running={isStreamingAssistant} />
+                    <ChatToolSteps steps={toolSteps} running={isStreamingAssistant} liveComment={msg.comment} />
                     {msg.toolLimitReached ? (
                       <p className="chat-tool-limit-note">{t("chat.toolLimitReached")}</p>
                     ) : null}

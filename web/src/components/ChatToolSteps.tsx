@@ -10,6 +10,8 @@ type Props = {
   steps: ToolStep[];
   /** The turn is still running: the header shows the steps one line at a time, as they arrive. */
   running: boolean;
+  /** The model's <comment> line that has not grown into a step yet. */
+  liveComment?: string;
 };
 
 type StepStatus = "running" | "ok" | "error" | "interrupted";
@@ -33,7 +35,7 @@ const STATUS_MARK: Record<StepStatus, string> = {
  * each new one slides up from below, the previous one out above — and the
  * fold is there to read the whole list when wanted.
  */
-export function ChatToolSteps({ steps, running }: Props) {
+export function ChatToolSteps({ steps, running, liveComment }: Props) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [reducedMotion] = useState(() => window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false);
@@ -99,9 +101,10 @@ export function ChatToolSteps({ steps, running }: Props) {
             <span
               key={`in-${shown.tick}`}
               className={`chat-steps-cycler-line${shown.leaving ? " chat-steps-cycler-line--in" : ""}`}
-            >
-              {shown.text}
-            </span>
+              >
+                {/* The model's own comment overrides the dry step line while it is current. */}
+                {liveComment?.trim() || shown.text}
+              </span>
           </span>
         ) : null}
       </button>
@@ -124,6 +127,7 @@ export function ChatToolSteps({ steps, running }: Props) {
                 <span className="chat-tool-step-name">{step.name}</span>
                 {subject ? <span className="chat-tool-step-subject">{subject}</span> : null}
                 {note ? <span className="chat-tool-step-note">{note}</span> : null}
+                {step.comment ? <span className="chat-tool-step-comment">{step.comment}</span> : null}
               </li>
             );
           })}

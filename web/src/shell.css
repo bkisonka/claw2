@@ -1870,9 +1870,18 @@ body.layout-sidebar-resizing-body {
 
 .chat-tool-step {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 6px;
+  gap: 2px 6px;
   min-width: 0;
+}
+
+/* The model's own commentary under its step: the heading the dry row lacks. */
+.chat-tool-step-comment {
+  flex: 0 0 100%;
+  padding-left: calc(1em + 6px);
+  font-style: italic;
+  color: var(--text-2, #c8c8d0);
 }
 
 .chat-tool-step-mark {

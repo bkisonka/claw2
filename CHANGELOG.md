@@ -26,6 +26,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The model narrates its work.** While it searches, reads files, checks
+  code or thinks, it outputs a short status line — `<comment>Читаю
+  recheck-orchestrator.ts — сверяю остановку турнов</comment>` — and the
+  gateway routes it to the progress UI: the running header shows it as the
+  current activity, and the step list keeps it under the step it precedes.
+  The lines are stripped from the answer, so the reply stays clean, and a
+  client that attaches later sees the current one in the snapshot.
 - **The steps fold stays closed.** While a turn runs, its header shows the
   steps one line at a time, advancing as they arrive: each new step slides
   up from below while the previous one slides out above, and between steps

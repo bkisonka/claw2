@@ -41,6 +41,8 @@ export interface ToolStep {
   /** Absent/null while the step is running or when the turn was interrupted before it returned. */
   ok?: boolean | null;
   durationMs?: number | null;
+  /** The model's own <comment> line that preceded this step. */
+  comment?: string;
 }
 
 /** Message from GET /chat/history. */
@@ -301,7 +303,9 @@ export async function sendMessageStream(
   /** Per-chat model override; omit/null = settings default. */
   model?: string | null,
   /** Live tool steps of the turn (no result text). */
-  onToolEvent?: (step: ToolStep) => void
+  onToolEvent?: (step: ToolStep) => void,
+  /** The model's own <comment> status line, shown as the current activity. */
+  onStepComment?: (text: string) => void
 ): Promise<ChatResponse> {
   const url = `${apiBase}/chat`;
   const headers: Record<string, string> = {
@@ -400,6 +404,8 @@ export async function sendMessageStream(
     const headlessUrl = trimmedString(data.headlessPageText?.url);
     if (headlessReqId && headlessUrl) onHeadlessPageText?.(headlessReqId, headlessUrl);
     if (data.toolEvent) onToolEvent?.(data.toolEvent);
+    const stepComment = trimmedString(data.stepComment);
+    if (stepComment) onStepComment?.(stepComment);
     return undefined;
   });
 }
@@ -413,7 +419,8 @@ type ChatStreamEvent = Partial<ChatResponse> & {
   readBrowserPage?: { requestId?: string };
   headlessPageText?: { requestId?: string; url?: string };
   toolEvent?: ToolStep;
-  snapshot?: { userMessage?: string; content?: string; steps?: ToolStep[] };
+  stepComment?: string;
+  snapshot?: { userMessage?: string; content?: string; steps?: ToolStep[]; comment?: string };
 };
 
 function terminalResponse(data: ChatStreamEvent, fallbackSessionId: string): ChatResponse {
@@ -491,9 +498,11 @@ function readChatStream(
 
 export interface AttachChatHandlers {
   /** What happened before this client connected: the question, the text and the steps so far. */
-  onSnapshot?: (snapshot: { userMessage: string; content: string; steps: ToolStep[] }) => void;
+  onSnapshot?: (snapshot: { userMessage: string; content: string; steps: ToolStep[]; comment?: string }) => void;
   onChunk: (text: string) => void;
   onToolEvent: (step: ToolStep) => void;
+  /** The model's own <comment> status line, shown as the current activity. */
+  onStepComment?: (text: string) => void;
   onSidebarUpdated?: () => void;
   /** A page the turn opened while no client was listening. */
   onOpenBrowserUrl?: (url: string) => void;
@@ -527,10 +536,13 @@ export async function attachChatStream(
         userMessage: data.snapshot.userMessage ?? "",
         content: data.snapshot.content ?? "",
         steps: data.snapshot.steps ?? [],
+        comment: data.snapshot.comment,
       });
     }
     if (typeof data.content === "string") handlers.onChunk(data.content);
     if (data.toolEvent) handlers.onToolEvent(data.toolEvent);
+    const stepComment = trimmedString(data.stepComment);
+    if (stepComment) handlers.onStepComment?.(stepComment);
     if (data.sidebarUpdated === true) handlers.onSidebarUpdated?.();
     const openUrl = trimmedString(data.openBrowserUrl);
     if (openUrl) handlers.onOpenBrowserUrl?.(openUrl);

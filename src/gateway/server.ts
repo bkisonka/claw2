@@ -1955,8 +1955,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const toolEvents: ToolEvent[] = [];
         const openedBrowserUrls: string[] = [];
         const publish = (event: ChatRunEvent) => publishChatRun(run, event);
-        const chatTurnAudit = (details: Record<string, unknown>) =>
-          auditLog(effectiveConfig, {
+        const chatTurnAudit = (details: Record<string, unknown>) =>          auditLog(effectiveConfig, {
             type: "chat_turn",
             sessionId,
             details: {
@@ -2025,6 +2024,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 toolEvents.push(event);
                 publish({ toolEvent: toStepEvent(event) });
               },
+              onStepComment: (text: string) => publish({ stepComment: text }),
               onSidebarUpdated: () => publish({ sidebarUpdated: true }),
               onOpenBrowserUrl: (url: string) => {
                 openedBrowserUrls.push(url);
@@ -2527,7 +2527,16 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       // Catch up on what happened before this client connected: the question
       // being answered (stored only when the turn ends), the text and the steps so far.
       if (run.partialContent || run.steps.length > 0 || run.userMessage) {
-        res.write(frame({ snapshot: { userMessage: run.userMessage, content: run.partialContent, steps: run.steps } }));
+        res.write(
+          frame({
+            snapshot: {
+              userMessage: run.userMessage,
+              content: run.partialContent,
+              steps: run.steps,
+              comment: run.lastComment,
+            },
+          })
+        );
       }
       if (run.sidebarUpdated) res.write(frame({ sidebarUpdated: true }));
       // What the turn asked of a client's browser is asked again: a page it

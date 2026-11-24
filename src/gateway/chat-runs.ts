@@ -67,6 +67,7 @@ export interface ToolStepEvent {
 
 export type ChatRunEvent =
   | { content: string }
+  | { stepComment: string }
   | { sidebarUpdated: true }
   | { openBrowserUrl: string }
   | { readBrowserPage: { requestId: string } }
@@ -112,6 +113,8 @@ export interface ChatRun {
   partialContent: string;
   /** The user message of the turn, shown to a client that attaches later (it is stored only when the turn ends). */
   readonly userMessage: string;
+  /** The model's latest <comment> status line: a client that attaches later sees the current activity. */
+  lastComment?: string;
   sidebarUpdated: boolean;
   /** Tool steps in order; a step whose latest event is `start` is still running. */
   readonly steps: ToolStepEvent[];
@@ -189,6 +192,8 @@ export function publishChatRun(run: ChatRun, event: ChatRunEvent): void {
   if (run.terminal) return;
   if ("content" in event) {
     run.partialContent += event.content;
+  } else if ("stepComment" in event) {
+    run.lastComment = event.stepComment;
   } else if ("sidebarUpdated" in event) {
     run.sidebarUpdated = true;
   } else if ("toolEvent" in event) {

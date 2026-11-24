@@ -112,6 +112,8 @@ export interface OrchestratorOptions {
   onSidebarUpdated?: () => void;
   /** Fired before and after every tool call of the turn (step list in the UI, partial trace on cancel). */
   onToolEvent?: (event: ToolEvent) => void;
+  /** The model's own <comment>…</comment> status lines, routed to the progress UI and kept out of the answer. */
+  onStepComment?: (text: string) => void;
   /** Fired when open_browser tool asks the desktop UI to navigate. */
   onOpenBrowserUrl?: (url: string) => void;
   /**
@@ -161,7 +163,7 @@ export interface OrchestratorResult {
   sidebarUpdated?: boolean;
 }
 
-import { stripReasoningTags } from "./strip-reasoning.js";
+import { extractCommentBlocks, stripReasoningTags } from "./strip-reasoning.js";
 
 function stripReasoning(text: string | null): string {
   return stripReasoningTags(text);
@@ -572,6 +574,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     onStreamChunk,
     onSidebarUpdated,
     onToolEvent,
+    onStepComment,
     onOpenBrowserUrl,
     requestBrowserPageText,
     requestHeadlessPageText,
@@ -1188,6 +1191,15 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       // ignore UI callback errors
     }
   };
+  /** The model's <comment> status lines — routed to the progress UI, never part of the answer. */
+  const emitStepComment = (text: string) => {
+    if (!text) return;
+    try {
+      onStepComment?.(text);
+    } catch {
+      // ignore UI callback errors
+    }
+  };
   const finishTurn = async (): Promise<OrchestratorResult> => {
     let finalContent = fullAssistantContent || (lastContent ?? "");
     finalContent = await finalizeHssAssistantContent(
@@ -1237,6 +1249,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
 
     const response = await chat(client, config, messages, {
       signal,
+      onComment: emitStepComment,
       ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),
       ...(shouldForceImageTool
         ? { toolChoice: { type: "function" as const, function: { name: "generate_image" } } }
@@ -1246,6 +1259,13 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     });
     throwIfAborted(signal);
     lastContent = stripIfDisabled(response.content);
+    {
+      // The model's <comment> status lines go to the progress UI and are
+      // stripped from the content that becomes the answer.
+      const { content: cleanContent, comments: stepComments } = extractCommentBlocks(lastContent ?? "");
+      for (const comment of stepComments) emitStepComment(comment);
+      lastContent = cleanContent;
+    }
     const part = lastContent ?? "";
     if (part) fullAssistantContent += (fullAssistantContent ? "\n" : "") + part;
     /** The draft iteration is already in fullAssistantContent; When reminding/retrying, remove it, otherwise the answer is doubled.*/
@@ -1487,6 +1507,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   messages.push({ role: "user", content: toolLimitMessage(maxIterations) });
   const finalCallOptions = {
     signal,
+    onComment: emitStepComment,
     ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),
   };
   let finalResponse: Awaited<ReturnType<typeof chat>>;
@@ -1503,6 +1524,11 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   }
   throwIfAborted(signal);
   lastContent = stripIfDisabled(finalResponse.content);
+  {
+    const { content: cleanContent, comments: stepComments } = extractCommentBlocks(lastContent ?? "");
+    for (const comment of stepComments) emitStepComment(comment);
+    lastContent = cleanContent;
+  }
   if (lastContent) fullAssistantContent += (fullAssistantContent ? "\n" : "") + lastContent;
   return finishTurn();
 }

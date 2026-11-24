@@ -694,6 +694,8 @@ export function AuthenticatedArea() {
       let question = "";
       let answer = "";
       let steps: ToolStep[] = [];
+      /** The model's <comment> line that has not been attached to a step yet. */
+      let pendingComment = "";
       let flushTimer: number | null = null;
       let lastFlush = 0;
       const push = () => {
@@ -729,7 +731,17 @@ export function AuthenticatedArea() {
                 schedulePush();
               },
               onToolEvent: (step) => {
-                steps = upsertToolStep(steps, step);
+                // The model's <comment> line precedes its step: attach it.
+                const pending = pendingComment;
+                const withComment = pending && step.type === "start" ? { ...step, comment: pending } : step;
+                if (step.type === "start") pendingComment = "";
+                steps = upsertToolStep(steps, withComment);
+                push();
+              },
+              onStepComment: (text) => {
+                pendingComment = text;
+                // Show the fresh comment as the newest step's commentary right away.
+                if (steps.length > 0) steps[steps.length - 1] = { ...steps[steps.length - 1]!, comment: text };
                 push();
               },
               onSidebarUpdated: () => setSidebarRefreshKey((k) => k + 1),

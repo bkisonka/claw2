@@ -714,6 +714,29 @@ describe("background chat turns", () => {
     giveUpRef.current?.();
   });
 
+  it("the commentary of a turn streams to the client and lands in the attach snapshot", async () => {
+    const sessionId = newSession();
+    mockOrchestrator.mockImplementation(
+      (options) =>
+        new Promise((resolve) => {
+          options.onStepComment?.("Сверяю расхождения в остановке турнов");
+          options.onStreamChunk?.("Читаю ");
+          options.onToolEvent?.({ type: "start", seq: 0, iteration: 0, name: "read", args: '{"path":"a"}' });
+          releaseAll.push(() => resolve({ content: "done", tools: [] }));
+        })
+    );
+    const stream = tap(await postChat(true, sessionId));
+    const commentFrame = await stream.waitFor((frame) => frame.stepComment != null);
+    expect(commentFrame.stepComment).toBe("Сверяю расхождения в остановке турнов");
+
+    const attached = tap(await fetch(`${base}/chat/attach?session_id=${sessionId}`));
+    const snapshot = await attached.waitFor((frame) => frame.snapshot != null);
+    expect((snapshot.snapshot as { comment?: string }).comment).toBe("Сверяю расхождения в остановке турнов");
+
+    releaseAll.forEach((release) => release());
+    await attached.waitFor((frame) => frame.done === true);
+  });
+
   it("a shutdown during the setup of a turn reaches its client and keeps the question", async () => {
     configRef.current = {
       ...configRef.current,

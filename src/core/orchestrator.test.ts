@@ -508,6 +508,23 @@ describe("agent loop", () => {
     expect(String((calls[7]!.at(-1) as { content: string }).content)).not.toContain('"path":"b"');
   });
 
+  it("streams the model's commentary to the progress UI and keeps it out of the answer", async () => {
+    const commented: Step = {
+      content: "<comment>Сверяю остановку турнов</comment>",
+      tool: [{ name: "read", args: { path: "a" } }],
+    };
+    scriptModel([commented, { content: "Done." }]);
+    vi.mocked(dispatchToolCall).mockResolvedValue("ok");
+    const onStepComment = vi.fn();
+
+    const result = await run({ onStepComment });
+
+    expect(onStepComment).toHaveBeenCalledWith("Сверяю остановку турнов");
+    expect(result).toMatchObject({ content: "Done." });
+    expect(result.content).not.toContain("<comment");
+    expect(result.tools).toHaveLength(1);
+  });
+
   it("the telephony context block joins the dialogue as a user message", async () => {
     scriptModel([{ content: "Calling." }]);
     await runOrchestrator({
