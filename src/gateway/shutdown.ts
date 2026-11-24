@@ -56,7 +56,7 @@ export async function shutdownGateway(signal: string, options: GracefulShutdownO
   await waitForKills(Math.max(0, graceMs - (Date.now() - startedAt)));
   if (stuck.length > 0) {
     console.error(
-      `[gateway] ${stuck.length} turn(s) did not stop within ${graceMs} ms and are lost: ${stuck
+      `[gateway] ${stuck.length} turn(s) did not stop in the ${turnsMs} ms given to them (of ${graceMs} ms) and are lost: ${stuck
         .map((run) => run.sessionId)
         .join(", ")}`
     );

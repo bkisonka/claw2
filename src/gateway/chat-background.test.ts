@@ -4,7 +4,7 @@
 import Database from "better-sqlite3";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -659,7 +659,8 @@ describe("background chat turns", () => {
 
     expect(exits).toEqual([0]);
     const lines = logged.mock.calls.map((call) => String(call[0]));
-    expect(lines.some((line) => line.includes(`1 turn(s) did not stop within 50 ms and are lost: ${sessionId}`))).toBe(true);
+    // What the turns were given, not the whole grace period: the rest is the container kills'.
+    expect(lines.some((line) => line.includes(`1 turn(s) did not stop in the 25 ms given to them (of 50 ms) and are lost: ${sessionId}`))).toBe(true);
     logged.mockRestore();
     stubborn.giveUp();
   });
@@ -681,5 +682,82 @@ describe("background chat turns", () => {
     expect(waitForKills.mock.calls[0]![0]).toBeGreaterThanOrEqual(390);
     // …and the whole stop did not outgrow the grace period.
     expect(elapsed).toBeLessThan(800);
+  });
+
+  it("a turn the restart cut short before its first word keeps its question", async () => {
+    // Nothing was printed and no tool ran: the model was still thinking.
+    mockOrchestrator.mockImplementation(
+      (options) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), {
+            once: true,
+          });
+        })
+    );
+    const sessionId = newSession();
+    const stream = tap(await postChat(true, sessionId));
+    await eventually(() => mockOrchestrator.mock.calls.length === 1);
+
+    await shutdownGateway("SIGTERM", { graceMs: 3000, exit: () => {} });
+
+    expect(await stream.waitFor((frame) => frame.done === true)).toEqual({
+      done: true,
+      sessionId,
+      error: "Gateway is restarting",
+      code: "gateway_restart",
+    });
+    // The question and an answer marked as cut short — not nothing, as if the question had never been asked.
+    expect(repo.getChatHistory(sessionId, "default")).toEqual([
+      { role: "user", content: `Question ${sessionId}` },
+      { role: "assistant", content: "", meta: '{"interruptedBy":"gateway_restart"}' },
+    ]);
+    const history = (await json(`/chat/history?session_id=${sessionId}`)).body.messages as Array<{
+      role: string;
+      content: string;
+      interruptedBy?: string;
+    }>;
+    expect(history[1]).toEqual({ role: "assistant", content: "", interruptedBy: "gateway_restart" });
+
+    // The next turn hands the model that as the earlier history, not an empty message.
+    resetChatRunsForTest();
+    mockOrchestrator.mockResolvedValue({ content: "second answer" });
+    const next = tap(await postChat(true, sessionId));
+    await next.waitFor((frame) => frame.done === true);
+    expect(mockOrchestrator.mock.calls[1]![0].sessionHistory).toEqual([
+      { role: "user", content: `Question ${sessionId}` },
+      { role: "assistant", content: "[no answer: the gateway was restarting]" },
+    ]);
+  });
+
+  it("the audit tells a restart from a Stop by the event, not only by its reason", async () => {
+    configRef.current = { ...configRef.current, audit: { logPath: join(dir, "audit.log"), logFormat: "json" } };
+    // A turn the user stops…
+    const stopped = newSession();
+    const stoppedTurn = hangingTurn();
+    const stoppedStream = tap(await postChat(true, stopped));
+    await stoppedStream.waitFor(toolStart);
+    await stoppedTurn.started;
+    await cancelChat(stopped);
+    await stoppedStream.waitFor((frame) => frame.done === true);
+    // …and one the gateway goes down on.
+    const restarted = newSession();
+    const restartedTurn = hangingTurn();
+    const restartedStream = tap(await postChat(true, restarted));
+    await restartedStream.waitFor(toolStart);
+    await restartedTurn.started;
+    await shutdownGateway("SIGTERM", { graceMs: 3000, exit: () => {} });
+    await restartedStream.waitFor((frame) => frame.done === true);
+
+    const events = readFileSync(join(dir, "audit.log"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { event: string; sessionId?: string; details?: { reason?: string } });
+    const of = (type: string) => events.filter((event) => event.event === type);
+    expect(of("chat_cancelled").map((event) => [event.sessionId, event.details?.reason])).toEqual([
+      [stopped, "Chat cancelled"],
+    ]);
+    expect(of("chat_gateway_restart").map((event) => [event.sessionId, event.details?.reason])).toEqual([
+      [restarted, "Gateway is shutting down"],
+    ]);
   });
 });

@@ -174,11 +174,37 @@ function toolLimitMessage(maxIterations: number): string {
 
 /** After this many failures in a row of one exact call, the model is told to stop repeating it. */
 const REPEATED_FAILURE_NOTICE_AFTER = 3;
+/** After this many steps in a row without one successful tool call, the model is told that nothing is working. */
+const FRUITLESS_STEPS_NOTICE_AFTER = 5;
+/** …and told again every this many further such steps: a note scrolls away, a loop does not. */
+const FRUITLESS_STEPS_REMIND_EVERY = 10;
+
+/**
+ * The arguments as one text whatever the order of their keys: a call sent
+ * again with its keys in another order is the same call.
+ */
+function sameArgs(args: unknown): string {
+  if (Array.isArray(args)) return `[${args.map(sameArgs).join(",")}]`;
+  if (args && typeof args === "object") {
+    const record = args as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${sameArgs(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(args) ?? "null";
+}
 
 /** Appended to the turn when the same call keeps failing. The turn goes on; only the repeating is to stop. */
 function repeatedFailureMessage(failures: Array<{ name: string; count: number }>): string {
   const calls = failures.map((failure) => `${failure.name} (${failure.count} times in a row)`).join(", ");
   return `The same call failed again and again: ${calls}. Sending it again with the same arguments will give the same result. Change the approach — other arguments, another tool, or first create what it needs — or answer the user with what you have and say what did not work.`;
+}
+
+/** Appended when step after step not one tool call succeeds. The calls need not be the same. */
+function nothingSucceedsMessage(steps: number, failed: ReadonlyMap<string, number>): string {
+  const calls = [...failed].map(([name, count]) => `${name} ×${count}`).join(", ");
+  return `Nothing is working: ${steps} steps in a row and not one tool call succeeded (${calls}). Another attempt of this kind will fail the same way. Stop calling tools and answer the user: what you tried, what failed, and what could be done next.`;
 }
 
 async function logHssResponseAnalysis(
@@ -1107,6 +1133,15 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
    * failing would go on until the wall-clock cap.
    */
   const failureStreak = new Map<string, number>();
+  /** The calls told about in their current streak of failures: said once, until they succeed. */
+  const toldAbout = new Set<string>();
+  /**
+   * Steps in a row in which not one tool call succeeded, and what failed in
+   * them. It catches what the count per call cannot: a loop of calls that
+   * differ each time. A step with a success starts it over.
+   */
+  let fruitlessSteps = 0;
+  const fruitlessFailures = new Map<string, number>();
   /** Call ids of the latest iteration — never compacted, the model is answering them. */
   let lastIterationCallIds = new Set<string>();
   let toolSeq = 0;
@@ -1214,6 +1249,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       });
       const toolResults: { id: string; content: string }[] = [];
       const repeatedFailures: Array<{ name: string; count: number }> = [];
+      let succeededInStep = false;
       lastIterationCallIds = new Set(toolCalls.map((tc) => tc.id));
       for (const tc of toolCalls) {
         throwIfAborted(signal);
@@ -1239,12 +1275,22 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         const durationMs = Date.now() - startedMs;
         const clipped = clipToolResult(raw, toolResultMaxChars);
         const ok = !toolResultLooksLikeError(clipped.content);
+        if (ok) succeededInStep = true;
         // A success or other arguments start the count over; another call in between does not.
-        const callKey = `${name}:${JSON.stringify(args)}`;
+        const callKey = `${name}:${sameArgs(args)}`;
         const failedInARow = ok ? 0 : (failureStreak.get(callKey) ?? 0) + 1;
-        if (ok) failureStreak.delete(callKey);
-        else failureStreak.set(callKey, failedInARow);
-        if (failedInARow >= REPEATED_FAILURE_NOTICE_AFTER) repeatedFailures.push({ name, count: failedInARow });
+        if (ok) {
+          failureStreak.delete(callKey);
+          toldAbout.delete(callKey);
+        } else {
+          failureStreak.set(callKey, failedInARow);
+          fruitlessFailures.set(name, (fruitlessFailures.get(name) ?? 0) + 1);
+        }
+        // Said once per streak, not with every further failure: notes pile up in the prompt.
+        if (failedInARow >= REPEATED_FAILURE_NOTICE_AFTER && !toldAbout.has(callKey)) {
+          toldAbout.add(callKey);
+          repeatedFailures.push({ name, count: failedInARow });
+        }
         // Stored and re-emitted copy: up to its own size from the raw result, secrets never leave the turn.
         const traceResult = clipHeadTail(redactToolResult(name, raw), TOOL_TRACE_RESULT_MAX_CHARS).text;
         const untrusted = ok && isUntrustedResultTool(name);
@@ -1265,11 +1311,35 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         toolResults.push({ id: tc.id!, content: clipped.content });
       }
       throwIfAborted(signal);
-      for (const failure of repeatedFailures) {
+      fruitlessSteps = succeededInStep ? 0 : fruitlessSteps + 1;
+      if (succeededInStep) fruitlessFailures.clear();
+      // Said when the threshold is reached, then again every so many further steps.
+      const beyondThreshold = fruitlessSteps - FRUITLESS_STEPS_NOTICE_AFTER;
+      const nothingSucceeds =
+        beyondThreshold >= 0 && beyondThreshold % FRUITLESS_STEPS_REMIND_EVERY === 0
+          ? { steps: fruitlessSteps, failed: new Map(fruitlessFailures) }
+          : undefined;
+
+      const notes: string[] = [];
+      if (repeatedFailures.length) {
+        for (const failure of repeatedFailures) {
+          auditLog(config, {
+            type: "tool_repeated_failure",
+            details: { name: failure.name, failedInARow: failure.count, iteration: iterations + 1 },
+          });
+        }
+        notes.push(repeatedFailureMessage(repeatedFailures));
+      }
+      if (nothingSucceeds) {
         auditLog(config, {
-          type: "tool_repeated_failure",
-          details: { name: failure.name, failedInARow: failure.count, iteration: iterations + 1 },
+          type: "tool_fruitless_steps",
+          details: {
+            steps: nothingSucceeds.steps,
+            failed: Object.fromEntries(nothingSucceeds.failed),
+            iteration: iterations + 1,
+          },
         });
+        notes.push(nothingSucceedsMessage(nothingSucceeds.steps, nothingSucceeds.failed));
       }
       messages.push(
         {
@@ -1282,9 +1352,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           tool_call_id: r.id,
           content: r.content,
         })),
-        ...(repeatedFailures.length
-          ? [{ role: "system" as const, content: repeatedFailureMessage(repeatedFailures) }]
-          : [])
+        ...notes.map((content) => ({ role: "system" as const, content }))
       );
       iterations++;
       throwIfAborted(signal);

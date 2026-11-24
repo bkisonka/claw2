@@ -1846,7 +1846,8 @@ export function Chat({
                     </div>
                   );
                 }
-                if (!(displayContent || isStreamingAssistant || userHasImageCells || hasToolSteps)) {
+                // An answer a restart cut short before its first word is only its note.
+                if (!(displayContent || isStreamingAssistant || userHasImageCells || hasToolSteps || msg.interruptedBy)) {
                   return null;
                 }
                 return (
@@ -1882,10 +1883,12 @@ export function Chat({
                     {isStreamingAssistant ? <ChatWorkingIndicator showLabel={false} showCursor /> : null}
                   </div>
                 ) : msg.role === "assistant" ? (
-                  <div className="chat-msg-content">
-                    <MarkdownContent content={displayContent} onOpenLink={onOpenBrowserUrl} />
-                    {isStreamingAssistant ? <ChatWorkingIndicator showLabel={false} showCursor /> : null}
-                  </div>
+                  displayContent || isStreamingAssistant ? (
+                    <div className="chat-msg-content">
+                      <MarkdownContent content={displayContent} onOpenLink={onOpenBrowserUrl} />
+                      {isStreamingAssistant ? <ChatWorkingIndicator showLabel={false} showCursor /> : null}
+                    </div>
+                  ) : null
                 ) : userHasImageCells ? (
                   <div className="chat-msg-content chat-msg-content--with-cells">
                     {renderCellSegments(

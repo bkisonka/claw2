@@ -31,11 +31,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and its tool results by the context budget. `orchestrator.maxToolIterations`
   still sets a ceiling for whoever wants one. A model that keeps repeating a
   failing call is told so — see below.
-- **A model that keeps repeating a failing call is told to stop repeating
-  it.** From the third failure in a row of one exact call — same tool, same
-  arguments; a success or other arguments start the count over — a note asks
-  it to change the approach or to answer with what it has. The turn goes on;
-  `tool_repeated_failure` goes to the audit log.
+- **A model that keeps failing is told to stop.** Two counts, each said once
+  per streak, so that notes do not pile up in the prompt. From the third
+  failure in a row of one call — same tool, same arguments in any order; a
+  success or other arguments start the count over, another call in between
+  does not — a note asks it to change the approach or to answer with what it
+  has. When step after step not one tool call succeeds, though no call
+  repeats, it is told so on the fifth step and again every ten further ones,
+  and asked to stop calling tools and answer. The turn goes on;
+  `tool_repeated_failure` and `tool_fruitless_steps` go to the audit log.
 - **Attach asks again for what the turn is still waiting for.** `GET
   /chat/attach` replays the page-text requests (`readBrowserPage`,
   `headlessPageText`) that no client has answered yet, and a page the turn
@@ -61,7 +65,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   client says that the gateway was restarting. It used to end as
   `chat_cancelled`, and the web client showed “Chat cancelled” as an error.
   A client without a stream gets 200 with the code instead of a failed
-  request.
+  request. A turn cut short before its first word keeps its question: it is
+  stored as an empty answer with the mark, and the model gets
+  `[no answer: the gateway was restarting]` for it in the turns that follow.
+  The audit has its own event for it, `chat_gateway_restart`.
 - **A shutdown keeps time for the container kills.** 1.5 seconds of
   `gateway.shutdownGraceMs` are the kills' even when the running turns use
   all the rest: turns that spent the whole grace period used to leave none,

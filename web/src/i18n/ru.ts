@@ -410,7 +410,7 @@ export const ru: Record<MessageKey, string> = {
   "chat.stepsMs": "{n} мс",
   "chat.stepsSec": "{n} с",
   "chat.toolLimitReached": "Лимит шагов инструментов исчерпан. Ответ дан по тому, что успело сделаться.",
-  "chat.gatewayRestarted": "Гейтвей перезапускался — ответ оборван.",
+  "chat.gatewayRestarted": "Гейтвей перезапускался — ответ не завершён.",
   "chat.pttTitle": "Нажми и говори",
   "chat.pttAria": "Нажми и говори",
   "chat.sttRecognizing": "Распознаю речь…",

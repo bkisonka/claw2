@@ -258,6 +258,10 @@ export function stripOrphanCellPlaceholders(content: string): string {
  */
 export function contentForLlmHistory(content: string, meta?: string): string {
   const cleaned = stripHssEpistemicFooter(content);
+  // An answer cut short before its first word reaches the model as that, not as an empty message.
+  if (!cleaned.trim() && interruptedByFromMeta(meta)) {
+    return "[no answer: the gateway was restarting]";
+  }
   const cells = cellsFromMeta(meta);
   if (cells?.length) return expandCellPlaceholders(cleaned, cells);
   if (/\[CELL_\d+\]/.test(cleaned)) return stripOrphanCellPlaceholders(cleaned);

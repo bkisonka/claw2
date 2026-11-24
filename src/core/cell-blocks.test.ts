@@ -208,6 +208,9 @@ function streamLikeChatBugFixed(chunks: string[]) {
   assert.equal(interruptedByFromMeta(cellsToMeta([cell])), undefined);
   assert.equal(interruptedByFromMeta("not json"), undefined);
   assert.equal(interruptedByFromMeta('{"interruptedBy":"something else"}'), undefined);
+  // The model gets to know it, not an empty message.
+  assert.equal(contentForLlmHistory("", '{"interruptedBy":"gateway_restart"}'), "[no answer: the gateway was restarting]");
+  assert.equal(contentForLlmHistory("", undefined), "");
 }
 
 console.log("cell-blocks tests: ok");

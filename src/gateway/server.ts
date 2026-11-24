@@ -1954,7 +1954,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
          */
         const persistStoppedTurn = (interruptedBy?: InterruptedBy) => {
           const tools = foldToolEvents(toolEvents);
-          if (!run.partialContent.trim() && tools.length === 0) return;
+          // Nothing came of the turn, and the user stopped it: nothing to
+          // store. Cut short by the gateway, it is stored all the same — its
+          // question and the mark — or the question would vanish as if it had
+          // never been asked.
+          if (!run.partialContent.trim() && tools.length === 0 && !interruptedBy) return;
           // Superseded, and the turn that replaced it is stored already: stored
           // now, it would land after it as the chat's latest exchange.
           if (hasStoredSuccessor(run)) {
@@ -2054,7 +2058,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               const gatewayRestart = reason === SHUTDOWN_ABORT_REASON;
               if (!connectionLost) persistStoppedTurn(gatewayRestart ? "gateway_restart" : undefined);
               auditLog(auditConfig, {
-                type: "chat_cancelled",
+                // Its own type: the audit tells a restart from a Stop by the event, not by its reason.
+                type: gatewayRestart ? "chat_gateway_restart" : "chat_cancelled",
                 sessionId,
                 details: {
                   reason: reason || String(err),

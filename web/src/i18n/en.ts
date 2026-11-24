@@ -408,7 +408,7 @@ export const en = {
   "chat.stepsMs": "{n} ms",
   "chat.stepsSec": "{n} s",
   "chat.toolLimitReached": "The tool step limit was reached. The answer covers what was done so far.",
-  "chat.gatewayRestarted": "The gateway was restarting — this answer is cut short.",
+  "chat.gatewayRestarted": "The gateway was restarting — this answer was not completed.",
   "chat.pttTitle": "Push to talk",
   "chat.pttAria": "Push to talk",
   "chat.sttRecognizing": "Recognizing speech…",
