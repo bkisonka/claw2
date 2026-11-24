@@ -345,7 +345,8 @@ async function generateViaOpenAIEdits(
 export async function toolGenerateImage(
   config: Claw2Config,
   prompt: string,
-  options: GenerateImageOptions = {}
+  options: GenerateImageOptions = {},
+  signal?: AbortSignal
 ): Promise<{ ok: boolean; path?: string; imageUrl?: string; error?: string; warning?: string }> {
   const baseUrl = (config.tools?.sdUrl ?? process.env.CLAW2_SD_URL ?? "").trim().replace(/\/+$/, "");
   if (!baseUrl) {
@@ -377,6 +378,8 @@ export async function toolGenerateImage(
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  // The turn's cancel signal stops the request the same way as the timeout.
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
   try {
     const mode = resolveSdApiMode(config);
     let result: { ok: boolean; path?: string; imageUrl?: string; error?: string; warning?: string };
@@ -390,7 +393,7 @@ export async function toolGenerateImage(
               resolvedImage.fullPath,
               resolvedImage.filename,
               options,
-              controller.signal
+              requestSignal
             )
           : await generateViaImg2img(
               config,
@@ -398,7 +401,7 @@ export async function toolGenerateImage(
               trimmed,
               resolvedImage.fullPath,
               options,
-              controller.signal
+              requestSignal
             );
       // Some providers (incl. Gemini) often respond with 422 IMAGE_NO_OUTPUT to edits - fallback to full generation.
       if (
@@ -411,9 +414,9 @@ export async function toolGenerateImage(
           config,
           baseUrl,
           trimmed,
-          options,
-          controller.signal
-        );
+            options,
+            requestSignal
+          );
         clearTimeout(timeout);
         if (fallback.ok) {
           return {
@@ -430,8 +433,8 @@ export async function toolGenerateImage(
     } else {
       result =
         mode === "openai"
-          ? await generateViaOpenAI(config, baseUrl, trimmed, options, controller.signal)
-          : await generateViaTxt2img(config, baseUrl, trimmed, options, controller.signal);
+          ? await generateViaOpenAI(config, baseUrl, trimmed, options, requestSignal)
+          : await generateViaTxt2img(config, baseUrl, trimmed, options, requestSignal);
     }
     clearTimeout(timeout);
     if (!result.ok) {
@@ -442,6 +445,7 @@ export async function toolGenerateImage(
     clearTimeout(timeout);
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[generate_image] exception:", msg);
+    if (signal?.aborted) return { ok: false, error: "cancelled" };
     if (msg.includes("abort")) return { ok: false, error: "Image request timeout" };
     return { ok: false, error: msg };
   }

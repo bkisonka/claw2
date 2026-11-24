@@ -119,7 +119,7 @@ describe("gateway /chat terminal and persistence", () => {
       ]);
     } else {
       expect(response.status).toBe(500);
-      expect(await response.json()).toEqual({ error: expect.stringContaining("test write failure") });
+      expect(await response.json()).toEqual({ sessionId, error: expect.stringContaining("test write failure") });
     }
     expect(repo.getChatHistory(sessionId, "default")).toEqual([]);
     expect(repo.listTranscript(sessionId, "default").totalCount).toBe(0);

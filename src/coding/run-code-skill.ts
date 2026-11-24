@@ -16,6 +16,7 @@ import { createClient, normalizeToolCalls } from "../core/llm.js";
 import { resolveAgentsDir } from "../agents/paths.js";
 import { writeAgent } from "../agents/write-agent.js";
 import { validateSkillSource } from "../agents/skill-header.js";
+import { throwIfAborted } from "../core/abort.js";
 
 const MAX_SUB_ITERS = 8;
 const CODE_PREVIEW_CHARS = 4000;
@@ -122,19 +123,23 @@ async function chatWithCustomTools(
   client: OpenAI,
   config: Claw2Config,
   messages: OpenAI.Chat.ChatCompletionMessageParam[],
-  tools: OpenAI.Chat.ChatCompletionTool[]
+  tools: OpenAI.Chat.ChatCompletionTool[],
+  signal?: AbortSignal
 ): Promise<{ content: string | null; tool_calls?: OpenAI.Chat.ChatCompletionMessageToolCall[] }> {
   const model = config.llm?.model ?? "gpt-4o-mini";
   const maxTokens = config.llm?.maxTokens;
   const enableThinking = config.llm?.enableThinking;
-  const completion = await client.chat.completions.create({
-    model,
-    messages,
-    tools,
-    tool_choice: "auto",
-    ...(maxTokens != null ? { max_tokens: maxTokens } : {}),
-    ...(enableThinking === false ? ({ enable_thinking: false } as Record<string, unknown>) : {}),
-  } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming);
+  const completion = await client.chat.completions.create(
+    {
+      model,
+      messages,
+      tools,
+      tool_choice: "auto",
+      ...(maxTokens != null ? { max_tokens: maxTokens } : {}),
+      ...(enableThinking === false ? ({ enable_thinking: false } as Record<string, unknown>) : {}),
+    } as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+    signal ? { signal } : undefined
+  );
   const msg = completion.choices[0]?.message;
   const rawCalls = msg?.tool_calls;
   const tool_calls =
@@ -166,7 +171,8 @@ async function runOneCandidate(
     script: string;
     task: string;
     baselineCode: string | null;
-  }
+  },
+  signal?: AbortSignal
 ): Promise<CodeSkillCandidate> {
   const relPath = relCandidatePath(opts.runId, opts.index, opts.script);
   // Drafts are never written into the skill runner's filesystem view.
@@ -209,7 +215,8 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
 
   try {
     for (let iter = 0; iter < MAX_SUB_ITERS; iter++) {
-      const response = await chatWithCustomTools(client, config, messages, tools);
+      throwIfAborted(signal);
+      const response = await chatWithCustomTools(client, config, messages, tools, signal);
       if (!response.tool_calls?.length) break;
       messages.push({
         role: "assistant",
@@ -252,6 +259,8 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
     const error = checkCandidate(opts.script, code);
     return { index: opts.index, ok: error === undefined, code, error };
   } catch (err) {
+    // A cancelled turn is not a failed candidate: let the abort reach the caller.
+    throwIfAborted(signal);
     return {
       index: opts.index,
       ok: false,
@@ -263,8 +272,10 @@ ${opts.baselineCode ? "A baseline was copied into the working path; improve or r
 
 export async function runCodeSkill(
   config: Claw2Config,
-  options: { script: string; task: string }
+  options: { script: string; task: string },
+  signal?: AbortSignal
 ): Promise<{ ok: boolean; message: string; runId?: string }> {
+  throwIfAborted(signal);
   prunePending();
   const script = safeScriptName(options.script);
   if (!script) {
@@ -292,13 +303,18 @@ export async function runCodeSkill(
 
   const candidates = await Promise.all(
     Array.from({ length: n }, (_, index) =>
-      runOneCandidate(config, client, {
-        runId,
-        index,
-        script,
-        task,
-        baselineCode: baseline,
-      })
+      runOneCandidate(
+        config,
+        client,
+        {
+          runId,
+          index,
+          script,
+          task,
+          baselineCode: baseline,
+        },
+        signal
+      )
     )
   );
 

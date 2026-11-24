@@ -3,7 +3,7 @@
 
 /** Chat message (compatible with Chat.tsx). */
 import { t } from "../i18n";
-import type { ChatListItemApi } from "../api/chat";
+import type { ChatListItemApi, ToolStep } from "../api/chat";
 import { deriveChatTitleFromRequest } from "../../../src/core/chat-title";
 
 export interface StoredMessage {
@@ -12,6 +12,8 @@ export interface StoredMessage {
   at?: string;
   attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
   cells?: { type: string; content: string }[];
+  /** Tool steps of an assistant turn (name, arguments, outcome — no results). */
+  tools?: ToolStep[];
 }
 
 export interface ChatItem {
@@ -38,6 +40,8 @@ export interface ChatItem {
   hasDocs?: boolean;
   /** Transcript payload was dropped from memory and must be reloaded before display. */
   historyEvicted?: boolean;
+  /** A turn is running on the gateway for this chat (from the server list). */
+  running?: boolean;
 }
 
 /** Title from the first user message: first phrase or a shortened summary. */
@@ -77,6 +81,8 @@ export function serverChatToItem(
     hasImages: c.hasImages ?? old?.hasImages,
     hasDocs: c.hasDocs ?? old?.hasDocs,
     historyEvicted: old?.historyEvicted,
+    // Server state only: a mark from an older list response must not stick.
+    running: c.running === true ? true : undefined,
   };
 }
 

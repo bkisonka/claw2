@@ -22,6 +22,13 @@ import { verifyVisionClaim } from "../security/vision-claim.js";
 import { markUntrustedOrigin, hasUntrustedOrigin } from "../security/origin.js";
 import { auditLog } from "../audit/log.js";
 import { runOrchestrator } from "../core/orchestrator.js";
+import { clipHeadTail } from "../core/tool-budget.js";
+import {
+  foldToolEvents,
+  type ToolEvent,
+  type ToolTraceEntry,
+  type TraceHistoryMessage,
+} from "../core/tool-trace.js";
 import { isAbortError, throwIfAborted } from "../core/abort.js";
 import {
   resolveBrowserPageText,
@@ -58,7 +65,24 @@ import {
 import { updateRunRating } from "../agent-selection/store.js";
 import { getSessionHistory, appendToSession, generateSessionId, getSessionPromptContext, setSessionPromptContext } from "./sessions.js";
 import { releaseSessionRuntime } from "./session-runtime-cleanup.js";
-import { abortActiveChatRun, beginActiveChatRun, MAX_CONCURRENT_CHAT_RUNS } from "./active-chat-runs.js";
+import {
+  abortChatRun,
+  beginChatRun,
+  DEFAULT_CHAT_KEEPALIVE_MS,
+  finishChatRun,
+  getChatRun,
+  MAX_CONCURRENT_CHAT_RUNS,
+  publishChatRun,
+  RUN_SETTLE_WAIT_MS,
+  startSseKeepalive,
+  subscribeChatRun,
+  TOOL_STEP_ARGS_CHARS,
+  toStepEvent,
+  waitForChatRun,
+  DEFAULT_CHAT_RUN_MAX_MS,
+  type ChatRun,
+  type ChatRunEvent,
+} from "./chat-runs.js";
 import { applyPromptContext, limitHistoryForPrompt, nextPromptCoveredCount } from "./prompt-history.js";
 import { initDb, getChatRepository } from "./db/index.js";
 import { createTranscriptSessionAccess, isTranscriptToolsEnabled } from "../transcript/index.js";
@@ -1372,7 +1396,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       return;
     }
     if (req.method === "POST" && p === "/chat") {
-      let activeRun: ReturnType<typeof beginActiveChatRun> | undefined;
+      let activeRun: ChatRun | undefined;
+      /** True once the response is driven by the run's events, not by this handler. */
+      let handedOff = false;
       let onRequestAborted: (() => void) | undefined;
       let onResponseClose: (() => void) | undefined;
       let activeSessionId = "";
@@ -1384,9 +1410,18 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           Connection: "keep-alive",
+          // A reverse proxy must not buffer a stream that is silent while a tool runs.
+          "X-Accel-Buffering": "no",
           "Access-Control-Allow-Origin": corsOrigin,
           "X-Session-Id": sessionId,
         });
+        // A client that vanishes mid-stream must not take the gateway down with a socket error.
+        res.on("error", () => {
+          /* the client went away */
+        });
+        // writeHead alone keeps the headers until the first frame; a turn can
+        // be silent for a long time (model thinking, a running tool).
+        res.flushHeaders();
         streamSessionId = sessionId;
       };
       const formatChatEvent = (payload: Record<string, unknown>) => `data: ${JSON.stringify(payload)}\n\n`;
@@ -1542,8 +1577,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         }
 
         activeSessionId = sessionId;
-        activeRun = beginActiveChatRun(sessionId);
-        if (!activeRun) {
+        const begun = beginChatRun(sessionId, userId);
+        if (!begun) {
           res.writeHead(429, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
           res.end(
             JSON.stringify({
@@ -1552,14 +1587,27 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           );
           return;
         }
-        onRequestAborted = () => activeRun?.controller.abort("HTTP request aborted");
+        const run = begun.run;
+        activeRun = run;
+        const signal = run.controller.signal;
+        // A background turn outlives this request: a dropped connection only
+        // unsubscribes. Without background runs it cancels the turn, as before.
+        const backgroundRuns = config.gateway?.backgroundChatRuns !== false;
+        const keepaliveMs = config.gateway?.chatKeepaliveMs ?? DEFAULT_CHAT_KEEPALIVE_MS;
+        onRequestAborted = () => {
+          if (!backgroundRuns) run.controller.abort("HTTP request aborted");
+        };
         onResponseClose = () => {
-          if (!res.writableEnded) activeRun?.controller.abort("HTTP response disconnected");
+          if (!backgroundRuns && !res.writableEnded) run.controller.abort("HTTP response disconnected");
         };
         req.once("aborted", onRequestAborted);
         res.once("close", onResponseClose);
-        const signal = activeRun.controller.signal;
         throwIfAborted(signal);
+        // The turn this one superseded is stored first, so the new turn's history has it.
+        if (begun.previous) {
+          await waitForChatRun(begun.previous, RUN_SETTLE_WAIT_MS);
+          throwIfAborted(signal);
+        }
         const messageForTitle = message || pageContext?.text?.slice(0, 80) || "browser";
         let chatRepo = getChatRepository();
         if (!chatRepo && config.gateway?.chatsDbPath) {
@@ -1611,11 +1659,29 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           digest: s.digest,
         }));
         const chatWithoutProject = !!chatRepo && projectIdForContext == null;
-        const fullHistory = chatRepo
-          ? chatRepo.getMessages(sessionId, userId).map((m) => ({
+        // Tool steps of earlier turns ride on the assistant message of their
+        // turn, which sits right after the user message the trace is tied to.
+        const stepsByTurn = new Map<number, ToolTraceEntry[]>();
+        for (const call of chatRepo ? chatRepo.listToolCalls(sessionId, userId) : []) {
+          const steps = stepsByTurn.get(call.turnIndex) ?? [];
+          steps.push({
+            seq: call.step,
+            iteration: call.iteration,
+            name: call.name,
+            args: call.args,
+            ...(call.result != null && { result: call.result }),
+            ...(call.ok != null && { ok: call.ok }),
+            ...(call.durationMs != null && { durationMs: call.durationMs }),
+            untrusted: call.untrusted,
+          });
+          stepsByTurn.set(call.turnIndex, steps);
+        }
+        const fullHistory: TraceHistoryMessage[] = chatRepo
+          ? chatRepo.getMessages(sessionId, userId).map((m, index) => ({
               role: m.role,
               content:
                 m.role === "assistant" ? contentForLlmHistory(m.content, m.meta) : m.content,
+              ...(m.role === "assistant" && stepsByTurn.has(index - 1) && { tools: stepsByTurn.get(index - 1) }),
             }))
           : getSessionHistory(sessionId);
         const promptCtx = chatRepo
@@ -1638,6 +1704,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const storedUserMessage = pageContext
           ? formatBrowserSelectionForHistory(message, pageContext)
           : message;
+        run.userMessage = storedUserMessage;
         // Browser page text is web content riding in the user message: mark
         // provenance so later turns (and the trifecta) know it is there.
         const userOrigin = pageContext ? { source: "browser-page" as const, untrusted: true } : undefined;
@@ -1799,7 +1866,13 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
 
         // Both response formats use the same commit path. Do not send a terminal
         // result until the full turn (including any prompt recap) is durable.
-        const persistTurn = (result: Awaited<ReturnType<typeof runOrchestrator>>) => {
+        const persistTurn = (
+          result: Pick<
+            Awaited<ReturnType<typeof runOrchestrator>>,
+            "content" | "cells" | "summaryForHistory" | "summaryDropCount"
+          >,
+          tools?: ToolTraceEntry[]
+        ) => {
           const userCells = imageCellsFromUploads(attachedDocuments);
           const summary = result.summaryForHistory;
           const coveredCount = nextPromptCoveredCount(
@@ -1812,7 +1885,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               userId,
               { content: storedUserMessage, meta: cellsToMeta(userCells) },
               { content: result.content, meta: cellsToMeta(result.cells ?? []) },
-              promptContext
+              promptContext,
+              tools
             );
           } else {
             appendToSession(sessionId, "user", storedUserMessage, userOrigin);
@@ -1820,7 +1894,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               sessionId,
               "assistant",
               result.content,
-              hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined
+              hasUntrustedOrigin(sessionId) ? { source: "derived", untrusted: true } : undefined,
+              tools
             );
             if (promptContext) {
               setSessionPromptContext(sessionId, promptContext.summary, promptContext.coveredCount);
@@ -1829,8 +1904,43 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return userCells;
         };
 
-        if (useStream) {
-          openChatStream(sessionId);
+        // Live events of the turn go to whoever is listening — this request,
+        // or a client that re-attached. The full tool result stays on the server.
+        const toolEvents: ToolEvent[] = [];
+        const openedBrowserUrls: string[] = [];
+        const publish = (event: ChatRunEvent) => publishChatRun(run, event);
+        const chatTurnAudit = (details: Record<string, unknown>) =>
+          auditLog(effectiveConfig, {
+            type: "chat_turn",
+            sessionId,
+            details: {
+              hasAttachments: attachedDocuments.length > 0,
+              model: effectiveConfig.llm?.model,
+              chatModelOverride: chatModel || undefined,
+              ...details,
+            },
+          });
+
+        /** A stopped turn keeps its message, the text printed so far and its tool steps — when there is anything to keep. */
+        const persistStoppedTurn = () => {
+          const tools = foldToolEvents(toolEvents);
+          if (!run.partialContent.trim() && tools.length === 0) return;
+          try {
+            persistTurn({ content: run.partialContent, cells: [] }, tools);
+          } catch (err) {
+            // The chat may already be gone (deleted while the turn was stopping).
+            console.error(
+              `[gateway] stopped turn of ${sessionId} was not stored:`,
+              err instanceof Error ? err.message : err
+            );
+          }
+        };
+
+        // The turn itself — model, tools, insight offer, storage — runs on its
+        // own, not inside this request, so it outlives a dropped connection.
+        const execute = async (): Promise<void> => {
+          const capMs = config.gateway?.chatRunMaxMs ?? DEFAULT_CHAT_RUN_MAX_MS;
+          const cap = capMs > 0 ? setTimeout(() => run.controller.abort("Chat run timeout"), capMs) : null;
           try {
             const result = await runOrchestrator({
               config: effectiveConfig,
@@ -1848,43 +1958,43 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               sessionId,
               signal,
               transcript: transcriptAccess,
-              onStreamChunk: (chunk) => {
-                throwIfAborted(signal);
-                writeChatEvent({ content: chunk });
+              // Non-stream clients keep the non-streaming model call they always had.
+              ...(useStream ? { onStreamChunk: (chunk: string) => publish({ content: chunk }) } : {}),
+              onToolEvent: (event: ToolEvent) => {
+                toolEvents.push(event);
+                publish({ toolEvent: toStepEvent(event) });
               },
-              onSidebarUpdated: () => writeChatEvent({ sidebarUpdated: true }),
-              onOpenBrowserUrl: (url) => writeChatEvent({ openBrowserUrl: url }),
+              onSidebarUpdated: () => publish({ sidebarUpdated: true }),
+              onOpenBrowserUrl: (url: string) => {
+                openedBrowserUrls.push(url);
+                publish({ openBrowserUrl: url });
+              },
               browserPageTextFallback,
               requestBrowserPageText: async () => {
                 const requestId = randomBytes(8).toString("hex");
                 const wait = waitForBrowserPageText(requestId, 18_000, signal);
-                writeChatEvent({ readBrowserPage: { requestId } });
+                publish({ readBrowserPage: { requestId } });
                 return wait;
               },
               requestHeadlessPageText: async (pageUrl: string) => {
                 const requestId = randomBytes(8).toString("hex");
                 const wait = waitForBrowserPageText(requestId, 20_000, signal);
-                writeChatEvent({ headlessPageText: { requestId, url: pageUrl } });
+                publish({ headlessPageText: { requestId, url: pageUrl } });
                 return wait;
               },
             });
             throwIfAborted(signal);
             const insightOffer = await resolveInsightOffer();
             throwIfAborted(signal);
-            const userCells = persistTurn(result);
-            auditLog(effectiveConfig, {
-              type: "chat_turn",
-              sessionId,
-              details: {
-                hasAttachments: attachedDocuments.length > 0,
-                toolIterations: result.toolIterations,
-                error: result.error,
-                durationMs: Date.now() - chatStartMs,
-                model: effectiveConfig.llm?.model,
-                chatModelOverride: chatModel || undefined,
-              },
+            const userCells = persistTurn(result, result.tools);
+            chatTurnAudit({
+              toolIterations: result.toolIterations,
+              toolCalls: result.tools?.length ?? 0,
+              toolLimitReached: result.toolLimitReached === true,
+              error: result.error,
+              durationMs: Date.now() - chatStartMs,
             });
-            finishChatStream({
+            finishChatRun(run, {
               content: result.content,
               error: result.error ?? undefined,
               lastRunId: result.lastRunId ?? undefined,
@@ -1892,86 +2002,81 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               userCells,
               contextCompressed: result.contextCompressed,
               sidebarUpdated: result.sidebarUpdated,
+              toolLimitReached: result.toolLimitReached,
               insightOffer: insightOffer ?? undefined,
             });
-          } catch (streamErr) {
-            if (signal.aborted || isAbortError(streamErr)) throw streamErr;
-            auditLog(config, {
-              type: "chat_turn",
-              sessionId,
-              details: {
-                hasAttachments: attachedDocuments.length > 0,
-                error: String(streamErr),
-                durationMs: Date.now() - chatStartMs,
-                model: effectiveConfig.llm?.model,
-                chatModelOverride: chatModel || undefined,
-              },
-            });
-            finishChatStream({ error: String(streamErr) });
-          }
-        } else {
-          const openedBrowserUrls: string[] = [];
-          const result = await runOrchestrator({
-            config: effectiveConfig,
-            userMessage: wrapped,
-            sessionHistory: history,
-            attachedDocuments: attachedDocuments.length > 0 ? attachedDocuments : undefined,
-            userVoiceGender,
-            userVoiceEmotion,
-            recognizedUser,
-            projectName,
-            projectDescription,
-            projectSiblingDigests,
-            chatWithoutProject,
-            insightAddendum,
-            sessionId,
-            signal,
-            transcript: transcriptAccess,
-            onOpenBrowserUrl: (url) => {
-              openedBrowserUrls.push(url);
-            },
-            browserPageTextFallback,
-            // Non-stream: no live BrowserView round-trip; use request snapshot only.
-          });
-          throwIfAborted(signal);
-          const insightOffer = await resolveInsightOffer();
-          throwIfAborted(signal);
-          const userCells = persistTurn(result);
-          auditLog(config, {
-            type: "chat_turn",
-            sessionId,
-            details: {
-              hasAttachments: attachedDocuments.length > 0,
-              toolIterations: result.toolIterations,
-              error: result.error,
-              durationMs: Date.now() - chatStartMs,
-              model: effectiveConfig.llm?.model,
-              chatModelOverride: chatModel || undefined,
-            },
-          });
-          if (!res.writableEnded && !res.destroyed) {
-            res.writeHead(200, {
-              "Content-Type": JSON_TYPE,
-              "Access-Control-Allow-Origin": corsOrigin,
-              "X-Session-Id": sessionId,
-            });
-            res.end(
-              JSON.stringify({
-                content: result.content,
+          } catch (err) {
+            if (signal.aborted || isAbortError(err)) {
+              // Keep what the turn managed to do: a long run must not vanish
+              // because it was stopped. A connection that merely dropped while
+              // background runs are off is not a stop — as before, nothing is stored.
+              const reason = run.controller.signal.reason ? String(run.controller.signal.reason) : "";
+              const connectionLost = reason === "HTTP response disconnected" || reason === "HTTP request aborted";
+              if (!connectionLost) persistStoppedTurn();
+              auditLog(auditConfig, {
+                type: "chat_cancelled",
                 sessionId,
-                error: result.error ?? undefined,
-                lastRunId: result.lastRunId ?? undefined,
-                cells: result.cells ?? undefined,
-                userCells,
-                contextCompressed: result.contextCompressed,
-                sidebarUpdated: result.sidebarUpdated,
-                openBrowserUrls: openedBrowserUrls.length ? openedBrowserUrls : undefined,
-                insightOffer: insightOffer ?? undefined,
-              })
-            );
+                details: {
+                  reason: reason || String(err),
+                  durationMs: Date.now() - requestStartMs,
+                  toolSteps: toolEvents.filter((event) => event.type === "start").length,
+                },
+              });
+              finishChatRun(run, { error: "Chat cancelled", code: "chat_cancelled" });
+            } else {
+              chatTurnAudit({ error: String(err), durationMs: Date.now() - chatStartMs });
+              finishChatRun(run, { error: String(err) });
+            }
+          } finally {
+            if (cap) clearTimeout(cap);
           }
+        };
+        if (useStream) {
+          openChatStream(sessionId);
+          const stopKeepalive = startSseKeepalive(res, keepaliveMs);
+          const unsubscribe = subscribeChatRun(run, (event) => {
+            if ("terminal" in event) {
+              stopKeepalive();
+              finishChatStream({ ...event.terminal });
+              return;
+            }
+            writeChatEvent(event);
+          });
+          handedOff = true;
+          // The response now belongs to the run; it unsubscribes when the client goes away.
+          res.once("close", () => {
+            unsubscribe();
+            stopKeepalive();
+          });
+        }
+
+        // Started only once the stream is subscribed: no event is lost, not
+        // even one the turn emits before its first await.
+        void execute().catch((err) => {
+          finishChatRun(run, { error: `Internal error: ${String(err)}` });
+        });
+
+        if (!useStream) {
+          await run.done;
+          if (res.writableEnded || res.destroyed) return;
+          const terminal = run.terminal ?? { error: "Chat run ended without a result" };
+          const cancelled = terminal.code === "chat_cancelled";
+          res.writeHead(terminal.error && !cancelled ? 500 : 200, {
+            "Content-Type": JSON_TYPE,
+            "Access-Control-Allow-Origin": corsOrigin,
+            "X-Session-Id": sessionId,
+          });
+          res.end(
+            JSON.stringify({
+              sessionId,
+              ...terminal,
+              ...(openedBrowserUrls.length ? { openBrowserUrls: openedBrowserUrls } : {}),
+            })
+          );
+          return;
         }
       } catch (err) {
+        // Setup failed before the turn got an executor of its own.
         const cancelled = activeRun?.controller.signal.aborted === true || isAbortError(err);
         if (cancelled) {
           auditLog(auditConfig, {
@@ -1995,10 +2100,24 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           res.writeHead(500, { "Content-Type": JSON_TYPE });
           res.end(JSON.stringify({ error: String(err) }));
         }
+        // Release the session slot: nothing else will finish this run.
+        if (activeRun && !activeRun.terminal) {
+          finishChatRun(activeRun, {
+            error: cancelled ? "Chat cancelled" : String(err),
+            code: cancelled ? "chat_cancelled" : undefined,
+          });
+        }
       } finally {
-        if (onRequestAborted) req.removeListener("aborted", onRequestAborted);
-        if (onResponseClose) res.removeListener("close", onResponseClose);
-        activeRun?.finish();
+        if (!handedOff) {
+          if (onRequestAborted) req.removeListener("aborted", onRequestAborted);
+          if (onResponseClose) res.removeListener("close", onResponseClose);
+          // The request turned back before the turn started (provider not
+          // configured, bad endpoint): release the slot, or the next message
+          // of this chat would wait for a turn that never runs.
+          if (activeRun && !activeRun.terminal) {
+            finishChatRun(activeRun, { error: "Chat request ended before the turn started" });
+          }
+        }
       }
       return;
     }
@@ -2241,12 +2360,88 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             chat.hasDocs = !!(fromMessages?.docs || fromDisk?.docs);
           }
         }
+        // A turn is still running for these chats (it outlives the request that started it).
+        for (const chat of chats) {
+          const running = getChatRun(chat.id);
+          if (running && running.userId === userId) chat.running = true;
+        }
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ chats }));
       } catch (err) {
         res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: String(err) }));
       }
+      return;
+    }
+    if (req.method === "POST" && p === "/chat/cancel") {
+      let sessionId = "";
+      try {
+        const body = await parseBody(req);
+        const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        sessionId = typeof data.sessionId === "string" ? data.sessionId.trim() : "";
+      } catch {
+        sessionId = "";
+      }
+      if (!sessionId) {
+        res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "sessionId required" }));
+        return;
+      }
+      // Only the owner may stop a turn; another user's session answers as if nothing were running.
+      const running = getChatRun(sessionId);
+      if (running && running.userId === userId) abortChatRun(sessionId, "Chat cancelled");
+      res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (req.method === "GET" && p === "/chat/attach") {
+      const attachUrl = new URL(req.url ?? "", `http://${req.headers.host ?? "localhost"}`);
+      const sessionId = attachUrl.searchParams.get("session_id")?.trim();
+      if (!sessionId) {
+        res.writeHead(400, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: "session_id required" }));
+        return;
+      }
+      const frame = (payload: Record<string, unknown>) => `data: ${JSON.stringify(payload)}\n\n`;
+      const run = getChatRun(sessionId);
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        "Access-Control-Allow-Origin": corsOrigin,
+        "X-Session-Id": sessionId,
+      });
+      res.on("error", () => {
+        /* the client went away */
+      });
+      res.flushHeaders();
+      if (!run || run.userId !== userId) {
+        res.end(frame({ done: true, noRun: true, sessionId }));
+        return;
+      }
+      // Catch up on what happened before this client connected: the question
+      // being answered (stored only when the turn ends), the text and the steps so far.
+      if (run.partialContent || run.steps.length > 0 || run.userMessage) {
+        res.write(frame({ snapshot: { userMessage: run.userMessage ?? "", content: run.partialContent, steps: run.steps } }));
+      }
+      if (run.sidebarUpdated) res.write(frame({ sidebarUpdated: true }));
+      // No await between reading the run and subscribing: a turn that ends in
+      // between would otherwise leave this stream waiting forever.
+      const stopKeepalive = startSseKeepalive(res, config.gateway?.chatKeepaliveMs ?? DEFAULT_CHAT_KEEPALIVE_MS);
+      const unsubscribe = subscribeChatRun(run, (event) => {
+        if (res.writableEnded || res.destroyed) return;
+        if ("terminal" in event) {
+          stopKeepalive();
+          res.end(frame({ ...event.terminal, done: true, sessionId }));
+          return;
+        }
+        res.write(frame(event));
+      });
+      res.once("close", () => {
+        unsubscribe();
+        stopKeepalive();
+      });
       return;
     }
     if (req.method === "GET" && p === "/chat/history") {
@@ -2267,17 +2462,34 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         return;
       }
       try {
-        const messages = chatRepo.getChatHistory(sessionId, userId).map((m) => {
+        // The UI gets the steps of each turn (name, short arguments, outcome) — never their results.
+        const stepsByTurn = new Map<number, Array<{ name: string; args: string; ok: boolean | null; durationMs: number | null }>>();
+        for (const call of chatRepo.listToolCalls(sessionId, userId)) {
+          const steps = stepsByTurn.get(call.turnIndex) ?? [];
+          steps.push({
+            name: call.name,
+            args: clipHeadTail(call.args, TOOL_STEP_ARGS_CHARS).text,
+            ok: call.ok,
+            durationMs: call.durationMs,
+          });
+          stepsByTurn.set(call.turnIndex, steps);
+        }
+        const messages = chatRepo.getChatHistory(sessionId, userId).map((m, index) => {
           const resolved = resolveAssistantCells(m.content, m.meta);
           const payload: {
             role: string;
             content: string;
             cells?: typeof resolved.cells;
             attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
+            tools?: Array<{ name: string; args: string; ok: boolean | null; durationMs: number | null }>;
           } = {
             role: m.role,
             content: resolved.content,
           };
+          // The assistant message of a turn sits right after the user message its trace is tied to.
+          if (m.role === "assistant" && stepsByTurn.has(index - 1)) {
+            payload.tools = stepsByTurn.get(index - 1);
+          }
           if (resolved.cells.length > 0) payload.cells = resolved.cells;
           if (m.role === "user" && resolved.cells.length > 0) {
             const attached = resolved.cells
@@ -2486,7 +2698,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         return;
       }
       try {
-        abortActiveChatRun(sessionId, "Chat deleted");
+        // Stop the turn and let it store what it did before its chat disappears.
+        const running = abortChatRun(sessionId, "Chat deleted");
+        if (running) await waitForChatRun(running, RUN_SETTLE_WAIT_MS);
         const deleted = chatRepo.deleteChat(sessionId, userId);
         if (deleted) releaseSessionRuntime(sessionId);
         res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });

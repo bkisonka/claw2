@@ -1,12 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
+import type { ToolTraceEntry } from "../../core/tool-trace.js";
 import { textHasDocumentRef } from "../chat-documents.js";
 
 export interface SessionMessage {
   role: "user" | "assistant";
   content: string;
   meta?: string;
+}
+
+/** One stored tool call of a chat turn; `turnIndex` is the position of the turn's user message. */
+export interface StoredToolCall {
+  turnIndex: number;
+  step: number;
+  iteration: number;
+  name: string;
+  args: string;
+  /** Clipped result; NULL when the turn stopped before the call returned. */
+  result: string | null;
+  /** NULL when the call was interrupted. */
+  ok: boolean | null;
+  untrusted: boolean;
+  durationMs: number | null;
+  createdAt: number;
 }
 
 type MessagePayload = Omit<SessionMessage, "role">;
@@ -39,6 +56,8 @@ export interface ChatListItem {
   hasImages?: boolean;
   /** The chat has document attachments (sidebar indicator). */
   hasDocs?: boolean;
+  /** A chat turn is running right now (it outlives the request that started it). */
+  running?: boolean;
 }
 
 export interface ProjectListItem {
@@ -98,16 +117,20 @@ export interface ChatRepository {
   updateChatFavorited(chatId: string, userId: string, favorited: boolean): boolean;
   /** Add a message to both history stores and update the owned chat's timestamp. */
   appendMessage(chatId: string, userId: string, role: "user" | "assistant", content: string, meta?: string): void;
-  /** Atomically append the user/assistant pair to both history stores, along with any new prompt recap. */
+  /** Atomically append the user/assistant pair to both history stores, along with any new prompt recap
+   *  and the tool calls the turn made (written in the same transaction). */
   appendTurn(
     chatId: string,
     userId: string,
     user: MessagePayload,
     assistant: MessagePayload,
-    promptContext?: TurnPromptContext
+    promptContext?: TurnPromptContext,
+    tools?: ToolTraceEntry[]
   ): void;
   /** Chat message history (full UI feed). Checking user_id.*/
   getMessages(chatId: string, userId: string): SessionMessage[];
+  /** Tool calls of every turn of the chat, in order (empty for a chat that is not the user's). */
+  listToolCalls(chatId: string, userId: string): StoredToolCall[];
   /** Replace chat history (scrub, etc.; not for summarize).*/
   replaceMessages(chatId: string, userId: string, messages: SessionMessage[]): void;
   /** Resume cache for assembling the LLM prompt (not displayed in the UI ribbon).*/
@@ -486,19 +509,21 @@ ${r.meta ?? ""}`;
     userId: string,
     user: MessagePayload,
     assistant: MessagePayload,
-    promptContext?: TurnPromptContext
+    promptContext?: TurnPromptContext,
+    tools?: ToolTraceEntry[]
   ): void {
     this.appendMessages(chatId, userId, [
       { ...user, role: "user" },
       { ...assistant, role: "assistant" },
-    ], promptContext);
+    ], promptContext, tools);
   }
 
   private appendMessages(
     chatId: string,
     userId: string,
     messages: SessionMessage[],
-    promptContext?: TurnPromptContext
+    promptContext?: TurnPromptContext,
+    tools?: ToolTraceEntry[]
   ): void {
     this.db.transaction(() => {
       const now = Date.now();
@@ -513,6 +538,10 @@ ${r.meta ?? ""}`;
       const insertTranscript = this.db.prepare(
         "INSERT INTO transcript_messages (chat_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?)"
       );
+      // Counted before the turn's messages exist: this is the position of its user message.
+      const turnIndex = (
+        this.db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?").get(chatId) as { count: number }
+      ).count;
       for (const { role, content, meta } of messages) {
         insertMessage.run(chatId, role, content, meta ?? null, now);
         insertTranscript.run(chatId, role, content, meta ?? null, now);
@@ -520,7 +549,61 @@ ${r.meta ?? ""}`;
       if (promptContext) {
         this.setPromptContext(chatId, userId, promptContext.summary, promptContext.coveredCount);
       }
+      // A turn is stored with its trace or not at all: a failing tool row
+      // rolls the whole turn back together with its messages.
+      const insertToolCall = this.db.prepare(
+        "INSERT INTO tool_calls (chat_id, turn_index, step, iteration, name, args, result, ok, untrusted, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+      );
+      for (const tool of tools ?? []) {
+        insertToolCall.run(
+          chatId,
+          turnIndex,
+          Math.max(0, Math.floor(tool.seq)),
+          Math.max(0, Math.floor(tool.iteration)),
+          tool.name,
+          tool.args ?? "",
+          tool.result ?? null,
+          tool.ok == null ? null : tool.ok ? 1 : 0,
+          tool.untrusted ? 1 : 0,
+          tool.durationMs == null ? null : Math.max(0, Math.round(tool.durationMs)),
+          now
+        );
+      }
     })();
+  }
+
+  listToolCalls(chatId: string, userId: string): StoredToolCall[] {
+    const ok = this.db.prepare("SELECT 1 FROM chats WHERE id = ? AND user_id = ?").get(chatId, userId);
+    if (!ok) return [];
+    const rows = this.db
+      .prepare(
+        `SELECT turn_index, step, iteration, name, args, result, ok, untrusted, duration_ms, created_at
+         FROM tool_calls WHERE chat_id = ? ORDER BY turn_index, step, id`
+      )
+      .all(chatId) as Array<{
+      turn_index: number;
+      step: number;
+      iteration: number;
+      name: string;
+      args: string;
+      result: string | null;
+      ok: number | null;
+      untrusted: number;
+      duration_ms: number | null;
+      created_at: number;
+    }>;
+    return rows.map((r) => ({
+      turnIndex: r.turn_index,
+      step: r.step,
+      iteration: r.iteration,
+      name: r.name,
+      args: r.args,
+      result: r.result,
+      ok: r.ok == null ? null : r.ok === 1,
+      untrusted: r.untrusted === 1,
+      durationMs: r.duration_ms,
+      createdAt: r.created_at,
+    }));
   }
 
   getMessages(chatId: string, userId: string): SessionMessage[] {
@@ -1070,6 +1153,17 @@ ${r.meta ?? ""}`;
       };
       const copied = copyInto("messages");
       copyInto("transcript_messages");
+      // The trace of a turn belongs to its assistant message: it is carried
+      // over only when that message (position turn_index + 1) was copied.
+      if (copied > 0) {
+        this.db
+          .prepare(
+            `INSERT INTO tool_calls (chat_id, turn_index, step, iteration, name, args, result, ok, untrusted, duration_ms, created_at)
+             SELECT ?, turn_index, step, iteration, name, args, result, ok, untrusted, duration_ms, created_at
+             FROM tool_calls WHERE chat_id = ?${upTo == null ? "" : " AND turn_index + 2 <= ?"} ORDER BY id`
+          )
+          .run(id, sourceChatId, ...(upTo == null ? [] : [upTo]));
+      }
       // Clamping the count would leave recap text about discarded messages.
       const covered = src.prompt_covered_count;
       if (src.prompt_summary?.trim() && Number.isInteger(covered) && covered > 0 && covered <= copied) {
@@ -1222,6 +1316,7 @@ ${r.meta ?? ""}`;
         .run(parent, chatId, userId);
       this.db.prepare("DELETE FROM messages WHERE chat_id = ?").run(chatId);
       this.db.prepare("DELETE FROM transcript_messages WHERE chat_id = ?").run(chatId);
+      this.db.prepare("DELETE FROM tool_calls WHERE chat_id = ?").run(chatId);
       this.db.prepare("DELETE FROM insight_events WHERE chat_id = ? OR past_chat_id = ?").run(chatId, chatId);
       this.db.prepare("DELETE FROM chats WHERE id = ? AND user_id = ?").run(chatId, userId);
     });

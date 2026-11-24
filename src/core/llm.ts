@@ -325,12 +325,21 @@ export const READ_TOOL: OpenAI.Chat.ChatCompletionTool = {
   type: "function",
   function: {
     name: "read",
-    description: "Read file contents. Path must be inside workspace or allowlist. Returns content or error (path not allowed).",
+    description:
+      "Read file contents. Path must be inside workspace or allowlist. Returns content or error (path not allowed). A long file comes back clipped: page through it with offset (first line, 1-based) and limit (number of lines).",
     parameters: {
       type: "object",
       properties: {
         path: { type: "string", description: "File path (relative to workspace or absolute allowed path)" },
         encoding: { type: "string", enum: ["utf-8", "base64"], description: "Optional: utf-8 (default) or base64" },
+        offset: {
+          type: "integer",
+          description: "First line to return, 1-based. Omit to read from the start of the file.",
+        },
+        limit: {
+          type: "integer",
+          description: "Max lines to return (default 2000, max 5000). Use with offset to page through a large file.",
+        },
       },
       required: ["path"],
     },

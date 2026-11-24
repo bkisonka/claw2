@@ -1,59 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-import { writeFileSync, unlinkSync, readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve, basename, relative, isAbsolute } from "node:path";
 import type OpenAI from "openai";
-import { isAgentEnabled } from "../agents/manage.js";
-import { isSkillRunAllowed } from "../security/skills-allowed.js";
-import { resolveAgentsDir, resolveAgentsUploadsDir } from "../agents/paths.js";
-import { writeAgent } from "../agents/write-agent.js";
-import {
-  ensureTask,
-  ensureBootstrapVersionFromScript,
-} from "../agent-selection/store.js";
-import { pickVersionForRun, recordRunAndMaybeSelect } from "../agent-selection/selection.js";
-import { computeTaskId } from "../agent-selection/task-id.js";
-import { runCodeSkill, acceptSkill } from "../coding/run-code-skill.js";
-import { selectionLog } from "../agent-selection/log.js";
-import { formatMemoryHit, memoryRecall, memoryRetire, memoryTouch, memoryWrite } from "../memory/index.js";
-import { formatDayLocal } from "../core/format-date.js";
+import { resolveAgentsDir } from "../agents/paths.js";
+import { formatMemoryHit, memoryRecall, memoryWrite } from "../memory/index.js";
 import { createClient, chat, summarizeWithLlm, normalizeToolCalls, isGenerateImageToolEnabled } from "./llm.js";
 import { isPhoneCallToolEnabled } from "../config/sip.js";
-import { toolPhoneCall } from "../tools/phone-call.js";
 import { getSystemPrompt } from "./system-prompt.js";
-import { runAgent, runAgentHost } from "../sandbox/run-agent.js";
-import { toolRead, toolWrite, toolEdit, toolListDir } from "../tools/fs-tools.js";
-import { toolWebFetch } from "../tools/web-fetch.js";
-import { toolMessage } from "../tools/message.js";
-import { toolReadSecret } from "../tools/read-secret.js";
-import {
-  buildBrowserSearchUrlFromTemplate,
-  parseSearchEnginesArg,
-  pickBrowserSearchEngines,
-  toolSearch,
-  type BrowserSearchEngine,
-} from "../tools/search.js";
-import { toolRoomHistory, toolRoomSend } from "../tools/peer-chat.js";
+import { dispatchToolCall, type ToolDispatchContext, type ToolDispatchState } from "./tool-dispatcher.js";
 import { isLlmBridgeEnabled } from "../llm-bridge/client.js";
-import { toolGenerateImage } from "../tools/generate-image.js";
-import { tasksAdd, tasksList, tasksDone, tasksDelete, reminderAdd, reminderList, reminderDelete, type TasksListStatus } from "../tasks/store.js";
-import {
-  sidebarSet,
-  sidebarClear,
-  sidebarGet,
-  sidebarGetSnapshot,
-  sidebarUpsert,
-  sidebarRemove,
-  sidebarMark,
-  formatSidebarForPrompt,
-  sidebarMigrate,
-} from "../sidebar/store.js";
-import { hasUntrustedInText, checkLethalTrifecta } from "../security/lethal-trifecta.js";
+import { formatSidebarForPrompt, sidebarGet, sidebarMigrate } from "../sidebar/store.js";
+import { hasUntrustedInText } from "../security/lethal-trifecta.js";
 import { initTrifectaState, markUntrustedOrigin, hasUntrustedOrigin } from "../security/origin.js";
-import { isPathUploadsOrOutput } from "../security/path-allowed.js";
-import { wrapExternalContent } from "../security/content-boundary.js";
-import { urlContainsSensitive, filterExternalResponse } from "../security/external-content-filters.js";
 import { parseCellBlocks } from "./cell-blocks.js";
 import { filterMissingLocalImageCells, filterLocalImageCellsWithoutTool } from "./cell-image-filters.js";
 import {
@@ -74,9 +34,8 @@ import { buildTelephonyContextBlock } from "./telephony-prompt.js";
 import { getSipClient } from "../sip/client.js";
 import { auditLog } from "../audit/log.js";
 import type { Claw2Config } from "../config/types.js";
-import { loadCache, loadCacheDetailed, getWarmupBuildResult, evolveHssAndGetState, getHssEntropyDeltaStabilizeMin, consumePendingHssResponseHint, buildHssSystemPromptAddendum, HSS_CRITICAL_RETRY_USER_MESSAGE, appendModelChronicleEntry, recallChronicleForPrompt, searchChronicleSession, applyWarmupContainment } from "../claw-cache/index.js";
-import { stripInternalPromptLeak, sanitizeForChroniclePrompt } from "../claw-cache/prompt-leak-sanitize.js";
-import { clampImportance } from "../claw-cache/chronicle-importance.js";
+import { loadCache, loadCacheDetailed, getWarmupBuildResult, evolveHssAndGetState, getHssEntropyDeltaStabilizeMin, consumePendingHssResponseHint, buildHssSystemPromptAddendum, HSS_CRITICAL_RETRY_USER_MESSAGE, recallChronicleForPrompt, applyWarmupContainment } from "../claw-cache/index.js";
+import { stripInternalPromptLeak } from "../claw-cache/prompt-leak-sanitize.js";
 import { PROMPT_SUMMARY_PREFIX, peelPromptSummary } from "../gateway/prompt-history.js";
 import { hssLog } from "../claw-cache/hss-log.js";
 import { shouldHssCriticalRetry, isHssRetryCatastrophicShrink } from "../claw-cache/hss-response-strategy.js";
@@ -84,25 +43,41 @@ import { appendHssEpistemicHintIfNeeded } from "../claw-cache/hss-epistemic-hint
 import { HssMiddleware, type HssAnalysisResult } from "./hss-middleware.js";
 import { throwIfAborted } from "./abort.js";
 import {
+  compactToolResults,
+  clipHeadTail,
+  clipToolResult,
+  DEFAULT_TOOL_CONTEXT_MAX_CHARS,
+  DEFAULT_TOOL_RESULT_MAX_CHARS,
+  type ToolCallMeta,
+} from "./tool-budget.js";
+import {
+  argsForTrace,
+  DEFAULT_TOOL_TRACE_HISTORY_TURNS,
+  isUntrustedResultTool,
+  redactToolResult,
+  toolResultLooksLikeError,
+  TOOL_TRACE_RESULT_MAX_CHARS,
+  withToolTraceHistory,
+  type ToolEvent,
+  type ToolTraceEntry,
+  type TraceHistoryMessage,
+} from "./tool-trace.js";
+import {
   type TranscriptSessionAccess,
-  TRANSCRIPT_SEARCH_DEFAULT_LIMIT,
-  TRANSCRIPT_SEARCH_MAX_LIMIT,
-  TRANSCRIPT_LIST_DEFAULT_LIMIT,
-  TRANSCRIPT_LIST_MAX_LIMIT,
-  TRANSCRIPT_MAX_TOOL_CALLS_PER_TURN,
   buildTranscriptListFirstPageBlock,
   isTranscriptToolsEnabled,
 } from "../transcript/index.js";
-
-const MAX_SENSITIVE_CHUNKS = 10;
-const MAX_SENSITIVE_CHUNK_BYTES = 20_000;
 
 const DEFAULT_MAX_TOOL_ITERATIONS = 30;
 
 export interface OrchestratorOptions {
   config: Claw2Config;
   userMessage: string;
-  sessionHistory?: { role: "user" | "assistant"; content: string }[];
+  /**
+   * Earlier turns. `tools` is the stored trace of a turn (what the model
+   * called and what came back); recent ones are replayed into the prompt.
+   */
+  sessionHistory?: TraceHistoryMessage[];
   /** Paths to attached files (saved by gateway in uploads)*/
   attachedDocuments?: { path: string; name: string; mimeType?: string }[];
   /** Gender of the interlocutor by voice (if the message was voice and the voice service returned gender)*/
@@ -137,6 +112,8 @@ export interface OrchestratorOptions {
   onStreamChunk?: (chunk: string) => void;
   /** Fired when sidebar_* tools change contextual menu (for live UI refresh mid-turn). */
   onSidebarUpdated?: () => void;
+  /** Fired before and after every tool call of the turn (step list in the UI, partial trace on cancel). */
+  onToolEvent?: (event: ToolEvent) => void;
   /** Fired when open_browser tool asks the desktop UI to navigate. */
   onOpenBrowserUrl?: (url: string) => void;
   /**
@@ -171,6 +148,10 @@ export interface OrchestratorResult {
   lastRunId?: number;
   /** Number of tool iterations (for auditing chat_turn).*/
   toolIterations?: number;
+  /** The step budget was spent; the model gave a final answer without tools. */
+  toolLimitReached?: boolean;
+  /** Tool calls of this turn in order (args and results clipped, secrets redacted) — for storage. */
+  tools?: ToolTraceEntry[];
   /** Inline cells for chat (calendars, schedules): [CELL_0], [CELL_1] in content are substituted at the front.*/
   cells?: { type: string; content: string }[];
   /** After summarization: summary and dropCount for the prompt cache (does not overwrite the UI tape).*/
@@ -186,6 +167,11 @@ import { stripReasoningTags } from "./strip-reasoning.js";
 
 function stripReasoning(text: string | null): string {
   return stripReasoningTags(text);
+}
+
+/** Appended when the step budget is spent: the last call of the turn runs without tools. */
+function toolLimitMessage(maxIterations: number): string {
+  return `The tool step budget for this turn is used up (${maxIterations} steps). Do not call any more tools. Give the user your final answer now: what you did, what you found, and what is left undone. Be explicit about unfinished parts instead of guessing.`;
 }
 
 async function logHssResponseAnalysis(
@@ -541,6 +527,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     onWriteAgent,
     onStreamChunk,
     onSidebarUpdated,
+    onToolEvent,
     onOpenBrowserUrl,
     requestBrowserPageText,
     requestHeadlessPageText,
@@ -631,7 +618,6 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   }
 
   let streamed = false;
-  let lastRunId: number | null = null;
   const wrappedChunk = onStreamChunk
     ? (chunk: string) => {
         throwIfAborted(signal);
@@ -859,15 +845,6 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
 
   let summaryForHistory: string | undefined;
   let summaryDropCount: number | undefined;
-  let sidebarUpdated = false;
-  const noteSidebarUpdated = () => {
-    sidebarUpdated = true;
-    try {
-      onSidebarUpdated?.();
-    } catch {
-      // ignore UI callback errors
-    }
-  };
   let effectiveHistory = workingHistory;
   const summarizeThreshold = config.gateway?.summarizeWhenMessagesAbove ?? 12;
   const keepRecent = config.gateway?.keepRecentMessages ?? 6;
@@ -921,7 +898,11 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     }
   }
 
-  const historyMessages: OpenAI.Chat.ChatCompletionMessageParam[] = effectiveHistory.map((h) => ({
+  // Recent turns get their tool steps back as text: the raw tool messages are not stored.
+  const historyMessages: OpenAI.Chat.ChatCompletionMessageParam[] = withToolTraceHistory(
+    effectiveHistory,
+    config.orchestrator?.toolTraceHistoryTurns ?? DEFAULT_TOOL_TRACE_HISTORY_TURNS
+  ).map((h) => ({
     role: h.role,
     content: truncateForContext(h.content ?? ""),
   }));
@@ -1043,10 +1024,8 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   ];
 
   let iterations = 0;
-  let transcriptToolCalls = 0;
   let codeReminderSent = false;
   let imageReminderSent = false;
-  let generateImageSucceededThisTurn = false;
   let imageToolChoiceForced = false;
   let phoneDialToolChoiceForced = false;
   let telephonyContextInjected = false;
@@ -1065,19 +1044,99 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   // Provenance init: per-session taint ledger (out-of-band, survives
   // summarization) OR the in-band marker scan of this user message.
   const trifectaState = initTrifectaState(sessionId, fullUserMessage, hasUntrustedInText);
-  /** Contents from read(uploads/output) cannot be passed to message(). Can be saved to memory upon request.*/
-  const sensitiveContents: string[] = [];
-  /** Contents from memory_search are only for replying to the user in chat, cannot be passed to message().*/
-  const memoryReturnedContents: string[] = [];
   const stripIfDisabled = (s: string | null) => stripReasoning(s);
+  // Tool execution lives in tool-dispatcher.ts; it reads and writes this state.
+  const dispatchState: ToolDispatchState = {
+    trifecta: trifectaState,
+    // Contents from read(uploads/output) cannot be passed to message(); can be saved to memory upon request.
+    sensitiveContents: [],
+    // Contents from memory_search are only for replying to the user in chat, never for message().
+    memoryReturnedContents: [],
+    transcriptToolCalls: 0,
+    generateImageSucceeded: false,
+    sidebarUpdated: false,
+    lastRunId: null,
+  };
+  const toolCtx: ToolDispatchContext = {
+    config,
+    client,
+    signal,
+    sessionId,
+    cacheId,
+    recognizedUser,
+    isSuperuser,
+    elevatedSession,
+    agentsDir,
+    transcript,
+    injectTelephonyContext,
+    onRunAgent,
+    onWriteAgent,
+    onSidebarUpdated,
+    onOpenBrowserUrl,
+    requestBrowserPageText,
+    requestHeadlessPageText,
+    browserPageTextFallback,
+  };
+
+  const nonNegative = (value: number | undefined, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  const toolResultMaxChars = nonNegative(config.orchestrator?.toolResultMaxChars, DEFAULT_TOOL_RESULT_MAX_CHARS);
+  const toolContextMaxChars = nonNegative(config.orchestrator?.toolContextMaxChars, DEFAULT_TOOL_CONTEXT_MAX_CHARS);
+  /** Tool calls of this turn in order: returned for storage and replayed into later prompts. */
+  const toolTrace: ToolTraceEntry[] = [];
+  const toolCallMeta = new Map<string, ToolCallMeta>();
+  /** Call ids of the latest iteration — never compacted, the model is answering them. */
+  let lastIterationCallIds = new Set<string>();
+  let toolSeq = 0;
+  let toolLimitReached = false;
+  /** UI callbacks must never break the turn. */
+  const emitToolEvent = (event: ToolEvent) => {
+    try {
+      onToolEvent?.(event);
+    } catch {
+      // ignore UI callback errors
+    }
+  };
+  const finishTurn = async (): Promise<OrchestratorResult> => {
+    let finalContent = fullAssistantContent || (lastContent ?? "");
+    finalContent = await finalizeHssAssistantContent(
+      sessionId,
+      cacheId,
+      finalContent,
+      messages,
+      client,
+      config,
+      stripIfDisabled,
+      signal
+    );
+    const parsed = filterLocalImageCellsWithoutTool(
+      filterMissingLocalImageCells(parseCellBlocks(finalContent), resolveAgentsDir(config)),
+      { generateImageSucceeded: dispatchState.generateImageSucceeded, imageIntent: !!imageIntent }
+    );
+    const { content: contentWithPlaceholders, cells } = parsed;
+    return {
+      content: cells.length > 0 ? contentWithPlaceholders : finalContent,
+      streamed: streamed || undefined,
+      lastRunId: dispatchState.lastRunId ?? undefined,
+      toolIterations: iterations,
+      ...(toolLimitReached && { toolLimitReached: true }),
+      ...(toolTrace.length > 0 && { tools: toolTrace }),
+      ...(cells.length > 0 && { cells }),
+      ...(summaryForHistory != null && summaryDropCount != null && { summaryForHistory, summaryDropCount }),
+      ...(summaryDropCount != null && { contextCompressed: summaryDropCount }),
+      sidebarUpdated: dispatchState.sidebarUpdated || undefined,
+    };
+  };
 
   while (iterations < maxIterations) {
     throwIfAborted(signal);
+    // Stay inside the context budget before paying for every earlier result again.
+    compactToolResults(messages, toolCallMeta, lastIterationCallIds, { maxTotalChars: toolContextMaxChars });
     const shouldForceImageTool =
       forceImageToolChoice &&
       imageIntent &&
       !imageToolChoiceForced &&
-      !generateImageSucceededThisTurn &&
+      !dispatchState.generateImageSucceeded &&
       !imageReminderSent;
     if (shouldForceImageTool) imageToolChoiceForced = true;
 
@@ -1132,6 +1191,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         details: { iteration: iterations + 1, maxIterations, tools: toolDetails },
       });
       const toolResults: { id: string; content: string }[] = [];
+      lastIterationCallIds = new Set(toolCalls.map((tc) => tc.id));
       for (const tc of toolCalls) {
         throwIfAborted(signal);
         let args: Record<string, unknown>;
@@ -1140,1159 +1200,40 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         } catch {
           args = {};
         }
-
-        if (tc.function?.name === "code_skill") {
-          const script = String(args.script ?? "");
-          const task = String(args.task ?? "");
-          try {
-            const result = await runCodeSkill(config, { script, task });
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok ? result.message : `Error: ${result.message}`,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({ id: tc.id!, content: `code_skill failed: ${msg}` });
-          }
-          continue;
+        const name = tc.function?.name ?? "?";
+        const traceArgs = argsForTrace(args);
+        const seq = toolSeq++;
+        emitToolEvent({ type: "start", seq, iteration: iterations, name, args: traceArgs });
+        const startedMs = Date.now();
+        let raw: string;
+        try {
+          raw = await dispatchToolCall(toolCtx, dispatchState, name, args);
+        } catch (err) {
+          throwIfAborted(signal);
+          // One broken tool must not throw away a long turn: report it and let the model go on.
+          raw = `Error: ${name} failed: ${err instanceof Error ? err.message : String(err)}`;
         }
-
-        if (tc.function?.name === "accept_skill") {
-          const runId = String(args.runId ?? "");
-          const candidateIndex = Number(args.candidateIndex);
-          const result = acceptSkill(
-            config,
-            runId,
-            Number.isFinite(candidateIndex) ? candidateIndex : -1
-          );
-          if (result.ok) onWriteAgent?.(String(args.script ?? ""), true);
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? result.message : `Error: ${result.message}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "write_agent") {
-          const script = String(args.script ?? "");
-          const content = String(args.content ?? "");
-          const result = writeAgent(config, { script, content });
-          onWriteAgent?.(script, result.ok);
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? result.message
-              : `Error: ${result.message}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "remember") {
-          const text = String(args.text ?? "");
-          const source = args.source === "internal" ? "internal" : "user";
-          const importance =
-            typeof args.importance === "number" ? clampImportance(args.importance, 0.5) : undefined;
-          const replaces = typeof args.replaces === "string" ? args.replaces.trim() : undefined;
-          try {
-            const result = await memoryWrite(
-              client,
-              config,
-              text,
-              source,
-              recognizedUser ?? undefined,
-              importance,
-              // Content saved during a trifecta-armed turn derives from
-              // untrusted context (strictest-label inheritance).
-              trifectaState.untrustedContent,
-              replaces ? { replaces, isSuperuser } : undefined
-            );
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok
-                ? replaces
-                  ? `Saved: ${result.id} (replaced ${replaces}; old version retired)`
-                  : `Saved: ${result.id}`
-                : `Error: ${result.reason ?? "unknown"}`,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({
-              id: tc.id!,
-              content: `Remember failed: ${msg}. Check out Ollama (embeddings) and Chroma.`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "memory_forget") {
-          const id = String(args.id ?? "").trim();
-          if (!id) {
-            toolResults.push({ id: tc.id!, content: "Error: memory_forget requires id" });
-            continue;
-          }
-          try {
-            const result = await memoryRetire(config, id, recognizedUser ? { userId: recognizedUser, isSuperuser } : undefined);
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok ? `Retired: ${id}` : `Error: ${result.reason ?? "unknown"}`,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({ id: tc.id!, content: `memory_forget failed: ${msg}` });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "memory_touch") {
-          const id = String(args.id ?? "").trim();
-          if (!id) {
-            toolResults.push({ id: tc.id!, content: "Error: memory_touch requires id" });
-            continue;
-          }
-          try {
-            const result = await memoryTouch(config, id, recognizedUser ? { userId: recognizedUser, isSuperuser } : undefined);
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok ? `Verified: ${id}` : `Error: ${result.reason ?? "unknown"}`,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({ id: tc.id!, content: `memory_touch failed: ${msg}` });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "chronicle_remember") {
-          const text = String(args.text ?? "");
-          const importance =
-            typeof args.importance === "number" ? clampImportance(args.importance, 0.7) : undefined;
-          try {
-            const result = await appendModelChronicleEntry(
-              sessionId ?? "anon",
-              cacheId,
-              text,
-              importance,
-              client,
-              config
-            );
-            auditLog(config, {
-              type: "hss_chronicle_remember",
-              sessionId: sessionId ?? "anon",
-              details: {
-                cacheId,
-                ok: result.ok,
-                id: result.id,
-                importance: importance ?? 0.7,
-                textLen: text.length,
-                reason: result.reason,
-              },
-            });
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok
-                ? `Chronicle saved${result.id ? `: ${result.id}` : ""}`
-                : `Error: ${result.reason ?? "unknown"}`,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({
-              id: tc.id!,
-              content: `chronicle_remember failed: ${msg}`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "chronicle_search") {
-          const query = String(args.query ?? "").trim();
-          const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 20) : 5;
-          if (!query) {
-            toolResults.push({ id: tc.id!, content: "Error: chronicle_search requires query" });
-            continue;
-          }
-          try {
-            const hits = await searchChronicleSession(
-              client,
-              config,
-              sessionId ?? "anon",
-              cacheId,
-              query,
-              limit
-            );
-            auditLog(config, {
-              type: "hss_chronicle_search",
-              sessionId: sessionId ?? "anon",
-              details: { cacheId, queryLen: query.length, hitCount: hits.length, limit },
-            });
-            const lines = hits.length
-              ? hits
-                  .map(
-                    (h, i) =>
-                      `[${i + 1}] (importance=${h.importance.toFixed(2)}, source=${h.source}, sim=${h.similarity.toFixed(3)}${h.pinned ? ", pinned" : ""}) ${formatDayLocal(h.timestamp)} · ${sanitizeForChroniclePrompt(h.context)}`
-                  )
-                  .join("\n\n")
-              : "No relevant chronicle entries in this session.";
-            toolResults.push({ id: tc.id!, content: lines });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({
-              id: tc.id!,
-              content: `chronicle_search failed: ${msg}`,
-            });
-          }
-          continue;
-        }
-
-        if (
-          tc.function?.name === "transcript_list" ||
-          tc.function?.name === "transcript_search" ||
-          tc.function?.name === "transcript_read"
-        ) {
-          if (!transcript) {
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: transcript tools unavailable (no chat database for this session)",
-            });
-            continue;
-          }
-          if (transcriptToolCalls >= TRANSCRIPT_MAX_TOOL_CALLS_PER_TURN) {
-            toolResults.push({
-              id: tc.id!,
-              content: `Error: transcript tool limit reached this turn (max ${TRANSCRIPT_MAX_TOOL_CALLS_PER_TURN}). Use results already fetched or ask the user.`,
-            });
-            continue;
-          }
-          transcriptToolCalls++;
-
-          if (tc.function?.name === "transcript_list") {
-            const afterId =
-              typeof args.afterId === "number" && Number.isFinite(args.afterId)
-                ? Math.max(0, Math.floor(args.afterId))
-                : undefined;
-            const limit =
-              typeof args.limit === "number" && args.limit > 0
-                ? Math.min(args.limit, TRANSCRIPT_LIST_MAX_LIMIT)
-                : TRANSCRIPT_LIST_DEFAULT_LIMIT;
-            try {
-              const page = transcript.list({ afterId, limit });
-              auditLog(config, {
-                type: "transcript_list",
-                sessionId: sessionId ?? "anon",
-                details: {
-                  afterId: afterId ?? 0,
-                  itemCount: page.items.length,
-                  totalCount: page.totalCount,
-                  nextAfterId: page.nextAfterId,
-                },
-              });
-              if (!page.items.length) {
-                toolResults.push({
-                  id: tc.id!,
-                  content:
-                    afterId != null && afterId > 0
-                      ? "No more transcript messages after this id."
-                      : "Transcript is empty for this chat.",
-                });
-                continue;
-              }
-              const lines = page.items
-                .map((item) => `${item.messageId} ${item.role} ts=${item.createdAt}: ${item.preview}`)
-                .join("\n");
-              const footer = [
-                `total=${page.totalCount}`,
-                page.nextAfterId != null ? `nextAfterId=${page.nextAfterId}` : "end",
-              ].join(", ");
-              toolResults.push({ id: tc.id!, content: `${lines}\n\n[${footer}]` });
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              toolResults.push({ id: tc.id!, content: `transcript_list failed: ${msg}` });
-            }
-            continue;
-          }
-
-          if (tc.function?.name === "transcript_search") {
-            const query = String(args.query ?? "").trim();
-            const limit =
-              typeof args.limit === "number" && args.limit > 0
-                ? Math.min(args.limit, TRANSCRIPT_SEARCH_MAX_LIMIT)
-                : TRANSCRIPT_SEARCH_DEFAULT_LIMIT;
-            if (!query) {
-              toolResults.push({ id: tc.id!, content: "Error: transcript_search requires query" });
-              continue;
-            }
-            try {
-              const hits = transcript.search(query, limit);
-              auditLog(config, {
-                type: "transcript_search",
-                sessionId: sessionId ?? "anon",
-                details: { queryLen: query.length, hitCount: hits.length, limit },
-              });
-              const lines = hits.length
-                ? hits
-                    .map(
-                      (h, i) =>
-                        `[${i + 1}] id=${h.messageId} role=${h.role} ts=${h.createdAt}\n${h.excerpt}`
-                    )
-                    .join("\n\n")
-                : "No transcript lines match this substring in the current chat.";
-              toolResults.push({ id: tc.id!, content: lines });
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              toolResults.push({ id: tc.id!, content: `transcript_search failed: ${msg}` });
-            }
-            continue;
-          }
-
-          const messageId =
-            typeof args.messageId === "number" && Number.isFinite(args.messageId)
-              ? Math.floor(args.messageId)
-              : undefined;
-          const fromId =
-            typeof args.fromId === "number" && Number.isFinite(args.fromId)
-              ? Math.floor(args.fromId)
-              : undefined;
-          const toId =
-            typeof args.toId === "number" && Number.isFinite(args.toId)
-              ? Math.floor(args.toId)
-              : undefined;
-          const readLimit =
-            typeof args.limit === "number" && Number.isFinite(args.limit)
-              ? Math.floor(args.limit)
-              : undefined;
-          const query = typeof args.query === "string" ? args.query.trim() : undefined;
-          const before =
-            typeof args.before === "number" && Number.isFinite(args.before)
-              ? Math.floor(args.before)
-              : undefined;
-          const after =
-            typeof args.after === "number" && Number.isFinite(args.after)
-              ? Math.floor(args.after)
-              : undefined;
-          if (fromId == null && messageId == null && !query) {
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: transcript_read requires fromId, messageId, or query",
-            });
-            continue;
-          }
-          try {
-            const result = transcript.read({
-              messageId,
-              fromId,
-              toId,
-              limit: readLimit,
-              query,
-              before,
-              after,
-            });
-            auditLog(config, {
-              type: "transcript_read",
-              sessionId: sessionId ?? "anon",
-              details: {
-                anchorMessageId: result.anchorMessageId,
-                fromId: result.fromId,
-                toId: result.toId,
-                messageCount: result.messages.length,
-                truncated: !!result.truncated,
-              },
-            });
-            if (!result.messages.length) {
-              toolResults.push({
-                id: tc.id!,
-                content:
-                  "No transcript messages in this id range. messageId is an internal DB id from transcript_list or [Transcript · list] — not turn order 1,2,3…. Copy ids from the list, then transcript_read(fromId, toId).",
-              });
-              continue;
-            }
-            const lines = result.messages
-              .map(
-                (m) =>
-                  `--- id=${m.messageId} role=${m.role} ts=${m.createdAt} ---\n${m.content}`
-              )
-              .join("\n\n");
-            const suffix = result.truncated ? "\n\n[truncated: output char limit]" : "";
-            toolResults.push({ id: tc.id!, content: lines + suffix });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({ id: tc.id!, content: `transcript_read failed: ${msg}` });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "memory_search") {
-          const query = String(args.query ?? "").trim();
-          const limit = typeof args.limit === "number" && args.limit > 0 ? Math.min(args.limit, 20) : 5;
-          if (!query) {
-            toolResults.push({ id: tc.id!, content: "Error: memory_search requires query" });
-            continue;
-          }
-          try {
-            const recallOpts = recognizedUser
-              ? { userId: recognizedUser, isSuperuser }
-              : undefined;
-            const { chunks } = await memoryRecall(client, config, query, limit, recallOpts);
-            if (chunks.some((c) => c.untrustedOrigin)) {
-              trifectaState.untrustedContent = true;
-              markUntrustedOrigin(sessionId ?? "");
-            }
-            for (const c of chunks) {
-              if (c.text && memoryReturnedContents.length < MAX_SENSITIVE_CHUNKS) {
-                const chunk = c.text.slice(0, MAX_SENSITIVE_CHUNK_BYTES);
-                if (chunk.length > 0) memoryReturnedContents.push(chunk);
-              }
-            }
-            const lines = chunks.length
-              ? chunks.map((c, i) => formatMemoryHit(c, i + 1)).join("\n\n")
-              : "No relevant chunks found.";
-            toolResults.push({ id: tc.id!, content: lines });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            toolResults.push({
-              id: tc.id!,
-              content: `Memory search failed: ${msg}. Check availability of Ollama (embeddings) and Chroma.`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "read") {
-          trifectaState.dataAccess = true;
-          const pathArg = String(args.path ?? "").trim();
-          if (!pathArg) {
-            toolResults.push({ id: tc.id!, content: "Error: read requires path" });
-            continue;
-          }
-          const enc = typeof args.encoding === "string" ? args.encoding : undefined;
-          const result = toolRead(config, pathArg, enc);
-          if (result.ok) {
-            auditLog(config, { type: "file_read", details: { path: pathArg } });
-            if (isPathUploadsOrOutput(pathArg, config) && result.content && sensitiveContents.length < MAX_SENSITIVE_CHUNKS) {
-              const chunk = result.content.slice(0, MAX_SENSITIVE_CHUNK_BYTES);
-              if (chunk.length > 0) sensitiveContents.push(chunk);
-            }
-          }
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? (result.content ?? "") : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "write") {
-          trifectaState.dataAccess = true;
-          const pathArg = String(args.path ?? "").trim();
-          const content = String(args.content ?? "");
-          if (!pathArg) {
-            toolResults.push({ id: tc.id!, content: "Error: write requires path" });
-            continue;
-          }
-          const enc = typeof args.encoding === "string" ? args.encoding : undefined;
-          const result = toolWrite(config, pathArg, content, enc);
-          if (result.ok)
-            auditLog(config, {
-              type: "file_write",
-              details: { path: pathArg, contentLength: Buffer.byteLength(content, "utf-8") },
-            });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? "Written." : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "edit") {
-          trifectaState.dataAccess = true;
-          const pathArg = String(args.path ?? "").trim();
-          const searchText = String(args.searchText ?? "");
-          const replaceText = String(args.replaceText ?? "");
-          if (!pathArg) {
-            toolResults.push({ id: tc.id!, content: "Error: edit requires path" });
-            continue;
-          }
-          const result = toolEdit(config, pathArg, searchText, replaceText);
-          if (result.ok)
-            auditLog(config, {
-              type: "file_edit",
-              details: {
-                path: pathArg,
-                searchLength: searchText.length,
-                replaceLength: replaceText.length,
-              },
-            });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? "Edited." : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "list_dir") {
-          trifectaState.dataAccess = true;
-          const pathArg = String(args.path ?? "").trim();
-          if (!pathArg) {
-            toolResults.push({ id: tc.id!, content: "Error: list_dir requires path" });
-            continue;
-          }
-          const result = toolListDir(config, pathArg);
-          if (result.ok) {
-            const list = (result.entries ?? []).join("\n");
-            toolResults.push({ id: tc.id!, content: list || "(empty)" });
-          } else {
-            toolResults.push({ id: tc.id!, content: `Error: ${result.error}` });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "search") {
-          const query = String(args.query ?? "").trim();
-          if (!query) {
-            toolResults.push({ id: tc.id!, content: "Error: search requires query" });
-            continue;
-          }
-          const wantedEngines = parseSearchEnginesArg(args.engines);
-
-          // Prefer headless SERP (no CSE/API, no W UI switch). Visible open_browser is opt-in.
-          // One engine at a time (ordered fallback) — never scrape several SERPs in one call.
-          if (requestHeadlessPageText) {
-            const engines = pickBrowserSearchEngines(config, wantedEngines);
-            type HeadlessPage = {
-              url?: string;
-              title?: string;
-              text: string;
-              truncated?: boolean;
-            };
-            let chosen: BrowserSearchEngine | null = null;
-            let page: HeadlessPage | null = null;
-            for (const engine of engines) {
-              const serpUrl = buildBrowserSearchUrlFromTemplate(engine.urlTemplate, query);
-              try {
-                page = await requestHeadlessPageText(serpUrl);
-                throwIfAborted(signal);
-              } catch {
-                throwIfAborted(signal);
-                page = null;
-              }
-              const text = (page?.text ?? "").trim();
-              if (!text) continue;
-              chosen = engine;
-              break;
-            }
-            if (chosen && page) {
-              trifectaState.untrustedContent = true;
-              const text = (page.text ?? "").trim();
-              markUntrustedOrigin(sessionId ?? "");
-              const body = [
-                `Search engine results for: ${query}`,
-                "",
-                `### ${chosen.name} (${chosen.id})`,
-                `URL: ${page.url?.trim() || buildBrowserSearchUrlFromTemplate(chosen.urlTemplate, query)}`,
-                page.title?.trim() ? `Title: ${page.title.trim()}` : "",
-                page.truncated ? "(truncated)" : "",
-                "",
-                text,
-              ]
-                .filter((line, i, arr) => line !== "" || (i > 0 && arr[i - 1] !== ""))
-                .join("\n")
-                .replace(/\n{3,}/g, "\n\n")
-                .trim();
-              const filtered = filterExternalResponse(body);
-              const wrapped = wrapExternalContent(filtered, {
-                source: "search",
-                sender: page.url?.trim() || undefined,
-                subject: chosen.id,
-              });
-              toolResults.push({ id: tc.id!, content: wrapped });
-              continue;
-            }
-          }
-
-          const result = await toolSearch(config, query, signal);
-          if (result.ok && result.content) {
-            trifectaState.untrustedContent = true;
-            const filtered = filterExternalResponse(result.content);
-            markUntrustedOrigin(sessionId ?? "");
-            const wrapped = wrapExternalContent(filtered, { source: "search" });
-            toolResults.push({ id: tc.id!, content: wrapped });
-          } else {
-            toolResults.push({
-              id: tc.id!,
-              content: `Error: ${result.error || "search failed (no browser SERP and no search API configured)"}`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "web_fetch") {
-          const url = String(args.url ?? "").trim();
-          if (!url) {
-            toolResults.push({ id: tc.id!, content: "Error: web_fetch requires url" });
-            continue;
-          }
-          if (urlContainsSensitive(url, sensitiveContents, memoryReturnedContents)) {
-            auditLog(config, { type: "message_policy_denied", details: { reason: "web_fetch_sensitive_url" } });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: URL must not contain content from uploads, output or internal memory.",
-            });
-            continue;
-          }
-          const result = await toolWebFetch(config, url, signal);
-          if (result.ok && result.content) {
-            trifectaState.untrustedContent = true;
-            markUntrustedOrigin(sessionId ?? "");
-          }
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? (result.content ?? "") : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "open_browser") {
-          const rawUrl = String(args.url ?? "").trim();
-          if (!rawUrl) {
-            toolResults.push({ id: tc.id!, content: "Error: open_browser requires url" });
-            continue;
-          }
-          let normalized = rawUrl;
-          try {
-            if (!/^https?:\/\//i.test(normalized)) normalized = `https://${normalized}`;
-            const u = new URL(normalized);
-            if (u.protocol !== "http:" && u.protocol !== "https:") {
-              toolResults.push({ id: tc.id!, content: "Error: only http and https URLs allowed" });
-              continue;
-            }
-            normalized = u.toString();
-          } catch {
-            toolResults.push({ id: tc.id!, content: "Error: invalid URL" });
-            continue;
-          }
-          if (urlContainsSensitive(normalized, sensitiveContents, memoryReturnedContents)) {
-            auditLog(config, { type: "message_policy_denied", details: { reason: "open_browser_sensitive_url" } });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: URL must not contain content from uploads, output or internal memory.",
-            });
-            continue;
-          }
-          onOpenBrowserUrl?.(normalized);
-          toolResults.push({
-            id: tc.id!,
-            content:
-              `Opened ${normalized} in the user's embedded browser. Call read_browser_page to get the rendered page text, or web_fetch("${normalized}") for a network fetch without the browser.`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "read_browser_page") {
-          let payload: {
-            url?: string;
-            title?: string;
-            text: string;
-            truncated?: boolean;
-          } | null = null;
-          if (requestBrowserPageText) {
-            try {
-              payload = await requestBrowserPageText();
-              throwIfAborted(signal);
-            } catch {
-              throwIfAborted(signal);
-              payload = null;
-            }
-          }
-          const fallback = (browserPageTextFallback ?? "").trim();
-          if ((!payload || !payload.text?.trim()) && fallback) {
-            payload = { text: fallback };
-          }
-          const text = (payload?.text ?? "").trim();
-          if (!text) {
-            toolResults.push({
-              id: tc.id!,
-              content:
-                "Error: no rendered page text (desktop browser unavailable, empty tab, or timeout). Use web_fetch(url) instead.",
-            });
-            continue;
-          }
-          const metaBits = [
-            payload?.title?.trim() ? `Title: ${payload.title.trim()}` : "",
-            payload?.url?.trim() ? `URL: ${payload.url.trim()}` : "",
-            payload?.truncated ? "(truncated)" : "",
-          ].filter(Boolean);
-          const body = metaBits.length ? `${metaBits.join("\n")}\n\n${text}` : text;
-          const filtered = filterExternalResponse(body);
-          trifectaState.untrustedContent = true;
-          markUntrustedOrigin(sessionId ?? "");
-          const wrapped = wrapExternalContent(filtered, {
-            source: "browser",
-            sender: payload?.url?.trim() || undefined,
-            subject: payload?.title?.trim() || undefined,
-          });
-          toolResults.push({ id: tc.id!, content: wrapped });
-          continue;
-        }
-
-        if (tc.function?.name === "generate_image") {
-          const prompt = typeof args.prompt === "string" ? args.prompt : "";
-          const result = await toolGenerateImage(config, prompt, {
-            negative_prompt: typeof args.negative_prompt === "string" ? args.negative_prompt : undefined,
-            steps: typeof args.steps === "number" ? args.steps : undefined,
-            width: typeof args.width === "number" ? args.width : undefined,
-            height: typeof args.height === "number" ? args.height : undefined,
-            guidance_scale: typeof args.guidance_scale === "number" ? args.guidance_scale : undefined,
-            image: typeof args.image === "string" ? args.image : undefined,
-            strength: typeof args.strength === "number" ? args.strength : undefined,
-          });
-          if (result.ok && result.imageUrl) {
-            generateImageSucceededThisTurn = true;
-            toolResults.push({
-              id: tc.id!,
-              content:
-                (result.warning ? `Warning: ${result.warning}\n` : "") +
-                `Image generated successfully.\n` +
-                `FILE_URL=${result.imageUrl}\n` +
-                `Copy this EXACT block into your reply (do not invent another filename):\n` +
-                `[CELL type="image"]${result.imageUrl}[/CELL]`,
-            });
-          } else {
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok
-                ? `Image saved to ${result.path}.`
-                : `Error: ${result.error}. Do NOT invent a /files/output/... URL. Tell the user generation failed.`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "phone_call") {
-          injectTelephonyContext();
-          const result = await toolPhoneCall(config, {
-            action: typeof args.action === "string" ? args.action : undefined,
-            to: typeof args.to === "string" ? args.to : undefined,
-            text: typeof args.text === "string" ? args.text : undefined,
-            seconds: typeof args.seconds === "number" ? args.seconds : undefined,
-            digits: typeof args.digits === "string" ? args.digits : undefined,
-            target: typeof args.target === "string" ? args.target : undefined,
-          });
-          toolResults.push({ id: tc.id!, content: result.content });
-          continue;
-        }
-
-        if (tc.function?.name === "read_secret") {
-          trifectaState.dataAccess = true;
-          const id = String(args.id ?? "").trim();
-          if (!id) {
-            toolResults.push({ id: tc.id!, content: "Error: read_secret requires id" });
-            continue;
-          }
-          const result = toolReadSecret(config, id);
-          // Register the secret value in the exfil guard: without this the raw
-          // secret could leave via message/webhook or a fetch URL unchallenged.
-          if (result.ok && result.value && sensitiveContents.length < MAX_SENSITIVE_CHUNKS) {
-            const chunk = result.value.slice(0, MAX_SENSITIVE_CHUNK_BYTES);
-            if (chunk.length > 0) sensitiveContents.push(chunk);
-          }
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? (result.value ?? "") : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "room_send") {
-          const text = String(args.text ?? "");
-          const result = await toolRoomSend(config, text);
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Posted to room${result.messageId ? ` (id ${result.messageId})` : ""}.`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "room_history") {
-          const result = await toolRoomHistory(config);
-          if (result.ok && result.content) {
-            trifectaState.untrustedContent = true;
-            const wrapped = wrapExternalContent(result.content, { source: "llm-room" });
-            markUntrustedOrigin(sessionId ?? "");
-            toolResults.push({ id: tc.id!, content: wrapped });
-          } else {
-            toolResults.push({
-              id: tc.id!,
-              content: result.ok ? "Room is empty." : `Error: ${result.error}`,
-            });
-          }
-          continue;
-        }
-
-        if (tc.function?.name === "message") {
-          const webhookUrl = String(args.webhookUrl ?? "").trim();
-          const body = String(args.body ?? "");
-          if (!webhookUrl) {
-            toolResults.push({ id: tc.id!, content: "Error: message requires webhookUrl" });
-            continue;
-          }
-          const containsUploadsOutput = sensitiveContents.some((chunk) => chunk.length > 0 && body.includes(chunk));
-          const containsMemory = memoryReturnedContents.some((chunk) => chunk.length > 0 && body.includes(chunk));
-          if (containsUploadsOutput) {
-            auditLog(config, { type: "message_policy_denied", details: { reason: "uploads_output_no_forward" } });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: sending content from uploads or output is not allowed.",
-            });
-            continue;
-          }
-          if (containsMemory) {
-            auditLog(config, { type: "message_policy_denied", details: { reason: "memory_no_forward" } });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: sending content from internal memory outside the chat is not allowed.",
-            });
-            continue;
-          }
-          const policy = config.tools?.message?.policy ?? "allow_one";
-          if (policy === "deny_bulk") {
-            auditLog(config, { type: "message_policy_denied", details: { reason: "policy_deny_bulk" } });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: message sending disabled by policy (deny_bulk).",
-            });
-            continue;
-          }
-          const lt = checkLethalTrifecta(config, trifectaState);
-          if (lt.shouldBlock) {
-            auditLog(config, {
-              type: "message_policy_denied",
-              details: { reason: "lethal_trifecta_block" },
-            });
-            toolResults.push({
-              id: tc.id!,
-              content: "Error: blocked by security policy (Lethal Trifecta).",
-            });
-            continue;
-          }
-          const result = await toolMessage(config, webhookUrl, body);
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? "Sent." : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_get") {
-          const snap = sidebarGetSnapshot(sessionId ?? "anon");
-          toolResults.push({
-            id: tc.id!,
-            content: JSON.stringify(snap),
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_set") {
-          const title = typeof args.title === "string" ? args.title : undefined;
-          const items = Array.isArray(args.items) ? args.items : [];
-          const result = sidebarSet(sessionId ?? "anon", { title, items });
-          if (result.ok) noteSidebarUpdated();
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Sidebar set (${result.state.items.length} items).\n${formatSidebarForPrompt(result.state)}`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_upsert") {
-          const title = typeof args.title === "string" ? args.title : undefined;
-          const items = Array.isArray(args.items) ? args.items : [];
-          const result = sidebarUpsert(sessionId ?? "anon", { title, items });
-          if (result.ok) noteSidebarUpdated();
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Sidebar upserted.\n${formatSidebarForPrompt(result.state)}`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_remove") {
-          const result = sidebarRemove(sessionId ?? "anon", { ids: args.ids });
-          if (result.ok) noteSidebarUpdated();
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Sidebar removed.\n${formatSidebarForPrompt(result.state)}`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_mark") {
-          const result = sidebarMark(sessionId ?? "anon", {
-            id: args.id,
-            status: args.status,
-          });
-          if (result.ok) noteSidebarUpdated();
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Sidebar marked.\n${formatSidebarForPrompt(result.state)}`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "sidebar_clear") {
-          const cleared = sidebarClear(sessionId ?? "anon");
-          noteSidebarUpdated();
-          toolResults.push({
-            id: tc.id!,
-            content: `Sidebar cleared.\n${formatSidebarForPrompt(cleared)}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "tasks_add") {
-          const text = String(args.text ?? "").trim();
-          const importance = typeof args.importance === "string" ? args.importance : undefined;
-          const urgency = typeof args.urgency === "string" ? args.urgency : undefined;
-          const result = tasksAdd(config, { text, importance, urgency });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Task #${result.id} added.`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "tasks_list") {
-          const importance = typeof args.importance === "string" ? args.importance : undefined;
-          const urgency = typeof args.urgency === "string" ? args.urgency : undefined;
-          const status =
-            typeof args.status === "string" && ["open", "done", "all"].includes(args.status)
-              ? (args.status as TasksListStatus)
-              : undefined;
-          const list = tasksList(config, { importance, urgency, status });
-          const lines = list.length
-            ? list.map(
-                (t) =>
-                  `#${t.id} ${t.done ? "✓" : "○"} ${t.text}| importance:${t.importance}, urgency:${t.urgency} (${t.createdAt})`
-              )
-            : ["No tasks."];
-          toolResults.push({
-            id: tc.id!,
-            content: lines.join("\n"),
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "tasks_done") {
-          const id = typeof args.id === "number" ? args.id : Number(args.id);
-          const result = tasksDone(config, { id });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? `Task #${id} marked completed.` : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "tasks_delete") {
-          const id = typeof args.id === "number" ? args.id : Number(args.id);
-          const result = tasksDelete(config, { id });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? `Task #${id} deleted.` : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "reminder_add") {
-          const taskId = typeof args.taskId === "number" ? args.taskId : Number(args.taskId);
-          const type = typeof args.type === "string" ? args.type : "daily";
-          const at = typeof args.at === "string" ? args.at : undefined;
-          const firstRun = typeof args.firstRun === "string" ? args.firstRun : undefined;
-          const result = reminderAdd(config, { taskId, type, at, firstRun });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok
-              ? `Reminder #${result.id} added (task #${taskId}, ${type}).`
-              : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name === "reminder_list") {
-          const taskId = typeof args.taskId === "number" ? args.taskId : undefined;
-          const list = reminderList(config, taskId != null ? { taskId } : undefined);
-          const lines = list.length
-            ? list.map((r) => `#${r.id} task #${r.taskId}: ${r.taskText} | ${r.type} → ${r.runAt}`)
-            : ["No reminders."];
-          toolResults.push({ id: tc.id!, content: lines.join("\n") });
-          continue;
-        }
-
-        if (tc.function?.name === "reminder_delete") {
-          const id = typeof args.id === "number" ? args.id : Number(args.id);
-          const result = reminderDelete(config, { id });
-          toolResults.push({
-            id: tc.id!,
-            content: result.ok ? `Reminder #${id} deleted.` : `Error: ${result.error}`,
-          });
-          continue;
-        }
-
-        if (tc.function?.name !== "run_agent") {
-          toolResults.push({
-            id: tc.id!,
-            content: `Error: unknown or unsupported tool: ${tc.function?.name ?? "?"}`,
-          });
-          continue;
-        }
-        const script = String(args.script ?? "");
-        if (!script) {
-          toolResults.push({ id: tc.id!, content: "Error: run_agent requires script" });
-          continue;
-        }
-        if (!isAgentEnabled(config, script)) {
-          toolResults.push({
-            id: tc.id!,
-            content: `Error: agent «${script}» is disabled. Enable it in Skills (cabinet) or choose another agent.`,
-          });
-          continue;
-        }
-        if (!isSkillRunAllowed(config, script)) {
-          toolResults.push({
-            id: tc.id!,
-            content: `Error: skill «${script}» is not in skills.allowlist, so it will not run. Tell the user to confirm it: they should send /allow ${script} in the chat (or add the skill to skills.allowlist in the config). Do not claim the skill has already run.`,
-          });
-          continue;
-        }
-
-        const runAgentArgs = {
-          script,
-          args: Array.isArray(args.args) ? (args.args as string[]) : undefined,
-          stdin: typeof args.stdin === "string" ? args.stdin : undefined,
-          env:
-            args.env && typeof args.env === "object" && !Array.isArray(args.env)
-              ? (args.env as Record<string, string>)
-              : undefined,
-        };
-
-        const stdinStr = runAgentArgs.stdin ?? "";
-        const argsStr = (runAgentArgs.args ?? []).join(" ");
-        const argsDecoded = (runAgentArgs.args ?? [])
-          .map((a) => {
-            try {
-              return decodeURIComponent(String(a));
-            } catch {
-              return String(a);
-            }
-          })
-          .join(" ");
-        const payloadForCheck = `${stdinStr}\n${argsStr}\n${argsDecoded}`;
-        const hasSensitiveInPayload =
-          sensitiveContents.some((chunk) => chunk.length > 0 && payloadForCheck.includes(chunk)) ||
-          memoryReturnedContents.some((chunk) => chunk.length > 0 && payloadForCheck.includes(chunk));
-        if (hasSensitiveInPayload) {
-          auditLog(config, { type: "message_policy_denied", details: { reason: "run_agent_no_sensitive_payload" } });
-          toolResults.push({
-            id: tc.id!,
-            content:
-              "Error: cannot pass content from uploads, output or internal memory into run_agent (stdin/args). Use agents only to bring information in.",
-          });
-          continue;
-        }
-
-        let scriptToRun = script;
-        let selectionVersionId: string | null = null;
-        let selectionTaskId: string | null = null;
-        if (config.agentSelection?.enabled) {
-          selectionTaskId = computeTaskId("run_agent", { script: runAgentArgs.script });
-          ensureTask(config, selectionTaskId, "run_agent", JSON.stringify({ script: runAgentArgs.script }));
-          ensureBootstrapVersionFromScript(config, selectionTaskId, agentsDir, runAgentArgs.script);
-          const pick = pickVersionForRun(config, selectionTaskId);
-          if (pick) {
-            const safeId = pick.versionId.replace(/[/\\]/g, "_");
-            const tempScript = `.run_${safeId}.js`;
-            const tempPath = resolve(agentsDir, tempScript);
-            try {
-              writeFileSync(tempPath, pick.code, "utf-8");
-              selectionVersionId = pick.versionId;
-              scriptToRun = tempScript;
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              selectionLog(config, "temp_write_failed", {
-                taskId: selectionTaskId,
-                versionId: pick.versionId,
-                script: runAgentArgs.script,
-                error: msg.slice(0, 200),
-              });
-              selectionVersionId = null;
-              selectionTaskId = null;
-            }
-          }
-        }
-        const uploadsDir = resolveAgentsUploadsDir(config);
-        const runOptions = {
-          ...runAgentArgs,
-          script: scriptToRun,
-          uploadsDir,
-          outputDir: resolve(agentsDir, "output"),
-        };
-        const useHost =
-          config.sandbox?.useDocker === false ||
-          (config.sandbox?.elevatedAllowed === true && elevatedSession);
-        const startMs = Date.now();
-        const runResult = useHost
-          ? await runAgentHost(config, runOptions)
-          : await runAgent(config, runOptions);
-        const durationMs = Date.now() - startMs;
-        if (selectionVersionId && selectionTaskId) {
-          const runId = await recordRunAndMaybeSelect(
-            config,
-            selectionTaskId,
-            selectionVersionId,
-            durationMs,
-            runResult.exitCode === 0,
-            runResult.exitCode !== 0 ? "exit_nonzero" : null
-          );
-          if (runId != null) lastRunId = runId;
-          const safeId = selectionVersionId.replace(/[/\\]/g, "_");
-          const tempPath = resolve(agentsDir, `.run_${safeId}.js`);
-          try {
-            unlinkSync(tempPath);
-          } catch {
-            // ignore
-          }
-        }
-        if (useHost && config.sandbox?.elevatedAllowed === true && elevatedSession) {
-          auditLog(config, { type: "elevated_use", details: { tool: "run_agent", script } });
-        }
-        auditLog(config, {
-          type: "run_agent_done",
-          details: {
-            script,
-            exitCode: runResult.exitCode,
-            durationMs,
-            elevated: config.sandbox?.elevatedAllowed === true && elevatedSession,
-            ...(selectionTaskId && { selectionTaskId }),
-            ...(selectionVersionId && { selectionVersionId }),
-            selectionUsed: Boolean(selectionVersionId),
-          },
+        const durationMs = Date.now() - startedMs;
+        const clipped = clipToolResult(raw, toolResultMaxChars);
+        const ok = !toolResultLooksLikeError(clipped.content);
+        // Stored and re-emitted copy: up to its own size from the raw result, secrets never leave the turn.
+        const traceResult = clipHeadTail(redactToolResult(name, raw), TOOL_TRACE_RESULT_MAX_CHARS).text;
+        const untrusted = ok && isUntrustedResultTool(name);
+        toolTrace.push({ seq, iteration: iterations, name, args: traceArgs, result: traceResult, ok, durationMs, untrusted });
+        toolCallMeta.set(tc.id!, { name, args: traceArgs });
+        emitToolEvent({
+          type: "end",
+          seq,
+          iteration: iterations,
+          name,
+          args: traceArgs,
+          result: traceResult,
+          ok,
+          durationMs,
+          untrusted,
+          clipped: clipped.clipped,
         });
-        onRunAgent?.(script, runResult.exitCode);
-        const rawContent = `stdout:\n${runResult.stdout}\n\nstderr:\n${runResult.stderr}\n\nexitCode: ${runResult.exitCode}`;
-        const filteredContent = filterExternalResponse(rawContent);
-        // Skill output is untrusted-origin content: the skill may have fetched
-        // arbitrary web data. It feeds the context and must arm the trifecta.
-        trifectaState.untrustedContent = true;
-        markUntrustedOrigin(sessionId ?? "");
-        const toolContent = wrapExternalContent(filteredContent, { source: "run_agent" });
-        toolResults.push({ id: tc.id!, content: toolContent });
+        toolResults.push({ id: tc.id!, content: clipped.content });
       }
       throwIfAborted(signal);
       messages.push(
@@ -2311,12 +1252,11 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       throwIfAborted(signal);
       continue;
     }
-    let finalContent = fullAssistantContent || (lastContent ?? "");
     if (
       retryIfImageWithoutTool &&
       imageToolAvailable &&
       !imageReminderSent &&
-      !generateImageSucceededThisTurn &&
+      !dispatchState.generateImageSucceeded &&
       iterations < maxIterations &&
       (imageIntent || looksLikeImageCellWithoutTool(lastContent) || looksLikeImageCellWithoutTool(fullAssistantContent))
     ) {
@@ -2349,59 +1289,36 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       dropLastAssistantPart();
       continue;
     }
-    finalContent = await finalizeHssAssistantContent(
-      sessionId,
-      cacheId,
-      finalContent,
-      messages,
-      client,
-      config,
-      stripIfDisabled,
-      signal
-    );
-    const agentsDirResolved = resolveAgentsDir(config);
-    const parsed = filterLocalImageCellsWithoutTool(
-      filterMissingLocalImageCells(parseCellBlocks(finalContent), agentsDirResolved),
-      { generateImageSucceeded: generateImageSucceededThisTurn, imageIntent: !!imageIntent }
-    );
-    const { content: contentWithPlaceholders, cells } = parsed;
-    return {
-      content: cells.length > 0 ? contentWithPlaceholders : finalContent,
-      streamed: streamed || undefined,
-      lastRunId: lastRunId ?? undefined,
-      toolIterations: iterations,
-      ...(cells.length > 0 && { cells }),
-      ...(summaryForHistory != null && summaryDropCount != null && { summaryForHistory, summaryDropCount }),
-      ...(summaryDropCount != null && { contextCompressed: summaryDropCount }),
-      sidebarUpdated: sidebarUpdated || undefined,
-    };
+    return finishTurn();
   }
-  let finalContent = fullAssistantContent || (lastContent ?? "");
-  finalContent = await finalizeHssAssistantContent(
-    sessionId,
-    cacheId,
-    finalContent,
-    messages,
-    client,
-    config,
-    stripIfDisabled,
-    signal
-  );
-  const agentsDirResolvedEnd = resolveAgentsDir(config);
-  const parsedEnd = filterLocalImageCellsWithoutTool(
-    filterMissingLocalImageCells(parseCellBlocks(finalContent), agentsDirResolvedEnd),
-    { generateImageSucceeded: generateImageSucceededThisTurn, imageIntent: !!imageIntent }
-  );
-  const { content: contentWithPlaceholders, cells } = parsedEnd;
-  return {
-    content: cells.length > 0 ? contentWithPlaceholders : finalContent,
-    error: "Max tool iterations reached",
-    streamed: streamed || undefined,
-    lastRunId: lastRunId ?? undefined,
-    toolIterations: iterations,
-    ...(cells.length > 0 && { cells }),
-    ...(summaryForHistory != null && summaryDropCount != null && { summaryForHistory, summaryDropCount }),
-    ...(summaryDropCount != null && { contextCompressed: summaryDropCount }),
-    sidebarUpdated: sidebarUpdated || undefined,
+
+  // The step budget is spent and the model still asked for tools. Take the
+  // tools away for one last call, so the turn ends with an answer instead of
+  // a pile of intermediate drafts and an error.
+  toolLimitReached = true;
+  auditLog(config, {
+    type: "tool_limit_reached",
+    details: { maxIterations, toolCalls: toolTrace.length },
+  });
+  messages.push({ role: "system", content: toolLimitMessage(maxIterations) });
+  const finalCallOptions = {
+    signal,
+    ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),
   };
+  let finalResponse: Awaited<ReturnType<typeof chat>>;
+  try {
+    finalResponse = await chat(client, config, messages, { ...finalCallOptions, toolChoice: "none" });
+  } catch (err) {
+    // Providers that reject tool_choice "none" get "auto"; tool calls in that answer are ignored.
+    throwIfAborted(signal);
+    auditLog(config, {
+      type: "tool_limit_final_retry",
+      details: { error: (err instanceof Error ? err.message : String(err)).slice(0, 200) },
+    });
+    finalResponse = await chat(client, config, messages, finalCallOptions);
+  }
+  throwIfAborted(signal);
+  lastContent = stripIfDisabled(finalResponse.content);
+  if (lastContent) fullAssistantContent += (fullAssistantContent ? "\n" : "") + lastContent;
+  return finishTurn();
 }

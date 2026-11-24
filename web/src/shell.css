@@ -1748,6 +1748,102 @@ body.layout-sidebar-resizing-body {
   margin-top: 2px;
 }
 
+/* ——— Tool steps of an assistant turn (listed while it runs, folded afterwards) ——— */
+.chat-tool-steps {
+  margin: 2px 0 6px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--text-3, #8b8b93);
+}
+
+.chat-tool-steps-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-tool-steps-toggle:hover {
+  color: var(--text-2, #c8c8d0);
+}
+
+.chat-tool-steps-chevron {
+  flex: none;
+}
+
+.chat-tool-steps-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-steps[data-running="true"] .chat-tool-steps-summary {
+  font-style: italic;
+}
+
+.chat-tool-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-tool-step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chat-tool-step-mark {
+  flex: none;
+  width: 1em;
+  text-align: center;
+}
+
+.chat-tool-step[data-status="ok"] .chat-tool-step-mark {
+  color: var(--success, #4caf7d);
+}
+
+.chat-tool-step[data-status="error"] .chat-tool-step-mark {
+  color: var(--danger, #e5534b);
+}
+
+.chat-tool-step-name {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.84rem;
+  color: var(--text-2, #c8c8d0);
+}
+
+.chat-tool-step-subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-tool-step-note {
+  flex: none;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-tool-limit-note {
+  margin: 0 0 6px;
+  font-size: 0.86rem;
+  color: var(--text-3, #8b8b93);
+}
+
 /* ——— Shared context menus (chat feed + composers) ——— */
 .claw-context-menu {
   position: fixed;

@@ -132,5 +132,33 @@ const USER = "user-fork-test";
   closeDb();
 }
 
+{
+  // Tool traces follow their turn's assistant message into a fork.
+  const repo = freshRepo();
+  repo.ensureChat("chat-src", USER, "Traced chat");
+  const tool = (name: string) => ({ seq: 0, iteration: 0, name, args: "{}", result: name, ok: true, durationMs: 1, untrusted: false });
+  repo.appendTurn("chat-src", USER, { content: "q1" }, { content: "a1" }, undefined, [tool("read")]);
+  repo.appendTurn("chat-src", USER, { content: "q2" }, { content: "a2" });
+  repo.appendTurn("chat-src", USER, { content: "q3" }, { content: "a3" }, undefined, [tool("search")]);
+  const names = (chatId: string) => repo.listToolCalls(chatId, USER).map((t) => [t.turnIndex, t.name]);
+  assert.deepEqual(names("chat-src"), [[0, "read"], [4, "search"]]);
+
+  repo.duplicateChat(USER, "chat-src", "chat-fork-full");
+  assert.deepEqual(names("chat-fork-full"), [[0, "read"], [4, "search"]]);
+
+  // Cut after the first answer: that turn's trace comes along, the later one does not.
+  repo.duplicateChat(USER, "chat-src", "chat-fork-cut", { upToCount: 3 });
+  assert.deepEqual(names("chat-fork-cut"), [[0, "read"]]);
+  // Cut inside the first turn (before its answer): the trace of a turn without its answer is dropped.
+  repo.duplicateChat(USER, "chat-src", "chat-fork-mid", { upToCount: 1 });
+  assert.deepEqual(names("chat-fork-mid"), []);
+
+  assert.deepEqual(repo.listToolCalls("chat-src", "someone-else"), [], "another user's chat exposes no trace");
+  assert.equal(repo.deleteChat("chat-fork-full", USER), true);
+  assert.deepEqual(names("chat-fork-full"), []);
+  assert.equal(names("chat-src").length, 2, "deleting the fork leaves the source trace intact");
+  closeDb();
+}
+
 for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 console.log("chat-repository-fork.test.ts: ok");

@@ -3,6 +3,57 @@
 All notable changes to claw2 are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Long agent turns survive a closed tab.** A chat turn now runs on the
+  gateway instead of inside the HTTP request that started it: a dropped
+  connection or a reloaded page no longer cancels it, and the web client
+  re-attaches to a running turn when its chat is opened (`GET /chat/attach`
+  replays the question, the text and the steps so far). The Stop button
+  stops it (`POST /chat/cancel`) and the turn keeps what it had done: its
+  message, the text printed so far and its tool steps.
+  `gateway.backgroundChatRuns: false` restores the previous behavior, where
+  a dropped connection cancels the turn. Streams send keepalive comments
+  (`gateway.chatKeepaliveMs`, default 15000) and a turn is cut off after
+  `gateway.chatRunMaxMs` (default 30 minutes).
+- **Tool steps are visible and remembered.** The reply lists the steps as they
+  happen — tool, main argument, outcome, duration — instead of a bare
+  "thinking" label. The steps are stored in the chats database (new
+  `tool_calls` table: arguments up to 2 KB, results up to 4 KB; `read_secret`
+  values are never stored) and returned by `/chat/history` as `tools`. The
+  last `orchestrator.toolTraceHistoryTurns` turns (default 3) get their steps
+  back in the prompt, so the model knows what was already tried; results that
+  came from the web, search or skills are not repeated there.
+- **`read` pages through large files** with `offset` (first line, 1-based)
+  and `limit` (lines), so a clipped result can be read to the end.
+
+### Changed
+
+- **Tool results stay inside a context budget.** Every result is clipped to
+  `orchestrator.toolResultMaxChars` (default 24000) and older results are
+  compacted once the turn's tool context exceeds
+  `orchestrator.toolContextMaxChars` (default 160000).
+- **The step limit ends with an answer.** When `maxToolIterations` is spent,
+  the model gets one last call without tools; the reply is marked
+  `toolLimitReached` instead of the turn failing with "Max tool iterations
+  reached".
+- **Stop really stops.** Cancelling a turn now kills a running skill (process
+  or container) and interrupts `code_skill` sub-agents and image generation,
+  instead of waiting for their timeout. The Stop button of the browser
+  extension cancels the turn on the gateway as well; closing its overlay only
+  detaches from the stream.
+- **A tool that crashes no longer fails the whole turn**: the model receives
+  the error and goes on. Tool execution moved from `runOrchestrator` into
+  `src/core/tool-dispatcher.ts`.
+
+### Fixed
+
+- **Stream headers are sent at once.** `writeHead` alone kept them until the
+  first frame, so a client saw no response while the model was thinking or a
+  tool was running.
+
 ## [0.2.17] - 2026-11-24
 
 ### Added

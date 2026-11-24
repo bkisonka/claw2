@@ -27,7 +27,11 @@ import {
   touchChat,
   exportChatClawCache,
   renameChat,
+  attachChatStream,
+  cancelChat,
+  type ToolStep,
 } from "../api/chat";
+import { upsertToolStep } from "../lib/toolSteps";
 import { browserSearch } from "../api/browserSearch";
 import { getConfig } from "../api/config";
 import { fetchProjectList, deleteProject, type ProjectListItemApi } from "../api/project";
@@ -127,6 +131,9 @@ export function AuthenticatedArea() {
   const [attentionChatIds, setAttentionChatIds] = useState<string[]>([]);
   /** AbortControllers for in-flight chats — survive Chat remount on switch. */
   const streamAbortRef = useRef(new Map<string, AbortController>());
+  /** Sessions whose running turn this page is following through /chat/attach. */
+  const attachingRef = useRef(new Set<string>());
+  const attachAbortRef = useRef(new Map<string, AbortController>());
   const historyLoadPromisesRef = useRef(new Map<string, Promise<void>>());
   const historyLastAccessedRef = useRef(new Map<string, number>());
   const mainSurfaceRef = useRef(mainSurface);
@@ -324,7 +331,14 @@ export function AuthenticatedArea() {
     if (streaming) {
       streamingSessionsRef.current.add(sessionId);
       historyLastAccessedRef.current.set(sessionId, Date.now());
-    } else streamingSessionsRef.current.delete(sessionId);
+    } else {
+      streamingSessionsRef.current.delete(sessionId);
+      // The chat list may still mark the chat as running from before this
+      // turn ended; dropping the mark keeps it from being "attached" again.
+      if (chatsRef.current.some((c) => c.id === sessionId && c.running)) {
+        setChats((prev) => prev.map((c) => (c.id === sessionId ? { ...c, running: undefined } : c)));
+      }
+    }
     setStreamingChatIds(Array.from(streamingSessionsRef.current));
   }, []);
 
@@ -350,14 +364,17 @@ export function AuthenticatedArea() {
 
   const handleAbortSession = useCallback((sessionId: string) => {
     if (!sessionId) return;
-    const ac = streamAbortRef.current.get(sessionId);
+    // The turn runs on the gateway, not in this page: ask it to stop, then
+    // drop the local stream — the original one or an attached one.
+    void cancelChat(sessionId);
+    const ac = streamAbortRef.current.get(sessionId) ?? attachAbortRef.current.get(sessionId);
+    streamAbortRef.current.delete(sessionId);
     if (!ac) return;
     try {
       ac.abort();
     } catch {
       /* ignore */
     }
-    streamAbortRef.current.delete(sessionId);
   }, []);
 
   /** Live transcript while streaming (keeps sidebar + re-opened chat in sync). */
@@ -655,6 +672,90 @@ export function AuthenticatedArea() {
     },
     [applyHistory]
   );
+
+  /**
+   * Follows a chat turn that is already running on the gateway — started
+   * before a reload or from another client. The stored history is loaded
+   * first; the running question and the answer so far are appended by hand,
+   * because the gateway stores a turn only when it ends.
+   */
+  const attachToRun = useCallback(
+    (sessionId: string) => {
+      if (!sessionId || attachingRef.current.has(sessionId) || streamAbortRef.current.has(sessionId)) return;
+      attachingRef.current.add(sessionId);
+      const controller = new AbortController();
+      attachAbortRef.current.set(sessionId, controller);
+      handleStreamingChange(sessionId, true);
+      let base: Message[] = chatsRef.current.find((c) => c.id === sessionId)?.messages ?? [];
+      let question = "";
+      let answer = "";
+      let steps: ToolStep[] = [];
+      let flushTimer: number | null = null;
+      let lastFlush = 0;
+      const push = () => {
+        flushTimer = null;
+        lastFlush = Date.now();
+        const live: Message[] = [];
+        if (question) live.push({ role: "user", content: question });
+        live.push({ role: "assistant", content: answer, tools: steps });
+        const messages = [...base, ...live];
+        const title = chatsRef.current.find((c) => c.id === sessionId)?.title ?? "";
+        handleStreamProgress(sessionId, title, messages);
+      };
+      // Text arrives token by token; the feed does not need every one of them.
+      const schedulePush = () => {
+        if (flushTimer != null) return;
+        flushTimer = window.setTimeout(push, Math.max(0, 120 - (Date.now() - lastFlush)));
+      };
+      void (async () => {
+        try {
+          const stored = await fetchChatHistory(sessionId).catch(() => null);
+          if (stored) base = stored as Message[];
+          await attachChatStream(
+            sessionId,
+            {
+              onSnapshot: (snapshot) => {
+                question = snapshot.userMessage;
+                answer = snapshot.content;
+                steps = snapshot.steps;
+                push();
+              },
+              onChunk: (text) => {
+                answer += text;
+                schedulePush();
+              },
+              onToolEvent: (step) => {
+                steps = upsertToolStep(steps, step);
+                push();
+              },
+            },
+            controller.signal
+          );
+        } catch {
+          // Stopped from here, or the connection dropped: the stored history is the truth.
+        } finally {
+          if (flushTimer != null) window.clearTimeout(flushTimer);
+          attachingRef.current.delete(sessionId);
+          attachAbortRef.current.delete(sessionId);
+          // A message sent from this page in the meantime owns the session's stream now.
+          if (!streamAbortRef.current.has(sessionId)) {
+            handleStreamingChange(sessionId, false);
+            handleStreamComplete(sessionId, { aborted: controller.signal.aborted });
+          }
+          void loadChatHistory(sessionId);
+        }
+      })();
+    },
+    [handleStreamingChange, handleStreamProgress, handleStreamComplete, loadChatHistory]
+  );
+
+  // A turn can be running on the gateway without this page knowing (started
+  // before a reload, or from another client): when its chat is opened, follow it.
+  useEffect(() => {
+    if (!canFetch || !currentChatId) return;
+    if (streamAbortRef.current.has(currentChatId) || attachingRef.current.has(currentChatId)) return;
+    if (chatsRef.current.find((c) => c.id === currentChatId)?.running) attachToRun(currentChatId);
+  }, [canFetch, currentChatId, chats, attachToRun]);
 
   // Sync list + open-chat history with PWA / other clients on the same gateway
   useEffect(() => {

@@ -61,3 +61,48 @@ describe("SQLite chat turn append", () => {
     expect(historyStores()).toEqual([[], []]);
   });
 });
+
+describe("SQLite chat tool trace", () => {
+  const tools = [
+    { seq: 0, iteration: 0, name: "read", args: '{"path":"a.txt"}', result: "first", ok: true, durationMs: 12, untrusted: false },
+    { seq: 1, iteration: 1, name: "web_fetch", args: '{"url":"https://x.test/"}', result: "page", ok: true, durationMs: 900, untrusted: true },
+  ];
+  const stored = (turnIndex: number, step: number, name: string) => ({
+    turnIndex,
+    step,
+    iteration: tools[step]!.iteration,
+    name,
+    args: tools[step]!.args,
+    result: tools[step]!.result,
+    ok: true,
+    untrusted: tools[step]!.untrusted,
+    durationMs: tools[step]!.durationMs,
+    createdAt: expect.any(Number),
+  });
+
+  it("stores a turn's tool calls in the same transaction and lists them by turn", () => {
+    repo.appendTurn(chatId, userId, user, assistant, undefined, tools);
+    // An interrupted call has no result, no status and no duration.
+    repo.appendTurn(chatId, userId, { content: "Second" }, { content: "Again" }, undefined, [
+      { seq: 0, iteration: 0, name: "run_agent", args: '{"script":"a.js"}' },
+    ]);
+    expect(repo.listToolCalls(chatId, userId)).toEqual([
+      stored(0, 0, "read"),
+      stored(0, 1, "web_fetch"),
+      { turnIndex: 2, step: 0, iteration: 0, name: "run_agent", args: '{"script":"a.js"}', result: null, ok: null, untrusted: false, durationMs: null, createdAt: expect.any(Number) },
+    ]);
+    expect(repo.listToolCalls(chatId, "another-user")).toEqual([]);
+  });
+
+  it("rolls the whole turn back when a tool call cannot be stored", () => {
+    repo.appendTurn(chatId, userId, user, assistant);
+    db.exec("CREATE TRIGGER reject_tool BEFORE INSERT ON tool_calls BEGIN SELECT RAISE(ABORT, 'test write failure'); END;");
+    const before = historyStores();
+
+    expect(() => repo.appendTurn(chatId, userId, user, assistant, recap, tools)).toThrow("test write failure");
+
+    expect(historyStores()).toEqual(before);
+    expect(repo.listToolCalls(chatId, userId)).toEqual([]);
+    expect(repo.getPromptContext(chatId, userId)).toBeNull();
+  });
+});

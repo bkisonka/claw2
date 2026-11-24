@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { sendMessageStream } from "./chat";
+import { attachChatStream, cancelChat, sendMessageStream } from "./chat";
 
 vi.mock("../config", () => ({ apiBase: "", apiKey: undefined }));
 vi.mock("../auth/storage", () => ({ getAuthHeaders: () => ({}) }));
@@ -93,5 +93,96 @@ describe("sendMessageStream terminal contract", () => {
     const reply = { sessionId: "s1", content: "Reply", userCells: [{ type: "image", content: "/files/a.png" }] };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(reply)));
     await expect(sendMessageStream("Question", undefined, undefined, vi.fn())).resolves.toMatchObject(reply);
+  });
+});
+
+describe("live tool steps", () => {
+  it("hands tool steps to onToolEvent without treating them as text", async () => {
+    const step = { type: "start", seq: 0, iteration: 0, name: "read", args: '{"path":"a.txt"}' };
+    const end = { ...step, type: "end", ok: true, durationMs: 4 };
+    mockStream([
+      encoder.encode(event({ toolEvent: step }) + event({ toolEvent: end }) + event({ done: true, sessionId: "s1", content: "ok", toolLimitReached: true })),
+    ]);
+    const onChunk = vi.fn();
+    const onToolEvent = vi.fn();
+
+    const result = await sendMessageStream(
+      "Question", "s1", undefined, onChunk,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, undefined, onToolEvent
+    );
+
+    expect(onToolEvent.mock.calls).toEqual([[step], [end]]);
+    expect(onChunk).not.toHaveBeenCalled();
+    expect(result.toolLimitReached).toBe(true);
+  });
+});
+
+describe("attachChatStream", () => {
+  const sse = (wire: string) =>
+    new Response(new TextEncoder().encode(wire), { headers: { "Content-Type": "text/event-stream" } });
+  const runningStep = { type: "start", seq: 0, iteration: 0, name: "read", args: "{}" };
+
+  it("replays the snapshot, follows the turn and ends with its terminal event", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      sse(
+        ": keepalive\n\n" +
+          event({ snapshot: { userMessage: "Q", content: "so far", steps: [runningStep] } }) +
+          event({ content: " more" }) +
+          event({ toolEvent: { ...runningStep, type: "end", ok: true, durationMs: 3 } }) +
+          event({ sidebarUpdated: true }) +
+          event({ done: true, sessionId: "s1", content: "so far more" })
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const onSnapshot = vi.fn();
+    const onChunk = vi.fn();
+    const onToolEvent = vi.fn();
+    const onSidebar = vi.fn();
+
+    const result = await attachChatStream("s1", { onSnapshot, onChunk, onToolEvent, onSidebarUpdated: onSidebar });
+
+    expect(fetchMock.mock.calls[0]![0]).toBe("/chat/attach?session_id=s1");
+    expect(onSnapshot).toHaveBeenCalledWith({ userMessage: "Q", content: "so far", steps: [runningStep] });
+    expect(onChunk.mock.calls).toEqual([[" more"]]);
+    expect(onToolEvent).toHaveBeenCalledWith({ ...runningStep, type: "end", ok: true, durationMs: 3 });
+    expect(onSidebar).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ sessionId: "s1", content: "so far more" });
+    expect(result.noRun).toBeUndefined();
+  });
+
+  it("answers noRun at once when nothing is running", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(event({ done: true, noRun: true, sessionId: "s1" }))));
+    const onChunk = vi.fn();
+    const result = await attachChatStream("s1", { onChunk, onToolEvent: vi.fn() });
+    expect(result.noRun).toBe(true);
+    expect(onChunk).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stream that ends without a terminal event", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(event({ content: "Partial" }))));
+    await expect(attachChatStream("s1", { onChunk: vi.fn(), onToolEvent: vi.fn() })).rejects.toThrow(/interrupted/i);
+  });
+});
+
+describe("cancelChat", () => {
+  it("posts the session to /chat/cancel and never throws", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await cancelChat("s1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/chat/cancel",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ sessionId: "s1" }), keepalive: true })
+    );
+    // An older gateway without the endpoint, or a dropped network: the caller drops its stream anyway.
+    fetchMock.mockRejectedValue(new Error("offline"));
+    await expect(cancelChat("s1")).resolves.toBeUndefined();
+    fetchMock.mockResolvedValue(new Response(null, { status: 404 }));
+    await expect(cancelChat("s1")).resolves.toBeUndefined();
+    // Nothing to cancel without a session.
+    await cancelChat("");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });

@@ -23,6 +23,24 @@ export interface ChatListItemApi {
   hasImages?: boolean;
   /** The chat has document attachments (sidebar indicator). */
   hasDocs?: boolean;
+  /** A chat turn is running on the gateway right now (it outlives the request that started it). */
+  running?: boolean;
+}
+
+/**
+ * One tool step of an assistant turn as the UI shows it. The result text
+ * stays on the gateway. `type` is present on live events only ("start", then
+ * "end"); history steps have no type and are always finished.
+ */
+export interface ToolStep {
+  type?: "start" | "end";
+  seq?: number;
+  name: string;
+  /** Short argument summary (path, query, script…). */
+  args: string;
+  /** Absent/null while the step is running or when the turn was interrupted before it returned. */
+  ok?: boolean | null;
+  durationMs?: number | null;
 }
 
 /** Message from GET /chat/history. */
@@ -32,6 +50,8 @@ export interface HistoryMessageApi {
   meta?: string;
   cells?: ChatCell[];
   attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
+  /** Tool steps of an assistant turn (name, arguments, outcome — no results). */
+  tools?: ToolStep[];
 }
 
 export interface ChatCell {
@@ -54,6 +74,10 @@ export interface ChatResponse {
   sidebarUpdated?: boolean;
   /** Dialogue Insights offer (ask/auto); not part of transcript until accepted. */
   insightOffer?: InsightOfferApi | null;
+  /** The tool step limit was spent; the answer covers what was done so far. */
+  toolLimitReached?: boolean;
+  /** attach: nothing was running for this chat — the stored history is the truth. */
+  noRun?: boolean;
 }
 
 export type InsightReasonCodeApi =
@@ -209,7 +233,9 @@ export async function sendMessageStream(
   onReadBrowserPage?: (requestId: string) => void,
   onHeadlessPageText?: (requestId: string, url: string) => void,
   /** Per-chat model override; omit/null = settings default. */
-  model?: string | null
+  model?: string | null,
+  /** Live tool steps of the turn (no result text). */
+  onToolEvent?: (step: ToolStep) => void
 ): Promise<ChatResponse> {
   const url = `${apiBase}/chat`;
   const headers: Record<string, string> = {
@@ -292,75 +318,171 @@ export async function sendMessageStream(
       contextCompressed: data.contextCompressed,
       sidebarUpdated: data.sidebarUpdated,
       insightOffer: data.insightOffer ?? null,
+      toolLimitReached: data.toolLimitReached,
     };
   }
+  return readChatStream(res, (data) => {
+    if (data.done === true) return terminalResponse(data, sessionId ?? "");
+    if (typeof data.content === "string") onChunk(data.content);
+    if (data.sidebarUpdated === true) onSidebarUpdated?.();
+    const openUrl = trimmedString(data.openBrowserUrl);
+    if (openUrl) onOpenBrowserUrl?.(openUrl);
+    const readReqId = trimmedString(data.readBrowserPage?.requestId);
+    if (readReqId) onReadBrowserPage?.(readReqId);
+    const headlessReqId = trimmedString(data.headlessPageText?.requestId);
+    const headlessUrl = trimmedString(data.headlessPageText?.url);
+    if (headlessReqId && headlessUrl) onHeadlessPageText?.(headlessReqId, headlessUrl);
+    if (data.toolEvent) onToolEvent?.(data.toolEvent);
+    return undefined;
+  });
+}
+
+const trimmedString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+
+type ChatStreamEvent = Partial<ChatResponse> & {
+  done?: boolean;
+  noRun?: boolean;
+  openBrowserUrl?: string;
+  readBrowserPage?: { requestId?: string };
+  headlessPageText?: { requestId?: string; url?: string };
+  toolEvent?: ToolStep;
+  snapshot?: { userMessage?: string; content?: string; steps?: ToolStep[] };
+};
+
+function terminalResponse(data: ChatStreamEvent, fallbackSessionId: string): ChatResponse {
+  return {
+    content: data.content ?? "",
+    sessionId: data.sessionId ?? fallbackSessionId,
+    error: data.error,
+    lastRunId: data.lastRunId,
+    cells: data.cells,
+    userCells: data.userCells,
+    contextCompressed: data.contextCompressed,
+    sidebarUpdated: data.sidebarUpdated,
+    insightOffer: data.insightOffer ?? null,
+    toolLimitReached: data.toolLimitReached,
+    noRun: data.noRun === true || undefined,
+  };
+}
+
+/**
+ * Reads a chat event stream up to its terminal JSON event. Every data event
+ * goes to `onEvent`; the stream is complete when it returns a ChatResponse.
+ * Keepalive comments (lines without "data:") and malformed events are
+ * skipped; EOF without a terminal event is an error — a broken stream is not
+ * a reply.
+ */
+function readChatStream(
+  res: Response,
+  onEvent: (event: ChatStreamEvent) => ChatResponse | undefined
+): Promise<ChatResponse> {
   const reader = res.body?.getReader();
-  if (!reader) throw new Error("No response body");
+  if (!reader) return Promise.reject(new Error("No response body"));
   const decoder = new TextDecoder();
   let buffer = "";
   let skipLeadingLf = false;
   let eventLines: string[] = [];
-  type ChatEvent = Partial<ChatResponse> & {
-    done?: boolean;
-    openBrowserUrl?: string;
-    readBrowserPage?: { requestId?: string };
-    headlessPageText?: { requestId?: string; url?: string };
-  };
-  const trimmedString = (value: unknown): string => typeof value === "string" ? value.trim() : "";
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) throw new Error("Chat stream interrupted before a final response");
-      const text = decoder.decode(value, { stream: true });
-      if (!text) continue;
-      buffer += skipLeadingLf && text.startsWith("\n") ? text.slice(1) : text;
-      // SSE permits LF, CRLF, or CR, including CRLF split across network chunks.
-      skipLeadingLf = text.endsWith("\r");
-      const lines = buffer.split(/\r\n|\r|\n/);
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.startsWith("data:")) {
-          eventLines.push(line.slice(5).replace(/^ /, ""));
+  return (async () => {
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) throw new Error("Chat stream interrupted before a final response");
+        const text = decoder.decode(value, { stream: true });
+        if (!text) continue;
+        buffer += skipLeadingLf && text.startsWith("\n") ? text.slice(1) : text;
+        // SSE permits LF, CRLF, or CR, including CRLF split across network chunks.
+        skipLeadingLf = text.endsWith("\r");
+        const lines = buffer.split(/\r\n|\r|\n/);
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.startsWith("data:")) {
+            eventLines.push(line.slice(5).replace(/^ /, ""));
+          }
+          if (line !== "" || !eventLines.length) continue;
+          const raw = eventLines.join("\n");
+          eventLines = [];
+          let data: ChatStreamEvent;
+          try {
+            data = JSON.parse(raw) as ChatStreamEvent;
+          } catch {
+            // Ignore malformed events and the legacy [DONE] marker. A complete JSON terminal is required.
+            continue;
+          }
+          if (!data || typeof data !== "object") continue;
+          const result = onEvent(data);
+          if (result) return result;
         }
-        if (line !== "" || !eventLines.length) continue;
-        const raw = eventLines.join("\n");
-        eventLines = [];
-        let data: ChatEvent;
-        try {
-          data = JSON.parse(raw) as ChatEvent;
-        } catch {
-          // Ignore malformed events and the legacy [DONE] marker. A complete JSON terminal is required.
-          continue;
-        }
-        if (!data || typeof data !== "object") continue;
-        if (data.done === true) {
-          return {
-            content: data.content ?? "",
-            sessionId: data.sessionId ?? sessionId ?? "",
-            error: data.error,
-            lastRunId: data.lastRunId,
-            cells: data.cells,
-            userCells: data.userCells,
-            contextCompressed: data.contextCompressed,
-            sidebarUpdated: data.sidebarUpdated,
-            insightOffer: data.insightOffer ?? null,
-          };
-        }
-        if (typeof data.content === "string") onChunk(data.content);
-        if (data.sidebarUpdated === true) onSidebarUpdated?.();
-        const openUrl = trimmedString(data.openBrowserUrl);
-        if (openUrl) onOpenBrowserUrl?.(openUrl);
-        const readReqId = trimmedString(data.readBrowserPage?.requestId);
-        if (readReqId) onReadBrowserPage?.(readReqId);
-        const headlessReqId = trimmedString(data.headlessPageText?.requestId);
-        const headlessUrl = trimmedString(data.headlessPageText?.url);
-        if (headlessReqId && headlessUrl) onHeadlessPageText?.(headlessReqId, headlessUrl);
       }
+    } finally {
+      // The terminal event, not EOF, completes the reply; stop consuming once it arrives.
+      void reader.cancel().catch(() => {});
+      reader.releaseLock();
     }
-  } finally {
-    // The terminal event, not EOF, completes the reply; stop consuming once it arrives.
-    void reader.cancel().catch(() => {});
-    reader.releaseLock();
+  })();
+}
+
+export interface AttachChatHandlers {
+  /** What happened before this client connected: the question, the text and the steps so far. */
+  onSnapshot?: (snapshot: { userMessage: string; content: string; steps: ToolStep[] }) => void;
+  onChunk: (text: string) => void;
+  onToolEvent: (step: ToolStep) => void;
+  onSidebarUpdated?: () => void;
+  onOpenBrowserUrl?: (url: string) => void;
+}
+
+/**
+ * Follows a chat turn that is already running on the gateway — started before
+ * a reload or from another client. Resolves with the same terminal event the
+ * original stream gets, or with `noRun` when nothing was running.
+ */
+export async function attachChatStream(
+  sessionId: string,
+  handlers: AttachChatHandlers,
+  signal?: AbortSignal
+): Promise<ChatResponse> {
+  const res = await fetch(`${apiBase}/chat/attach?session_id=${encodeURIComponent(sessionId)}`, {
+    headers: chatHeaders(),
+    signal,
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || `HTTP ${res.status}`);
+  }
+  return readChatStream(res, (data) => {
+    if (data.done === true) return terminalResponse(data, sessionId);
+    if (data.snapshot) {
+      handlers.onSnapshot?.({
+        userMessage: data.snapshot.userMessage ?? "",
+        content: data.snapshot.content ?? "",
+        steps: data.snapshot.steps ?? [],
+      });
+    }
+    if (typeof data.content === "string") handlers.onChunk(data.content);
+    if (data.toolEvent) handlers.onToolEvent(data.toolEvent);
+    if (data.sidebarUpdated === true) handlers.onSidebarUpdated?.();
+    const openUrl = trimmedString(data.openBrowserUrl);
+    if (openUrl) handlers.onOpenBrowserUrl?.(openUrl);
+    return undefined;
+  });
+}
+
+/**
+ * Asks the gateway to stop the running turn of a chat. Best effort: an older
+ * gateway without the endpoint still stops the turn when the stream is
+ * dropped locally. `keepalive` lets the request outlive the page.
+ */
+export async function cancelChat(sessionId: string): Promise<void> {
+  if (!sessionId) return;
+  try {
+    const res = await fetch(`${apiBase}/chat/cancel`, {
+      method: "POST",
+      headers: chatHeaders(),
+      body: JSON.stringify({ sessionId }),
+      keepalive: true,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch {
+    // The local stream is dropped regardless; nothing else to do here.
   }
 }
 

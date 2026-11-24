@@ -77,6 +77,29 @@ CREATE TABLE IF NOT EXISTS transcript_messages (
 
 CREATE INDEX IF NOT EXISTS idx_transcript_chat_id ON transcript_messages(chat_id, id);
 
+-- Tool calls the orchestrator made during a chat turn (one row per call; args
+-- and result are clipped, secret values are never stored). A turn is tied to
+-- its user message by turn_index: the 0-based position of that message among
+-- the chat's messages. Message ids are not stable (replaceMessages re-creates
+-- rows); the position is.
+CREATE TABLE IF NOT EXISTS tool_calls (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id TEXT NOT NULL,
+  turn_index INTEGER NOT NULL,
+  step INTEGER NOT NULL,
+  iteration INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  args TEXT NOT NULL DEFAULT '',
+  result TEXT,
+  ok INTEGER,
+  untrusted INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (chat_id) REFERENCES chats(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_calls_chat ON tool_calls(chat_id, turn_index, step);
+
 -- Dialogue Insights: accept/dismiss meta (no full insight text)
 CREATE TABLE IF NOT EXISTS insight_events (
   id TEXT PRIMARY KEY,

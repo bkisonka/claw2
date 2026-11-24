@@ -41,8 +41,8 @@ export function isPromptSummaryStub(msg: HistoryMsg | undefined): boolean {
  * Pull a leading recap stub out of history so it can go into the system prompt
  * instead of remaining as a fake user/assistant turn.
  */
-export function peelPromptSummary(history: HistoryMsg[]): {
-  history: HistoryMsg[];
+export function peelPromptSummary<T extends HistoryMsg>(history: T[]): {
+  history: T[];
   summaryBlock: string | null;
 } {
   if (!history.length || !isPromptSummaryStub(history[0])) {
@@ -59,20 +59,21 @@ export function peelPromptSummary(history: HistoryMsg[]): {
  * Attach cached summary as a peelable leading stub (user role — never assistant).
  * Orchestrator must call peelPromptSummary and move it into the system prompt.
  */
-export function applyPromptContext(fullHistory: HistoryMsg[], ctx: PromptContext | null | undefined): HistoryMsg[] {
+export function applyPromptContext<T extends HistoryMsg>(
+  fullHistory: T[],
+  ctx: PromptContext | null | undefined
+): T[] {
   if (!ctx?.summary?.trim() || !(ctx.coveredCount > 0)) return fullHistory;
   const covered = Math.min(ctx.coveredCount, fullHistory.length);
   if (covered <= 0) return fullHistory;
-  return [
-    { role: "user", content: `${PROMPT_SUMMARY_PREFIX}${ctx.summary}` },
-    ...fullHistory.slice(covered),
-  ];
+  const stub: HistoryMsg = { role: "user", content: `${PROMPT_SUMMARY_PREFIX}${ctx.summary}` };
+  return [stub as T, ...fullHistory.slice(covered)];
 }
 
 /**
  * Length limit for prompt: save stub summary (if any) + tail.
  */
-export function limitHistoryForPrompt(history: HistoryMsg[], maxMessages: number): HistoryMsg[] {
+export function limitHistoryForPrompt<T extends HistoryMsg>(history: T[], maxMessages: number): T[] {
   if (maxMessages <= 0 || history.length <= maxMessages) return history;
   if (isPromptSummaryStub(history[0])) {
     if (maxMessages === 1) return [history[0]!];

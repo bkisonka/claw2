@@ -13,6 +13,7 @@ import { copyFileSync, existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join, resolve, relative } from "node:path";
 import type { Claw2Config } from "../config/types.js";
+import { throwIfAborted } from "../core/abort.js";
 import {
   SKILL_EGRESS_NETWORK as EGRESS_NET,
   SIDECAR_UPSTREAM_NETWORK as EGRESS_UPSTREAM_NET,
@@ -580,11 +581,14 @@ export function isDockerAvailable(): { ok: boolean; detail?: string } {
  * Used when sandbox.useDocker === false (desktop default) or elevated session.
  * With --permission (+ optional sandbox.hostFs); network allowed; without child_process.
  * Env: only PATH and explicitly passed options.env (not the whole process.env).
+ * An aborted `signal` kills the skill process and resolves with exitCode -1.
  */
 export async function runAgentHost(
   config: Claw2Config,
-  options: RunAgentOptions
+  options: RunAgentOptions,
+  signal?: AbortSignal
 ): Promise<RunAgentResult> {
+  throwIfAborted(signal);
   const agentsDir = resolve(config.agentsDir ?? "agents");
   const outputDir = options.outputDir ?? resolve(agentsDir, "output");
   const timeoutMs = config.sandbox?.timeoutMs ?? 60_000;
@@ -658,6 +662,7 @@ export async function runAgentHost(
         exitCode: -1,
       };
     }
+    throwIfAborted(signal);
   }
 
   return new Promise((resolvePromise, rejectPromise) => {
@@ -692,32 +697,47 @@ export async function runAgentHost(
     const settle = (result: RunAgentResult) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
       resolvePromise(result);
     };
+    const stdoutText = () =>
+      Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : "");
+    const stderrText = () => Buffer.concat(errChunks).toString("utf-8");
     const timeout = setTimeout(() => {
       proc.kill("SIGKILL");
       settle({
-        stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
-        stderr: Buffer.concat(errChunks).toString("utf-8") + "\n[timeout]\n",
+        stdout: stdoutText(),
+        stderr: `${stderrText()}\n[timeout]\n`,
         exitCode: -1,
       });
     }, timeoutMs);
+    // Cancellation takes the same road as the timeout: the skill process is
+    // killed, not left running until its own deadline.
+    const onAbort = () => {
+      proc.kill("SIGKILL");
+      settle({
+        stdout: stdoutText(),
+        stderr: `${stderrText()}\n[aborted]\n`,
+        exitCode: -1,
+      });
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     if (options.stdin !== undefined) proc.stdin?.end(options.stdin, "utf-8");
     else proc.stdin?.end();
     proc.on("error", (err) => {
-      clearTimeout(timeout);
-      if (!settled) {
-        settled = true;
-        rejectPromise(err);
-      }
-    });
-    proc.on("close", (code, signal) => {
-      clearTimeout(timeout);
       if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      rejectPromise(err);
+    });
+    proc.on("close", (code, signalName) => {
       settle({
-        stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
-        stderr: Buffer.concat(errChunks).toString("utf-8"),
-        exitCode: code ?? (signal ? -1 : 0),
+        stdout: stdoutText(),
+        stderr: stderrText(),
+        exitCode: code ?? (signalName ? -1 : 0),
       });
     });
   });
@@ -725,11 +745,14 @@ export async function runAgentHost(
 
 /**
  * Runs a script in a container. Disk writing is only allowed in /app/output (agents/output on the host).
+ * An aborted `signal` kills the container and resolves with exitCode -1.
  */
 export async function runAgent(
   config: Claw2Config,
-  options: RunAgentOptions
+  options: RunAgentOptions,
+  signal?: AbortSignal
 ): Promise<RunAgentResult> {
+  throwIfAborted(signal);
   const docker = isDockerAvailable();
   if (!docker.ok) {
     return {
@@ -775,6 +798,7 @@ export async function runAgent(
   let egressNodeArgs: string[] = [];
   if (egressMode === "guard") {
     const prep = await prepareDockerEgress(config);
+    throwIfAborted(signal);
     if (!prep.ok) {
       return {
         stdout: "",
@@ -893,13 +917,16 @@ export async function runAgent(
     const settle = (result: RunAgentResult) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
       resolvePromise(result);
     };
 
-    const timeout = setTimeout(() => {
-      // Kill by name first: `docker run --rm -i` keeps the container running
-      // when only the CLI client dies, so SIGKILL to the CLI is not enough
-      // for an infinite skill.
+    // Kill by name first: `docker run --rm -i` keeps the container running
+    // when only the CLI client dies, so SIGKILL to the CLI is not enough
+    // for an infinite skill. Cancellation takes the same road as the timeout:
+    // the container is killed, not left running until its own deadline.
+    const stop = (mark: "timeout" | "aborted") => {
       try {
         spawnSync("docker", ["kill", containerName], { timeout: 10_000 });
       } catch {
@@ -907,39 +934,40 @@ export async function runAgent(
       }
       proc.kill("SIGKILL");
       settle({
-        stdout:
-          Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
-        stderr: Buffer.concat(errChunks).toString("utf-8") + "\n[timeout]\n",
+        stdout: Buffer.concat(chunks).toString("utf-8") + (truncated ? "\n[output truncated]\n" : ""),
+        stderr: Buffer.concat(errChunks).toString("utf-8") + `\n[${mark}]\n`,
         exitCode: -1,
       });
-    }, timeoutMs);
+    };
+    const timeout = setTimeout(() => stop("timeout"), timeoutMs);
+    const onAbort = () => stop("aborted");
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
 
     if (options.stdin !== undefined) proc.stdin?.end(options.stdin, "utf-8");
     else proc.stdin?.end();
 
     proc.on("error", (err: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
-      if (!settled) {
-        settled = true;
-        if (err?.code === "ENOENT") {
-          resolvePromise({
-            stdout: "",
-            stderr: dockerUnavailableMessage("docker not found"),
-            exitCode: -1,
-          });
-        } else {
-          rejectPromise(err);
-        }
+      signal?.removeEventListener("abort", onAbort);
+      if (err?.code === "ENOENT") {
+        resolvePromise({
+          stdout: "",
+          stderr: dockerUnavailableMessage("docker not found"),
+          exitCode: -1,
+        });
+      } else {
+        rejectPromise(err);
       }
     });
 
-    proc.on("close", (code, signal) => {
-      clearTimeout(timeout);
-      if (settled) return;
+    proc.on("close", (code, signalName) => {
       settle({
         stdout: Buffer.concat(chunks).toString("utf-8"),
         stderr: Buffer.concat(errChunks).toString("utf-8"),
-        exitCode: code ?? (signal ? -1 : 0),
+        exitCode: code ?? (signalName ? -1 : 0),
       });
     });
   });

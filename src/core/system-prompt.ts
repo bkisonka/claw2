@@ -88,7 +88,7 @@ const CODE_IN_CHAT_FINAL = `Final reminder — code vs skills: If the latest use
 
 const FS_TOOLS_DESCRIPTION = `Tools for working with files (agents/*.js, agents/output, agents/uploads and allowlist; access to .env, .ssh is prohibited):
 - list_dir(path) — list of names (including list_dir("agents") for scripts, agents/output, agents/uploads).
-- read(path, encoding?) — read the file. encoding: utf-8 (default) or base64.
+- read(path, encoding?, offset?, limit?) — read the file. encoding: utf-8 (default) or base64. A long file comes back clipped: page through it with offset (first line, 1-based) and limit (number of lines).
 - write(path, content, encoding?) — write the file. Don't use write for a new skill instead of a directory; new skill - only with explicit permission via code_skill/write_agent.
 - edit(path, searchText, replaceText) - spot edit of an existing file (including skill, if the user asked to fix it).
 If access is denied, "path not allowed" is returned.`;

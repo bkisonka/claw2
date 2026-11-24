@@ -5,7 +5,7 @@ import { memo, useState, useRef, useEffect, useCallback, useMemo, type PointerEv
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { sendMessageStream, readFileAsBase64, deleteChatImage, downloadChatFile, acceptInsightOffer, dismissInsightOffer, fetchIdleInsightOffer, postBrowserPageText, type DocumentToSend, type ChatCell, type ChatPageContextPayload, type InsightOfferApi, type ClientInsightContextPayload } from "../api/chat";
+import { sendMessageStream, readFileAsBase64, deleteChatImage, downloadChatFile, acceptInsightOffer, dismissInsightOffer, fetchIdleInsightOffer, postBrowserPageText, type DocumentToSend, type ChatCell, type ChatPageContextPayload, type InsightOfferApi, type ClientInsightContextPayload, type ToolStep } from "../api/chat";
 import { InsightCard, InsightOfferCard } from "./InsightCards";
 import { getConfig } from "../api/config";
 import { makeChatTitle } from "../store/chatList";
@@ -57,6 +57,8 @@ import {
   type ContextMenuState,
 } from "./ContextMenu";
 import { ChatWorkingIndicator } from "./ChatWorkingIndicator";
+import { ChatToolSteps } from "./ChatToolSteps";
+import { upsertToolStep } from "../lib/toolSteps";
 import { CodeBlock, guessCodeLanguage, looksLikeCode } from "./CodeBlock";
 import { IconDownload, IconSpark, IconTrash, IconExpand } from "./icons";
 import { ImageLightbox } from "./ImageLightbox";
@@ -415,6 +417,10 @@ export interface Message {
   at?: string;
   attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
   cells?: ChatCell[];
+  /** Tool steps of an assistant turn (live while it streams, from the history afterwards). */
+  tools?: ToolStep[];
+  /** The tool step limit was spent before this answer. */
+  toolLimitReached?: boolean;
 }
 
 export interface ChatProps {
@@ -1309,6 +1315,16 @@ export function Chat({
       const inject = insightInjectRef.current;
       insightInjectRef.current = null;
       lastUserBriefRef.current = text;
+      /** A tool step started or finished: it joins the streaming reply as a step, never as text. */
+      const applyToolEvent = (step: ToolStep) => {
+        const next = [...streamTranscript];
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return;
+        next[next.length - 1] = { ...last, tools: upsertToolStep(last.tools ?? [], step) };
+        streamTranscript = next;
+        applyStreamUi(next, true);
+        pushProgress(next);
+      };
       const res = await sendMessageStream(
         text || t("chat.seeAttached"),
         streamSessionId || undefined,
@@ -1396,7 +1412,8 @@ export function Chat({
             )
             .catch(() => postBrowserPageText({ requestId, text: "" }));
         },
-        chatModelRef.current
+        chatModelRef.current,
+        applyToolEvent
       );
       if (replyWithVoice && !ttsAbortedRef.current && mountedRef.current && stillOnStreamSession()) {
         flushTtsBuffer();
@@ -1434,6 +1451,7 @@ export function Chat({
             ...last,
             content: resolved.content,
             cells: resolved.cells.length > 0 ? resolved.cells : res.cells,
+            ...(res.toolLimitReached && { toolLimitReached: true }),
           };
         }
         streamTranscript = next;
@@ -1857,10 +1875,13 @@ export function Chat({
               {(() => {
                 const isStreamingAssistant =
                   busy && i === messages.length - 1 && msg.role === "assistant";
+                const toolSteps = msg.role === "assistant" ? msg.tools : undefined;
+                const hasToolSteps = !!toolSteps?.length;
                 const assistantEmpty =
                   msg.role === "assistant" &&
                   !(displayContent || "").trim() &&
-                  displayCells.length === 0;
+                  displayCells.length === 0 &&
+                  !hasToolSteps;
                 if (assistantEmpty && isStreamingAssistant) {
                   return (
                     <div className="chat-msg-content">
@@ -1868,17 +1889,19 @@ export function Chat({
                     </div>
                   );
                 }
-                if (
-                  !(
-                    displayContent ||
-                    isStreamingAssistant ||
-                    userHasImageCells
-                  )
-                ) {
+                if (!(displayContent || isStreamingAssistant || userHasImageCells || hasToolSteps)) {
                   return null;
                 }
                 return (
                   <>
+                {hasToolSteps && toolSteps ? (
+                  <>
+                    <ChatToolSteps steps={toolSteps} running={isStreamingAssistant} />
+                    {msg.toolLimitReached ? (
+                      <p className="chat-tool-limit-note">{t("chat.toolLimitReached")}</p>
+                    ) : null}
+                  </>
+                ) : null}
                 {msg.role === "assistant" && displayCells.length > 0 ? (
                   <div className="chat-msg-content chat-msg-content--with-cells">
                     {renderCellSegments(

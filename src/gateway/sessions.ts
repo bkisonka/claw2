@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Vitaliy Bondar
 
 import { randomBytes } from "node:crypto";
+import type { ToolTraceEntry } from "../core/tool-trace.js";
 import type { PromptContext } from "./prompt-history.js";
 import { releaseProvenance, type OriginTag } from "../security/origin.js";
 
@@ -10,6 +11,8 @@ export interface SessionMessage {
   content: string;
   /** Out-of-band provenance (security/origin.ts); absent = trusted user text. */
   origin?: OriginTag;
+  /** Tool calls of the assistant turn (the in-memory counterpart of the tool_calls table). */
+  tools?: ToolTraceEntry[];
 }
 
 const sessions = new Map<string, SessionMessage[]>();
@@ -23,14 +26,15 @@ export function appendToSession(
   sessionId: string,
   role: "user" | "assistant",
   content: string,
-  origin?: OriginTag
+  origin?: OriginTag,
+  tools?: ToolTraceEntry[]
 ): void {
   let history = sessions.get(sessionId);
   if (!history) {
     history = [];
     sessions.set(sessionId, history);
   }
-  history.push({ role, content, origin });
+  history.push({ role, content, origin, ...(tools?.length ? { tools } : {}) });
 }
 
 /** @deprecated UI/feed is no longer overwritten by resume; left for scrub and occasional resets.*/

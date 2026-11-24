@@ -26,6 +26,11 @@ import { noFollowFlag, safeRealPath, verifyComponents } from "../security/safe-f
 
 const MAX_FILE_SIZE_READ = 512 * 1024; // 512 KB
 const MAX_FILE_SIZE_WRITE = 1024 * 1024; // 1 MB
+/** Whole file that may be opened when the model pages through it with offset/limit. */
+const MAX_PAGED_FILE_BYTES = 8 * 1024 * 1024;
+/** Lines per read(offset, limit) call. */
+const DEFAULT_READ_LINES = 2000;
+const MAX_READ_LINES = 5000;
 
 const O_RDONLY = fsConstants.O_RDONLY ?? 0;
 const O_WRONLY = fsConstants.O_WRONLY ?? 0;
@@ -57,21 +62,61 @@ function resolveSafePath(
   return { path: real.path, components: real.components };
 }
 
-export function toolRead(config: Claw2Config, pathArg: string, encoding?: string): { ok: boolean; content?: string; error?: string } {
+/** Line window for read(): offset is 1-based, both optional. */
+export interface ReadLines {
+  offset?: number;
+  limit?: number;
+}
+
+function wholeNumber(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.floor(value) : fallback;
+}
+
+/** The requested line window of a text file, with a header saying which lines came back. */
+function sliceLines(text: string, lines: ReadLines): { ok: boolean; content?: string; error?: string } {
+  if (!text) return { ok: true, content: "[file is empty]" };
+  // A trailing newline ends the last line; it does not start an empty one.
+  const all = text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
+  const start = Math.min(Math.max(1, wholeNumber(lines.offset, 1)), all.length);
+  const take = Math.min(Math.max(1, wholeNumber(lines.limit, DEFAULT_READ_LINES)), MAX_READ_LINES);
+  const slice = all.slice(start - 1, start - 1 + take);
+  const content = `[lines ${start}-${start + slice.length - 1} of ${all.length}]\n${slice.join("\n")}`;
+  if (content.length > MAX_FILE_SIZE_READ) {
+    return { ok: false, error: `line range too large (max ${MAX_FILE_SIZE_READ} characters); lower limit` };
+  }
+  return { ok: true, content };
+}
+
+export function toolRead(
+  config: Claw2Config,
+  pathArg: string,
+  encoding?: string,
+  lines?: ReadLines
+): { ok: boolean; content?: string; error?: string } {
   const safe = resolveSafePath(config, pathArg);
   if (safe.error) return { ok: false, error: safe.error };
   try {
     if (!verifyComponents(safe.components)) return { ok: false, error: "path changed during access (possible symlink swap)" };
     const enc = encoding === "base64" ? "base64" : "utf-8";
+    const paged = enc === "utf-8" && !!lines && (lines.offset != null || lines.limit != null);
+    // Checked before reading: a multi-gigabyte file must not be loaded just to be refused.
+    if (statSync(safe.path).size > MAX_PAGED_FILE_BYTES) {
+      return { ok: false, error: `file too large (max ${MAX_PAGED_FILE_BYTES} bytes)` };
+    }
     // Numeric flag is valid at runtime; @types/node admits strings only.
     const content = readFileSync(safe.path, {
       encoding: enc as BufferEncoding,
       flag: noFollowFlag(O_RDONLY) as unknown as string,
     });
-    if (typeof content === "string" && content.length > MAX_FILE_SIZE_READ) {
-      return { ok: false, error: `file too large (max ${MAX_FILE_SIZE_READ} bytes)` };
+    const text = typeof content === "string" ? content : Buffer.from(content).toString(enc);
+    if (paged) return sliceLines(text, lines);
+    if (text.length > MAX_FILE_SIZE_READ) {
+      return {
+        ok: false,
+        error: `file too large (max ${MAX_FILE_SIZE_READ} characters); read it in parts with offset and limit`,
+      };
     }
-    return { ok: true, content: typeof content === "string" ? content : Buffer.from(content).toString(enc) };
+    return { ok: true, content: text };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

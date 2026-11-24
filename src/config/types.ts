@@ -76,7 +76,14 @@ export interface Claw2Config {
   /** Script names agents/*.js, hidden from the prompt and prohibited for run_agent (deactivation without deletion).*/
   disabledAgents?: string[];
   orchestrator?: {
+    /** Tool-call iterations per chat turn (default 30). On the limit the model gets one last call without tools for a final answer. */
     maxToolIterations?: number;
+    /** Max characters of one tool result the model receives (default 24000). Longer results are clipped head + tail. */
+    toolResultMaxChars?: number;
+    /** Max total characters of tool results kept in the turn's context (default 160000). Older results are compacted above it. */
+    toolContextMaxChars?: number;
+    /** How many recent assistant turns get their stored tool steps back in the prompt (default 3, 0 = off). */
+    toolTraceHistoryTurns?: number;
     codeRouting?: {
       /** Append skill-creation hint when user explicitly asks for a new agent/skill. Default true. */
       hintOnCodeTrigger?: boolean;
@@ -289,6 +296,17 @@ export interface Claw2Config {
     chatsDbPath?: string;
     /** Tools transcript_search / transcript_read (chat transcript). Defaults to true for chatsDbPath.*/
     transcriptTools?: boolean;
+    /**
+     * A chat turn keeps running on the server after the client disconnects;
+     * the client can re-attach and the turn is stopped only through
+     * POST /chat/cancel. Default true. false: a dropped connection cancels
+     * the turn.
+     */
+    backgroundChatRuns?: boolean;
+    /** SSE keepalive interval of a chat stream in ms (default 15000, 0 = off). */
+    chatKeepaliveMs?: number;
+    /** Wall-clock cap of one chat turn in ms (default 1800000, 0 = off). */
+    chatRunMaxMs?: number;
     /**
      * Extra Host header values accepted when gateway.auth is off (the anti
      * cross-site / DNS-rebinding guard: IP literals, localhost and *.local are

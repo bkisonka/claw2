@@ -91,11 +91,33 @@ chrome.runtime.onMessage.addListener((raw, sender) => {
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "claw2-chat") return;
   const abort = new AbortController();
+  let sessionId: string | undefined;
+  // Dropping the port only detaches this client: the turn runs on the gateway
+  // until it is told to stop.
   port.onDisconnect.addListener(() => abort.abort());
+
+  /** Explicit stop: ask the gateway to cancel the turn (it keeps what it had done). */
+  const cancelRun = () => {
+    const sid = sessionId;
+    if (!sid) return;
+    void getConfig()
+      .then((config) =>
+        config
+          ? fetch(`${config.gatewayUrl}/chat/cancel`, {
+              method: "POST",
+              headers: authHeaders(config),
+              body: JSON.stringify({ sessionId: sid }),
+              keepalive: true,
+            }).catch(() => {})
+          : null
+      )
+      .catch(() => {});
+  };
 
   port.onMessage.addListener((raw) => {
     const msg = raw as PortMessage;
     if (msg?.type === "abort") {
+      cancelRun();
       abort.abort();
       return;
     }
@@ -107,7 +129,7 @@ chrome.runtime.onConnect.addListener((port) => {
         return;
       }
       const senderTabId = (port.sender as { tab?: { id?: number } } | undefined)?.tab?.id;
-      const sessionId = msg.sessionId ?? (senderTabId != null ? await getSessionId(senderTabId) : undefined);
+      sessionId = msg.sessionId ?? (senderTabId != null ? await getSessionId(senderTabId) : undefined);
       let lastEvent: PortEvent = { type: "done" };
       try {
         const res = await fetch(`${config.gatewayUrl}/chat`, {
