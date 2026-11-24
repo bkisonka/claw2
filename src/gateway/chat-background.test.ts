@@ -603,19 +603,42 @@ describe("background chat turns", () => {
     const stream = tap(await postChat(true, sessionId));
     await stream.waitFor(toolStart);
     await turn.started;
+    // A client without a stream is stopped the same way.
+    const otherSession = newSession();
+    const other = hangingTurn();
+    const pending = postChat(false, otherSession);
+    await other.started;
     const exits: number[] = [];
 
     await shutdownGateway("SIGTERM", { graceMs: 3000, exit: (code) => exits.push(code) });
 
-    // The client that was still attached sees the turn end…
-    expect(await stream.waitFor((frame) => frame.done === true)).toMatchObject({ done: true, code: "chat_cancelled" });
+    // The client that was still attached sees the turn end — as a restart, not as a Stop…
+    expect(await stream.waitFor((frame) => frame.done === true)).toEqual({
+      done: true,
+      sessionId,
+      error: "Gateway is restarting",
+      code: "gateway_restart",
+    });
     // …and the chat has the question, the text printed so far and the steps.
     expect(repo.getChatHistory(sessionId, "default")).toEqual([
       { role: "user", content: `Question ${sessionId}` },
-      { role: "assistant", content: "early " },
+      { role: "assistant", content: "early ", meta: '{"interruptedBy":"gateway_restart"}' },
     ]);
     expect(repo.listToolCalls(sessionId, "default")).toHaveLength(1);
     expect(exits).toEqual([0]);
+    // A restart is not a failed request: 200 with the code, for a client without a stream too.
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ sessionId: otherSession, error: "Gateway is restarting", code: "gateway_restart" });
+    // The same is in the history, for the client that opens the chat after the restart.
+    const history = (await json(`/chat/history?session_id=${sessionId}`)).body.messages as Array<{
+      role: string;
+      interruptedBy?: string;
+    }>;
+    expect(history.map((message) => [message.role, message.interruptedBy])).toEqual([
+      ["user", undefined],
+      ["assistant", "gateway_restart"],
+    ]);
     // Until the gateway is back nothing starts, and nothing claims to be running.
     const refused = await postChat(true, sessionId);
     expect(refused.status).toBe(503);
@@ -636,8 +659,27 @@ describe("background chat turns", () => {
 
     expect(exits).toEqual([0]);
     const lines = logged.mock.calls.map((call) => String(call[0]));
-    expect(lines.some((line) => line.includes(`1 turn(s) did not stop in 50 ms and are lost: ${sessionId}`))).toBe(true);
+    expect(lines.some((line) => line.includes(`1 turn(s) did not stop within 50 ms and are lost: ${sessionId}`))).toBe(true);
     logged.mockRestore();
     stubborn.giveUp();
+  });
+
+  it("a shutdown keeps time for the container kills even when the turns use all of theirs", async () => {
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    const waitForKills = vi.fn<(ms: number) => Promise<void>>(async () => {});
+    const started = Date.now();
+
+    await shutdownGateway("SIGTERM", { graceMs: 800, exit: () => {}, waitForKills });
+    const elapsed = Date.now() - started;
+    stubborn.giveUp();
+
+    // The turns had 400 ms and used all of them: the kills still get their 400.
+    expect(waitForKills).toHaveBeenCalledTimes(1);
+    expect(waitForKills.mock.calls[0]![0]).toBeGreaterThanOrEqual(390);
+    // …and the whole stop did not outgrow the grace period.
+    expect(elapsed).toBeLessThan(800);
   });
 });

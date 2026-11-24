@@ -7,31 +7,56 @@
  * turn with it: the question is gone and so is the text printed so far. On
  * SIGTERM/SIGINT every running turn is therefore stopped the way Stop stops
  * it — which stores the message, the text so far and the tool steps — before
- * the process exits. A SIGKILL, an OOM kill or a power cut still lose them.
+ * the process exits, and what it stores is marked as cut short by the
+ * restart. A SIGKILL, an OOM kill or a power cut still lose them.
  */
 
-import { DEFAULT_SHUTDOWN_GRACE_MS, stopChatRunsForShutdown } from "./chat-runs.js";
+import { DEFAULT_SHUTDOWN_GRACE_MS, SHUTDOWN_ABORT_REASON, stopChatRunsForShutdown } from "./chat-runs.js";
 import { waitForContainerKills } from "../sandbox/run-agent.js";
 
+/**
+ * Time kept for the container kills of the stopped skills even when the
+ * turns use all of theirs: a kill that is still on its way when the process
+ * exits leaves its container running.
+ */
+export const CONTAINER_KILL_RESERVE_MS = 1_500;
+
+/**
+ * How the grace period is split between the running turns and the container
+ * kills. The kills get their reserve and the turns the rest — but never less
+ * than half, or a short grace period would store no turn at all.
+ */
+export function splitShutdownGrace(graceMs: number): { turnsMs: number; killsMs: number } {
+  const grace = Number.isFinite(graceMs) ? Math.max(0, graceMs) : 0;
+  const killsMs = Math.min(CONTAINER_KILL_RESERVE_MS, grace / 2);
+  return { turnsMs: grace - killsMs, killsMs };
+}
+
 export interface GracefulShutdownOptions {
-  /** How long the running turns may take to store themselves (`gateway.shutdownGraceMs`). */
+  /** How long the whole stop may take (`gateway.shutdownGraceMs`). */
   graceMs?: number;
   /** Ends the process. Replaced in tests. */
   exit?: (code: number) => void;
+  /** Waits for the container kills. Replaced in tests. */
+  waitForKills?: typeof waitForContainerKills;
 }
 
 /** Stops the running turns, waits until they are stored, ends the process. */
 export async function shutdownGateway(signal: string, options: GracefulShutdownOptions = {}): Promise<void> {
   const exit = options.exit ?? ((code: number): never => process.exit(code));
-  const graceMs = options.graceMs ?? DEFAULT_SHUTDOWN_GRACE_MS;
+  const waitForKills = options.waitForKills ?? waitForContainerKills;
+  const { turnsMs, killsMs } = splitShutdownGrace(options.graceMs ?? DEFAULT_SHUTDOWN_GRACE_MS);
+  const graceMs = turnsMs + killsMs;
   const startedAt = Date.now();
-  const stuck = await stopChatRunsForShutdown("Gateway is shutting down", graceMs);
+  const stuck = await stopChatRunsForShutdown(SHUTDOWN_ABORT_REASON, turnsMs);
   // The skills of the stopped turns were told to die: let the kills reach the
-  // daemon, or their containers outlive the gateway.
-  await waitForContainerKills(Math.max(0, graceMs - (Date.now() - startedAt)));
+  // daemon, or their containers outlive the gateway. Their reserve is left
+  // over even when the turns used all of their time; what the turns did not
+  // need is theirs too.
+  await waitForKills(Math.max(0, graceMs - (Date.now() - startedAt)));
   if (stuck.length > 0) {
     console.error(
-      `[gateway] ${stuck.length} turn(s) did not stop in ${graceMs} ms and are lost: ${stuck
+      `[gateway] ${stuck.length} turn(s) did not stop within ${graceMs} ms and are lost: ${stuck
         .map((run) => run.sessionId)
         .join(", ")}`
     );

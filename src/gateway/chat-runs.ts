@@ -37,6 +37,13 @@ export const DEFAULT_CHAT_RUN_SETTLE_WAIT_MS = 15_000;
 /** How long SIGTERM/SIGINT waits for the running turns to store themselves (`gateway.shutdownGraceMs`). */
 export const DEFAULT_SHUTDOWN_GRACE_MS = 8_000;
 
+/**
+ * The reason a turn is aborted with when the gateway stops. Its terminal
+ * frame and its stored answer say so (`gateway_restart`): a restart is not
+ * to read as if the user had pressed Stop.
+ */
+export const SHUTDOWN_ABORT_REASON = "Gateway is shutting down";
+
 /** Characters of a tool call's arguments shown in the UI. */
 export const TOOL_STEP_ARGS_CHARS = 200;
 
@@ -70,6 +77,11 @@ export type ChatRunEvent =
 export interface ChatRunTerminal {
   content?: string;
   error?: string;
+  /**
+   * Why the turn ended without its answer: `chat_cancelled` (stopped,
+   * superseded or out of time), `gateway_restart` (the gateway was stopping),
+   * or the reason its setup failed (`llm_not_configured`, …).
+   */
   code?: string;
   lastRunId?: number;
   cells?: ChatCell[];
@@ -99,7 +111,7 @@ export interface ChatRun {
   /** Text streamed so far — what a returning client catches up on. */
   partialContent: string;
   /** The user message of the turn, shown to a client that attaches later (it is stored only when the turn ends). */
-  userMessage?: string;
+  readonly userMessage: string;
   sidebarUpdated: boolean;
   /** Tool steps in order; a step whose latest event is `start` is still running. */
   readonly steps: ToolStepEvent[];
@@ -129,12 +141,15 @@ let shuttingDown = false;
  * Registers a new turn for the session. A turn already running for the same
  * session is aborted (superseded) and returned as `previous`, so the caller
  * can wait for it to be stored before building the new turn's history.
+ * The turn carries its question from the moment it is registered: a client
+ * that attaches right after sees it.
  * Returns null when the gateway is stopping or when `maxConcurrent` turns
  * are running already (0 = no ceiling).
  */
 export function beginChatRun(
   sessionId: string,
   userId: string,
+  userMessage: string,
   maxConcurrent = DEFAULT_MAX_CONCURRENT_CHAT_RUNS
 ): { run: ChatRun; previous: ChatRun | null } | null {
   if (shuttingDown) return null;
@@ -151,6 +166,7 @@ export function beginChatRun(
   const run: ChatRun = {
     sessionId,
     userId,
+    userMessage,
     controller: new AbortController(),
     startedAt: Date.now(),
     partialContent: "",

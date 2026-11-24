@@ -15,10 +15,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `503 {"code":"shutting_down"}`. `gateway.shutdownGraceMs` (default 8000,
   inside the grace period `docker stop` gives by default) bounds the wait; a
   turn that needs longer is named in the log. A `SIGKILL`, an OOM kill or a
-  power cut still lose the running turns, and a stored turn is not marked as
-  interrupted. The gateway is PID 1 of its container, and Node ignores
-  `SIGTERM` as PID 1 unless a handler is installed: `docker stop` used to
-  wait out the whole grace period and then kill it.
+  power cut still lose the running turns. The gateway is PID 1 of its
+  container, and Node ignores `SIGTERM` as PID 1 unless a handler is
+  installed: `docker stop` used to wait out the whole grace period and then
+  kill it.
 - **`gateway.maxConcurrentChatRuns`** (default 8, 0 = off): how many turns
   may run at once. It was a constant of the code.
 - **`gateway.chatRunSettleWaitMs`** (default 15000): how long a new turn
@@ -29,8 +29,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The model is not limited to 30 tool steps per turn anymore.** Nothing in
   the code counts its steps now: a turn is bounded by `gateway.chatRunMaxMs`
   and its tool results by the context budget. `orchestrator.maxToolIterations`
-  still sets a ceiling for whoever wants one. A model that repeats a failing
-  call now goes on until the time cap instead of stopping at 30.
+  still sets a ceiling for whoever wants one. A model that keeps repeating a
+  failing call is told so — see below.
+- **A model that keeps repeating a failing call is told to stop repeating
+  it.** From the third failure in a row of one exact call — same tool, same
+  arguments; a success or other arguments start the count over — a note asks
+  it to change the approach or to answer with what it has. The turn goes on;
+  `tool_repeated_failure` goes to the audit log.
 - **Attach asks again for what the turn is still waiting for.** `GET
   /chat/attach` replays the page-text requests (`readBrowserPage`,
   `headlessPageText`) that no client has answered yet, and a page the turn
@@ -50,6 +55,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A restart does not read as a Stop.** A turn stopped by the gateway going
+  down ends with `code: "gateway_restart"` and its stored answer carries
+  `interruptedBy: "gateway_restart"`, which `/chat/history` returns; the web
+  client says that the gateway was restarting. It used to end as
+  `chat_cancelled`, and the web client showed “Chat cancelled” as an error.
+  A client without a stream gets 200 with the code instead of a failed
+  request.
+- **A shutdown keeps time for the container kills.** 1.5 seconds of
+  `gateway.shutdownGraceMs` are the kills' even when the running turns use
+  all the rest: turns that spent the whole grace period used to leave none,
+  and the skill containers could outlive the gateway. A grace period shorter
+  than 3 seconds is split in halves.
 - **A superseded turn that stops late is not stored after its replacement.**
   A superseded turn that stopped only after the new turn was already stored
   was written behind it and read as the chat's latest exchange, in the

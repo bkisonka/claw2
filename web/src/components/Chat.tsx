@@ -421,6 +421,8 @@ export interface Message {
   tools?: ToolStep[];
   /** The tool step limit was spent before this answer. */
   toolLimitReached?: boolean;
+  /** The gateway was restarting while the answer was written: the answer is cut short. */
+  interruptedBy?: "gateway_restart";
 }
 
 export interface ChatProps {
@@ -1405,6 +1407,7 @@ export function Chat({
             content: resolved.content,
             cells: resolved.cells.length > 0 ? resolved.cells : res.cells,
             ...(res.toolLimitReached && { toolLimitReached: true }),
+            ...(res.code === "gateway_restart" && { interruptedBy: "gateway_restart" as const }),
           };
         }
         streamTranscript = next;
@@ -1417,7 +1420,8 @@ export function Chat({
       }
       if (mountedRef.current && stillOnStreamSession()) {
         if (res.lastRunId != null) setLastRunId(res.lastRunId);
-        if (res.error) setError(res.error);
+        // A restart is said by the note under the answer, not as an error.
+        if (res.error && res.code !== "gateway_restart") setError(res.error);
         if (res.insightOffer) {
           setInsightOffer(res.insightOffer);
           setInsightText(res.insightOffer.text?.trim() || null);
@@ -1909,6 +1913,9 @@ export function Chat({
                     <UserMessageContent content={displayContent || "…"} onOpenLink={onOpenBrowserUrl} />
                   </div>
                 )}
+                {msg.interruptedBy === "gateway_restart" ? (
+                  <p className="chat-tool-limit-note">{t("chat.gatewayRestarted")}</p>
+                ) : null}
                   </>
                 );
               })()}

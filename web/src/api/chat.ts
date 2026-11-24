@@ -52,6 +52,8 @@ export interface HistoryMessageApi {
   attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
   /** Tool steps of an assistant turn (name, arguments, outcome — no results). */
   tools?: ToolStep[];
+  /** The gateway was restarting while the answer was written: the answer is cut short. */
+  interruptedBy?: "gateway_restart";
 }
 
 export interface ChatCell {
@@ -63,6 +65,8 @@ export interface ChatResponse {
   content: string;
   sessionId: string;
   error?: string;
+  /** Why the turn ended without its answer: "chat_cancelled", "gateway_restart", or a setup failure. */
+  code?: string;
   lastRunId?: number;
   /** Inline cells for chat display (calendars, charts). content uses placeholders [CELL_0], [CELL_1], ... */
   cells?: ChatCell[];
@@ -266,6 +270,7 @@ export async function sendMessage(
     content: data.content ?? "",
     sessionId: data.sessionId ?? "",
     error: data.error,
+    code: data.code,
     lastRunId: data.lastRunId,
     cells: data.cells,
     userCells: data.userCells,
@@ -373,6 +378,7 @@ export async function sendMessageStream(
       content: data.content ?? "",
       sessionId: data.sessionId ?? "",
       error: data.error,
+      code: data.code,
       lastRunId: data.lastRunId,
       cells: data.cells,
       userCells: data.userCells,
@@ -415,6 +421,7 @@ function terminalResponse(data: ChatStreamEvent, fallbackSessionId: string): Cha
     content: data.content ?? "",
     sessionId: data.sessionId ?? fallbackSessionId,
     error: data.error,
+    code: data.code,
     lastRunId: data.lastRunId,
     cells: data.cells,
     userCells: data.userCells,

@@ -172,6 +172,15 @@ function toolLimitMessage(maxIterations: number): string {
   return `The tool step budget for this turn is used up (${maxIterations} steps). Do not call any more tools. Give the user your final answer now: what you did, what you found, and what is left undone. Be explicit about unfinished parts instead of guessing.`;
 }
 
+/** After this many failures in a row of one exact call, the model is told to stop repeating it. */
+const REPEATED_FAILURE_NOTICE_AFTER = 3;
+
+/** Appended to the turn when the same call keeps failing. The turn goes on; only the repeating is to stop. */
+function repeatedFailureMessage(failures: Array<{ name: string; count: number }>): string {
+  const calls = failures.map((failure) => `${failure.name} (${failure.count} times in a row)`).join(", ");
+  return `The same call failed again and again: ${calls}. Sending it again with the same arguments will give the same result. Change the approach — other arguments, another tool, or first create what it needs — or answer the user with what you have and say what did not work.`;
+}
+
 async function logHssResponseAnalysis(
   sessionId: string | undefined,
   cacheId: string,
@@ -1092,6 +1101,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   /** Tool calls of this turn in order: returned for storage and replayed into later prompts. */
   const toolTrace: ToolTraceEntry[] = [];
   const toolCallMeta = new Map<string, ToolCallMeta>();
+  /**
+   * Failures in a row of one exact call (same tool, same arguments). Nothing
+   * counts the steps of a turn, so a model repeating a call that keeps
+   * failing would go on until the wall-clock cap.
+   */
+  const failureStreak = new Map<string, number>();
   /** Call ids of the latest iteration — never compacted, the model is answering them. */
   let lastIterationCallIds = new Set<string>();
   let toolSeq = 0;
@@ -1198,6 +1213,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         details: { iteration: iterations + 1, maxIterations, tools: toolDetails },
       });
       const toolResults: { id: string; content: string }[] = [];
+      const repeatedFailures: Array<{ name: string; count: number }> = [];
       lastIterationCallIds = new Set(toolCalls.map((tc) => tc.id));
       for (const tc of toolCalls) {
         throwIfAborted(signal);
@@ -1223,6 +1239,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         const durationMs = Date.now() - startedMs;
         const clipped = clipToolResult(raw, toolResultMaxChars);
         const ok = !toolResultLooksLikeError(clipped.content);
+        // A success or other arguments start the count over; another call in between does not.
+        const callKey = `${name}:${JSON.stringify(args)}`;
+        const failedInARow = ok ? 0 : (failureStreak.get(callKey) ?? 0) + 1;
+        if (ok) failureStreak.delete(callKey);
+        else failureStreak.set(callKey, failedInARow);
+        if (failedInARow >= REPEATED_FAILURE_NOTICE_AFTER) repeatedFailures.push({ name, count: failedInARow });
         // Stored and re-emitted copy: up to its own size from the raw result, secrets never leave the turn.
         const traceResult = clipHeadTail(redactToolResult(name, raw), TOOL_TRACE_RESULT_MAX_CHARS).text;
         const untrusted = ok && isUntrustedResultTool(name);
@@ -1243,6 +1265,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         toolResults.push({ id: tc.id!, content: clipped.content });
       }
       throwIfAborted(signal);
+      for (const failure of repeatedFailures) {
+        auditLog(config, {
+          type: "tool_repeated_failure",
+          details: { name: failure.name, failedInARow: failure.count, iteration: iterations + 1 },
+        });
+      }
       messages.push(
         {
           role: "assistant",
@@ -1253,7 +1281,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           role: "tool" as const,
           tool_call_id: r.id,
           content: r.content,
-        }))
+        })),
+        ...(repeatedFailures.length
+          ? [{ role: "system" as const, content: repeatedFailureMessage(repeatedFailures) }]
+          : [])
       );
       iterations++;
       throwIfAborted(signal);

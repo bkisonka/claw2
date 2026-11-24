@@ -188,9 +188,16 @@ export interface ParseCellBlocksResult {
   cells: ParsedCell[];
 }
 
-export function cellsToMeta(cells: ParsedCell[]): string | undefined {
-  if (!cells.length) return undefined;
-  return JSON.stringify({ cells });
+/** What cut an assistant answer short before it was done. */
+export type InterruptedBy = "gateway_restart";
+
+/** The stored metadata of an assistant message: its cells and, for an answer cut short, what cut it. */
+export function cellsToMeta(cells: ParsedCell[], interruptedBy?: InterruptedBy): string | undefined {
+  if (!cells.length && !interruptedBy) return undefined;
+  return JSON.stringify({
+    ...(cells.length ? { cells } : {}),
+    ...(interruptedBy ? { interruptedBy } : {}),
+  });
 }
 
 export function cellsFromMeta(meta: string | undefined): ParsedCell[] | undefined {
@@ -202,6 +209,18 @@ export function cellsFromMeta(meta: string | undefined): ParsedCell[] | undefine
     // ignore invalid meta
   }
   return undefined;
+}
+
+/** What cut an answer short, when something did (see cellsToMeta). */
+export function interruptedByFromMeta(meta: string | undefined): InterruptedBy | undefined {
+  if (!meta) return undefined;
+  try {
+    const value = (JSON.parse(meta) as { interruptedBy?: unknown }).interruptedBy;
+    return value === "gateway_restart" ? value : undefined;
+  } catch {
+    // ignore invalid meta
+    return undefined;
+  }
 }
 
 /** Reverse operation for LLM context: [CELL_0] → [CELL type="html"]...[/CELL].

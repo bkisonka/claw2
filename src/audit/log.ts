@@ -22,6 +22,7 @@ export type AuditEventType =
   | "tool_iteration"
   | "tool_limit_reached"
   | "tool_limit_final_retry"
+  | "tool_repeated_failure"
   | "chat_turn"
   | "chat_cancelled"
   | "run_agent_done"

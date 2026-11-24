@@ -182,6 +182,19 @@ describe("attachChatStream", () => {
     expect(onHeadlessPageText).toHaveBeenCalledWith("load", "https://example.test/page");
   });
 
+  it("carries the code of a turn that ended without its answer", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        sse(event({ done: true, sessionId: "s1", error: "Gateway is restarting", code: "gateway_restart" }))
+      )
+    );
+
+    const result = await attachChatStream("s1", { onChunk: vi.fn(), onToolEvent: vi.fn() });
+
+    expect(result).toMatchObject({ error: "Gateway is restarting", code: "gateway_restart" });
+  });
+
   it("rejects a stream that ends without a terminal event", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(sse(event({ content: "Partial" }))));
     await expect(attachChatStream("s1", { onChunk: vi.fn(), onToolEvent: vi.fn() })).rejects.toThrow(/interrupted/i);

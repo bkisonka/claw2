@@ -12,6 +12,9 @@ import {
   stripOrphanCellPlaceholders,
   expandCellPlaceholders,
   resolveAssistantCells,
+  cellsToMeta,
+  cellsFromMeta,
+  interruptedByFromMeta,
 } from "./cell-blocks.js";
 import {
   filterMissingLocalImageCells,
@@ -191,6 +194,20 @@ function streamLikeChatBugFixed(chunks: string[]) {
   const orphan = resolveAssistantCells("Вот [CELL_0]\nготово");
   assert.equal(orphan.cells.length, 0);
   assert.doesNotMatch(orphan.content, /CELL_/);
+}
+
+{
+  // The metadata of an answer: its cells, and — for one cut short — what cut it.
+  const cell = { type: "image", content: "/files/output/a.png" };
+  assert.equal(cellsToMeta([]), undefined);
+  assert.deepEqual(JSON.parse(cellsToMeta([cell])!), { cells: [cell] });
+  assert.equal(cellsToMeta([], "gateway_restart"), '{"interruptedBy":"gateway_restart"}');
+  const both = cellsToMeta([cell], "gateway_restart")!;
+  assert.deepEqual(cellsFromMeta(both), [cell]);
+  assert.equal(interruptedByFromMeta(both), "gateway_restart");
+  assert.equal(interruptedByFromMeta(cellsToMeta([cell])), undefined);
+  assert.equal(interruptedByFromMeta("not json"), undefined);
+  assert.equal(interruptedByFromMeta('{"interruptedBy":"something else"}'), undefined);
 }
 
 console.log("cell-blocks tests: ok");

@@ -23,8 +23,10 @@ import {
 
 const started: ChatRun[] = [];
 
+const QUESTION = "the question";
+
 function begin(sessionId = "session", userId = "user") {
-  const begun = beginChatRun(sessionId, userId);
+  const begun = beginChatRun(sessionId, userId, QUESTION);
   if (!begun) throw new Error("run limit reached in the test itself");
   started.push(begun.run);
   return begun;
@@ -43,6 +45,8 @@ describe("chat run registry", () => {
     expect(hasActiveChatRun("session")).toBe(true);
     expect(getChatRun("session")).toBe(run);
     expect(run.userId).toBe("user");
+    // From the moment it is registered: a client attaching right after sees it.
+    expect(run.userMessage).toBe(QUESTION);
     expect(run.done).toBeInstanceOf(Promise);
     finishChatRun(run, { content: "done" });
     expect(hasActiveChatRun("session")).toBe(false);
@@ -63,16 +67,16 @@ describe("chat run registry", () => {
 
   it(`refuses a ${DEFAULT_MAX_CONCURRENT_CHAT_RUNS + 1}th concurrent session`, () => {
     for (let i = 0; i < DEFAULT_MAX_CONCURRENT_CHAT_RUNS; i++) begin(`session-${i}`);
-    expect(beginChatRun("one-too-many", "user")).toBeNull();
+    expect(beginChatRun("one-too-many", "user", QUESTION)).toBeNull();
     // The same session again is not extra load.
-    expect(beginChatRun("session-0", "user")).not.toBeNull();
+    expect(beginChatRun("session-0", "user", QUESTION)).not.toBeNull();
   });
 
   it("takes the ceiling from the config: another number, or none", () => {
-    started.push(beginChatRun("a", "user", 1)!.run);
-    expect(beginChatRun("b", "user", 1)).toBeNull();
-    started.push(beginChatRun("c", "user", 0)!.run);
-    started.push(beginChatRun("d", "user", 0)!.run);
+    started.push(beginChatRun("a", "user", QUESTION, 1)!.run);
+    expect(beginChatRun("b", "user", QUESTION, 1)).toBeNull();
+    started.push(beginChatRun("c", "user", QUESTION, 0)!.run);
+    started.push(beginChatRun("d", "user", QUESTION, 0)!.run);
     expect(getChatRun("d")).toBeDefined();
   });
 
@@ -204,7 +208,7 @@ describe("chat run registry", () => {
     expect(second.controller.signal.reason).toBe("Gateway is shutting down");
     expect(stubborn.controller.signal.reason).toBe("Gateway is shutting down");
     expect(isChatShuttingDown()).toBe(true);
-    expect(beginChatRun("later", "user")).toBeNull();
+    expect(beginChatRun("later", "user", QUESTION)).toBeNull();
 
     finishChatRun(first, {});
     finishChatRun(second, {});

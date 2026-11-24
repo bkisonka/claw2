@@ -78,6 +78,10 @@ const lastToolMessage = (messages: Messages) => {
   return String(last?.content);
 };
 
+/** The notes that tell the model a call keeps failing. */
+const notices = (messages: Messages) =>
+  messages.filter((m) => m.role === "system" && String(m.content).startsWith("The same call failed again and again"));
+
 beforeEach(() => {
   vi.clearAllMocks();
   resetProvenanceForTest();
@@ -166,6 +170,66 @@ describe("agent loop", () => {
     expect(result.toolLimitReached).toBeUndefined();
     expect(result.tools).toHaveLength(40);
     expect(chat).toHaveBeenCalledTimes(41);
+  });
+
+  it("tells the model to stop repeating a call that keeps failing, without ending the turn", async () => {
+    const failing: Step = { tool: [{ name: "read", args: { path: "missing.txt" } }] };
+    const calls: Messages[] = [];
+    scriptModel([failing, failing, failing, failing, { content: "The file is not there." }], (messages) => {
+      calls.push(messages.map((m) => ({ ...m })));
+    });
+    vi.mocked(dispatchToolCall).mockResolvedValue("Error: ENOENT: no such file");
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "The file is not there.", toolIterations: 4 });
+    // Twice is a retry. The notice follows the third failure, right after its result…
+    expect(calls.slice(0, 3).map((messages) => notices(messages).length)).toEqual([0, 0, 0]);
+    expect(calls[3]!.at(-1)).toEqual({
+      role: "system",
+      content: expect.stringContaining("The same call failed again and again: read (3 times in a row)."),
+    });
+    // …and comes again while the call is repeated.
+    expect(notices(calls[4]!)).toHaveLength(2);
+  });
+
+  it("counts the failures of one exact call: other arguments or a success start over, another call in between does not", async () => {
+    const read = (path: string): Step => ({ tool: [{ name: "read", args: { path } }] });
+    const calls: Messages[] = [];
+    // a fails twice, b fails, a fails a third time (the notice), a succeeds, a fails twice (no notice yet).
+    scriptModel(
+      [read("a"), read("a"), read("b"), read("a"), read("a"), read("a"), read("a"), { content: "done" }],
+      (messages) => calls.push(messages.map((m) => ({ ...m })))
+    );
+    let readsOfA = 0;
+    vi.mocked(dispatchToolCall).mockImplementation(async (_ctx, _state, _name, args) => {
+      if ((args as { path?: string }).path === "b") return "Error: b";
+      // The fourth read of a is the one that succeeds.
+      return readsOfA++ === 3 ? "ok" : "Error: a";
+    });
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "done", toolIterations: 7 });
+    expect(calls.map((messages) => notices(messages).length)).toEqual([0, 0, 0, 0, 1, 1, 1, 1]);
+    expect(calls[4]!.at(-1)).toEqual({
+      role: "system",
+      content: expect.stringContaining("read (3 times in a row)"),
+    });
+  });
+
+  it("never notices a call that succeeds, however often it is repeated", async () => {
+    const sameCall: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    const calls: Messages[] = [];
+    scriptModel([sameCall, sameCall, sameCall, sameCall, sameCall, { content: "done" }], (messages) => {
+      calls.push(messages.map((m) => ({ ...m })));
+    });
+    vi.mocked(dispatchToolCall).mockResolvedValue("ok");
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "done", toolIterations: 5 });
+    expect(calls.every((messages) => notices(messages).length === 0)).toBe(true);
   });
 
   it("ends with a final answer when the step budget is spent", async () => {

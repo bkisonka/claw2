@@ -46,7 +46,13 @@ import {
 } from "../insights/index.js";
 import { assessLlmConfigured, resolveLlmApiKey } from "../config/llm-ready.js";
 import { toolSearch, formatSearchHitsMarkdown } from "../tools/search.js";
-import { cellsToMeta, resolveAssistantCells, contentForLlmHistory } from "../core/cell-blocks.js";
+import {
+  cellsToMeta,
+  contentForLlmHistory,
+  interruptedByFromMeta,
+  resolveAssistantCells,
+  type InterruptedBy,
+} from "../core/cell-blocks.js";
 import { deriveChatTitleFromRequest } from "../core/chat-title.js";
 import {
   checkForUpdate,
@@ -80,6 +86,7 @@ import {
   isChatShuttingDown,
   markChatRunStored,
   publishChatRun,
+  SHUTDOWN_ABORT_REASON,
   startSseKeepalive,
   subscribeChatRun,
   TOOL_STEP_ARGS_CHARS,
@@ -1588,7 +1595,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         activeSessionId = sessionId;
         const maxConcurrentChatRuns =
           config.gateway?.maxConcurrentChatRuns ?? DEFAULT_MAX_CONCURRENT_CHAT_RUNS;
-        const begun = beginChatRun(sessionId, userId, maxConcurrentChatRuns);
+        const begun = beginChatRun(sessionId, userId, storedUserMessage, maxConcurrentChatRuns);
         if (!begun) {
           // A gateway that is stopping comes back in a moment; a full one does not.
           const stopping = isChatShuttingDown();
@@ -1605,7 +1612,6 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         const run = begun.run;
-        run.userMessage = storedUserMessage;
         activeRun = run;
         const signal = run.controller.signal;
         // A background turn outlives this request: a dropped connection only
@@ -1890,7 +1896,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             Awaited<ReturnType<typeof runOrchestrator>>,
             "content" | "cells" | "summaryForHistory" | "summaryDropCount"
           >,
-          tools?: ToolTraceEntry[]
+          tools?: ToolTraceEntry[],
+          interruptedBy?: InterruptedBy
         ) => {
           const userCells = imageCellsFromUploads(attachedDocuments);
           const summary = result.summaryForHistory;
@@ -1903,7 +1910,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               sessionId,
               userId,
               { content: storedUserMessage, meta: cellsToMeta(userCells) },
-              { content: result.content, meta: cellsToMeta(result.cells ?? []) },
+              { content: result.content, meta: cellsToMeta(result.cells ?? [], interruptedBy) },
               promptContext,
               tools
             );
@@ -1941,8 +1948,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             },
           });
 
-        /** A stopped turn keeps its message, the text printed so far and its tool steps — when there is anything to keep. */
-        const persistStoppedTurn = () => {
+        /**
+         * A stopped turn keeps its message, the text printed so far and its tool
+         * steps — when there is anything to keep — marked with what cut it short.
+         */
+        const persistStoppedTurn = (interruptedBy?: InterruptedBy) => {
           const tools = foldToolEvents(toolEvents);
           if (!run.partialContent.trim() && tools.length === 0) return;
           // Superseded, and the turn that replaced it is stored already: stored
@@ -1954,7 +1964,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             return;
           }
           try {
-            persistTurn({ content: run.partialContent, cells: [] }, tools);
+            persistTurn({ content: run.partialContent, cells: [] }, tools, interruptedBy);
           } catch (err) {
             // The chat may already be gone (deleted while the turn was stopping).
             console.error(
@@ -2040,7 +2050,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               // background runs are off is not a stop — as before, nothing is stored.
               const reason = run.controller.signal.reason ? String(run.controller.signal.reason) : "";
               const connectionLost = reason === "HTTP response disconnected" || reason === "HTTP request aborted";
-              if (!connectionLost) persistStoppedTurn();
+              // Stopped by the gateway going down: the answer is not to read as one the user stopped.
+              const gatewayRestart = reason === SHUTDOWN_ABORT_REASON;
+              if (!connectionLost) persistStoppedTurn(gatewayRestart ? "gateway_restart" : undefined);
               auditLog(auditConfig, {
                 type: "chat_cancelled",
                 sessionId,
@@ -2050,7 +2062,12 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                   toolSteps: toolEvents.filter((event) => event.type === "start").length,
                 },
               });
-              finishChatRun(run, { error: "Chat cancelled", code: "chat_cancelled" });
+              finishChatRun(
+                run,
+                gatewayRestart
+                  ? { error: "Gateway is restarting", code: "gateway_restart" }
+                  : { error: "Chat cancelled", code: "chat_cancelled" }
+              );
             } else {
               chatTurnAudit({ error: String(err), durationMs: Date.now() - chatStartMs });
               finishChatRun(run, { error: String(err) });
@@ -2088,8 +2105,9 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           await run.done;
           if (res.writableEnded || res.destroyed) return;
           const terminal = run.terminal ?? { error: "Chat run ended without a result" };
-          const cancelled = terminal.code === "chat_cancelled";
-          res.writeHead(terminal.error && !cancelled ? 500 : 200, {
+          // A turn that was stopped — by the user or by the gateway going down — is not a failed request.
+          const stopped = terminal.code === "chat_cancelled" || terminal.code === "gateway_restart";
+          res.writeHead(terminal.error && !stopped ? 500 : 200, {
             "Content-Type": JSON_TYPE,
             "Access-Control-Allow-Origin": corsOrigin,
             "X-Session-Id": sessionId,
@@ -2451,7 +2469,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       // Catch up on what happened before this client connected: the question
       // being answered (stored only when the turn ends), the text and the steps so far.
       if (run.partialContent || run.steps.length > 0 || run.userMessage) {
-        res.write(frame({ snapshot: { userMessage: run.userMessage ?? "", content: run.partialContent, steps: run.steps } }));
+        res.write(frame({ snapshot: { userMessage: run.userMessage, content: run.partialContent, steps: run.steps } }));
       }
       if (run.sidebarUpdated) res.write(frame({ sidebarUpdated: true }));
       // What the turn asked of a client's browser is asked again: a page it
@@ -2523,6 +2541,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             cells?: typeof resolved.cells;
             attachedFiles?: { name: string; previewUrl?: string; deleted?: boolean }[];
             tools?: Array<{ name: string; args: string; ok: boolean | null; durationMs: number | null }>;
+            /** What cut the answer short: `gateway_restart` when the gateway stopped while it was being written. */
+            interruptedBy?: InterruptedBy;
           } = {
             role: m.role,
             content: resolved.content,
@@ -2532,6 +2552,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             payload.tools = stepsByTurn.get(index - 1);
           }
           if (resolved.cells.length > 0) payload.cells = resolved.cells;
+          const interruptedBy = m.role === "assistant" ? interruptedByFromMeta(m.meta) : undefined;
+          if (interruptedBy) payload.interruptedBy = interruptedBy;
           if (m.role === "user" && resolved.cells.length > 0) {
             const attached = resolved.cells
               .filter((c) => c.type === "image" || c.type === "image_deleted")
