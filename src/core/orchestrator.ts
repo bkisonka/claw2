@@ -181,6 +181,9 @@ const FRUITLESS_STEPS_NOTICE_AFTER = 5;
 /** …and told again every this many further such steps: a note scrolls away, a loop does not. */
 const FRUITLESS_STEPS_REMIND_EVERY = 10;
 
+/** The arguments shown for a call in a note, clipped. */
+const NOTE_ARGS_CHARS = 120;
+
 /** The openings notes are recognised by when their predecessor is withdrawn. */
 const REPEATED_NOTE_OPENING = "The same call failed again and again";
 const FRUITLESS_NOTE_OPENING = "Nothing has succeeded for";
@@ -202,8 +205,10 @@ function sameArgs(args: unknown): string {
 }
 
 /** Appended to the turn when the same call keeps failing. The turn goes on; only the repeating is to stop. */
-function repeatedFailureMessage(failures: Array<{ name: string; count: number }>): string {
-  const calls = failures.map((failure) => `${failure.name} (${failure.count} times in a row)`).join(", ");
+function repeatedFailureMessage(failures: Array<{ name: string; args: string; count: number }>): string {
+  const calls = failures
+    .map((failure) => `${failure.name} ${failure.args} (${failure.count} times in a row)`)
+    .join(", ");
   return `${REPEATED_NOTE_OPENING}: ${calls}. Sending it again with the same arguments will give the same result. Change the approach — other arguments, another tool, or first create what it needs — or answer the user with what you have and say what did not work.`;
 }
 
@@ -1071,12 +1076,14 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   const injectTelephonyContext = () => {
     if (telephonyContextInjected) return;
     telephonyContextInjected = true;
-    messages.push({ role: "system", content: buildTelephonyContextBlock() });
+    // As a user message, like the loop notes: providers are not required to
+    // accept a system message in the middle of a dialogue, and phone_call can
+    // inject this after the turn has started.
+    messages.push({ role: "user", content: buildTelephonyContextBlock() });
   };
   if (dialIntent || getSipClient().getStatus().call) {
     injectTelephonyContext();
-  }
-  // Tool calls are not counted unless the operator caps them: the turn is
+  }  // Tool calls are not counted unless the operator caps them: the turn is
   // bounded by its wall-clock cap (gateway.chatRunMaxMs) and its tool results
   // by the context budget.
   const configuredMaxIterations = config.orchestrator?.maxToolIterations;
@@ -1139,14 +1146,29 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
    * failing would go on until the wall-clock cap.
    */
   const failureStreak = new Map<string, number>();
-  /** The tool name of each streak, for the note that names the calls. */
-  const streakNames = new Map<string, string>();
+  /** The tool name and clipped arguments of each streak, for the note that names the calls. */
+  const streakCalls = new Map<string, { name: string; args: string }>();
   /**
    * The failures-in-a-row count at which each call was last told about: said
    * at the threshold, then again after every REMIND_EVERY further failures —
    * one note may be ignored. A success withdraws the call entirely.
    */
   const notedAt = new Map<string, number>();
+  /** The notes as pushed, tracked by identity: withdrawal never matches by text. */
+  let repeatedNoteMessage: OpenAI.Chat.ChatCompletionUserMessageParam | undefined;
+  let fruitlessNoteMessage: OpenAI.Chat.ChatCompletionUserMessageParam | undefined;
+  /**
+   * Withdraws a note by identity — by object reference, never by text, so a
+   * real user message that happens to open the same way is never touched.
+   */
+  const withdrawNote = (
+    note: OpenAI.Chat.ChatCompletionUserMessageParam | undefined
+  ): OpenAI.Chat.ChatCompletionUserMessageParam | undefined => {
+    if (!note) return undefined;
+    const index = messages.indexOf(note);
+    if (index >= 0) messages.splice(index, 1);
+    return undefined;
+  };
   /**
    * Steps in a row in which not one tool call succeeded, and what failed in
    * them. It catches what the count per call cannot: a loop of calls that
@@ -1265,8 +1287,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         },
       });
       const toolResults: { id: string; content: string }[] = [];
-      const repeatedFailures: Array<{ name: string; count: number }> = [];
+      const repeatedFailures: Array<{ name: string; args: string; count: number }> = [];
       let succeededInStep = false;
+      /** A noted call started working in this step: the note needs a refresh. */
+      let repeatedNoteDirty = false;
       lastIterationCallIds = new Set(toolCalls.map((tc) => tc.id));
       for (const tc of toolCalls) {
         throwIfAborted(signal);
@@ -1298,10 +1322,11 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
         const failedInARow = ok ? 0 : (failureStreak.get(callKey) ?? 0) + 1;
         if (ok) {
           failureStreak.delete(callKey);
-          notedAt.delete(callKey);
+          // A noted call that starts working withdraws its note.
+          if (notedAt.delete(callKey)) repeatedNoteDirty = true;
         } else {
           failureStreak.set(callKey, failedInARow);
-          streakNames.set(callKey, name);
+          streakCalls.set(callKey, { name, args: traceArgs });
           fruitlessFailures.set(name, (fruitlessFailures.get(name) ?? 0) + 1);
         }
         // Said at the threshold, then again after every ten further failures
@@ -1312,7 +1337,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           (lastNotedAt == null || failedInARow - lastNotedAt >= REPEATED_FAILURE_REMIND_EVERY)
         ) {
           notedAt.set(callKey, failedInARow);
-          repeatedFailures.push({ name, count: failedInARow });
+          repeatedFailures.push({ name, args: traceArgs, count: failedInARow });
         }
         // Stored and re-emitted copy: up to its own size from the raw result, secrets never leave the turn.
         const traceResult = clipHeadTail(redactToolResult(name, raw), TOOL_TRACE_RESULT_MAX_CHARS).text;
@@ -1343,47 +1368,16 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           ? { steps: fruitlessSteps, failed: new Map(fruitlessFailures) }
           : undefined;
 
-      const notes: string[] = [];
-      if (repeatedFailures.length) {
-        for (const failure of repeatedFailures) {
-          auditLog(config, {
-            type: "tool_repeated_failure",
-            details: { name: failure.name, failedInARow: failure.count, iteration: iterations + 1 },
-          });
-        }
-        // The note describes every call in a live failing streak — due for a
-        // re-say or not — so the model always sees the full picture.
-        const failingNow = [...failureStreak]
-          .filter(([, streak]) => streak >= REPEATED_FAILURE_NOTICE_AFTER)
-          .map(([key, streak]) => ({ name: streakNames.get(key) ?? key.slice(0, key.indexOf(":")), count: streak }))
-          .sort((first, second) => second.count - first.count);
-        notes.push(repeatedFailureMessage(failingNow));
-      }
-      if (nothingSucceeds) {
+      for (const failure of repeatedFailures) {
         auditLog(config, {
-          type: "tool_fruitless_steps",
+          type: "tool_repeated_failure",
           details: {
-            steps: nothingSucceeds.steps,
-            failed: Object.fromEntries(nothingSucceeds.failed),
+            name: failure.name,
+            args: failure.args,
+            failedInARow: failure.count,
             iteration: iterations + 1,
           },
         });
-        notes.push(nothingSucceedsMessage(nothingSucceeds.steps, nothingSucceeds.failed));
-      }
-      if (notes.length) {
-        // A fresh note replaces the previous one of its kind: the guidance
-        // must not pile up in the prompt for the rest of the turn.
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const m = messages[i];
-          if (!m || m.role !== "user") continue;
-          const text = String(m.content);
-          if (
-            (repeatedFailures.length && text.startsWith(REPEATED_NOTE_OPENING)) ||
-            (nothingSucceeds && text.startsWith(FRUITLESS_NOTE_OPENING))
-          ) {
-            messages.splice(i, 1);
-          }
-        }
       }
       messages.push(
         {
@@ -1395,12 +1389,47 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           role: "tool" as const,
           tool_call_id: r.id,
           content: r.content,
-        })),
-        // As user messages: providers are not required to accept a system
-        // message in the middle of a dialogue (the image and code reminders
-        // do the same).
-        ...notes.map((content) => ({ role: "user" as const, content }))
+        }))
       );
+      // The notes follow this step's results: the answer being commented on is
+      // right above them.
+      if (repeatedNoteDirty || repeatedFailures.length > 0) {
+        // A fresh note replaces the previous one — withdrawn by identity, so a
+        // real user message that happens to open the same way is never touched
+        // — and names every call in a live failing streak, each with its
+        // arguments and its own count.
+        repeatedNoteMessage = withdrawNote(repeatedNoteMessage);
+        const live = [...failureStreak]
+          .filter(([, streak]) => streak >= REPEATED_FAILURE_NOTICE_AFTER)
+          .map(([key, streak]) => {
+            const call = streakCalls.get(key)!;
+            return { name: call.name, args: clipHeadTail(call.args, NOTE_ARGS_CHARS).text, count: streak };
+          })
+          .sort((first, second) => second.count - first.count);
+        if (live.length > 0) {
+          repeatedNoteMessage = { role: "user", content: repeatedFailureMessage(live) };
+          messages.push(repeatedNoteMessage);
+        }
+      }
+      if (nothingSucceeds) {
+        auditLog(config, {
+          type: "tool_fruitless_steps",
+          details: {
+            steps: nothingSucceeds.steps,
+            failed: Object.fromEntries(nothingSucceeds.failed),
+            iteration: iterations + 1,
+          },
+        });
+        fruitlessNoteMessage = withdrawNote(fruitlessNoteMessage);
+        fruitlessNoteMessage = {
+          role: "user",
+          content: nothingSucceedsMessage(nothingSucceeds.steps, nothingSucceeds.failed),
+        };
+        messages.push(fruitlessNoteMessage);
+      } else if (succeededInStep) {
+        // A success broke the "nothing works" streak: its note is withdrawn.
+        fruitlessNoteMessage = withdrawNote(fruitlessNoteMessage);
+      }
       iterations++;
       throwIfAborted(signal);
       continue;

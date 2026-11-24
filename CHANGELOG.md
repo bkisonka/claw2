@@ -39,23 +39,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and its tool results by the context budget. `orchestrator.maxToolIterations`
   still sets a ceiling for whoever wants one. A model that keeps repeating a
   failing call is told so — see below.
-- **A model that keeps failing is told to stop.** Two counts, each said once
-  per streak, so that notes do not pile up in the prompt. From the third
+- **A model that keeps failing is told to stop.** Two counts. From the third
   failure in a row of one call — same tool, same arguments in any order; a
   success or other arguments start the count over, another call in between
   does not — a note asks it to change the approach or to answer with what it
-  has. When step after step not one tool call succeeds, though no call
-  repeats, it is told so on the fifth step and again every ten further ones,
-  and asked to stop calling tools and answer; after ten further failures
-  of the same call the note is said again — one note may be ignored. A
-  fresh note replaces the previous one instead of piling up in the prompt
-  for the rest of the turn, and it names every call in a live failing
-  streak, each with its own count. The turn goes on;
-  `tool_repeated_failure` and `tool_fruitless_steps` go to the audit log.
-  The notes — and the step-budget note — come as user messages: providers
-  are not required to accept a system message in the middle of a dialogue,
-  and the fruitless-steps note offers a change of approach instead of
-  commanding to stop.
+  has; after ten further failures of that call the note is said again, since
+  one note may be ignored. When step after step not one tool call succeeds,
+  though no call repeats, it is told so on the fifth step and again every
+  ten further ones. A fresh note replaces the previous one instead of
+  piling up in the prompt for the rest of the turn, and it names every call
+  in a live failing streak with its arguments and its own count, so two
+  failing calls of one tool are told apart; a note is withdrawn as soon as
+  its call starts working. The turn goes on; `tool_repeated_failure` (with
+  the arguments) and `tool_fruitless_steps` go to the audit log. The notes
+  — and the step-budget note and the telephony context block — come as user
+  messages: providers are not required to accept a system message in the
+  middle of a dialogue, and the fruitless-steps note offers a change of
+  approach instead of commanding to stop.
 - **Attach asks again for what the turn is still waiting for.** `GET
   /chat/attach` replays the page-text requests (`readBrowserPage`,
   `headlessPageText`) that no client has answered yet, and a page the turn

@@ -191,7 +191,7 @@ describe("agent loop", () => {
     expect(calls.slice(0, 3).map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0]);
     expect(calls[3]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("The same call failed again and again: read (3 times in a row)."),
+      content: expect.stringContaining('The same call failed again and again: read {"path":"missing.txt"} (3 times in a row).'),
     });
     // …and once per streak, however long the model keeps repeating the call: notes pile up in the prompt.
     expect(calls.slice(3).map((messages) => repeatedNotices(messages).length)).toEqual([1, 1, 1, 1]);
@@ -216,10 +216,12 @@ describe("agent loop", () => {
     const result = await run();
 
     expect(result).toMatchObject({ content: "done", toolIterations: 8 });
-    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 1]);
+    // Said on the third failure, withdrawn when it succeeds, said again on
+    // the third failure of the new streak.
+    expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 1, 0, 0, 0, 1]);
     expect(calls[4]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("read (3 times in a row)"),
+      content: expect.stringContaining('read {"path":"a"} (3 times in a row)'),
     });
   });
 
@@ -237,7 +239,7 @@ describe("agent loop", () => {
     expect(repeatedNotices(calls[2]!)).toHaveLength(0);
     expect(calls[3]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("read (3 times in a row)"),
+      content: expect.stringContaining('read {"path":"a.txt","limit":1} (3 times in a row)'),
     });
   });
 
@@ -259,7 +261,9 @@ describe("agent loop", () => {
     expect(repeatedNotices(calls[6]!)).toHaveLength(1);
     expect(calls[6]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("read (3 times in a row), read (3 times in a row)"),
+      content: expect.stringContaining(
+        'read {"path":"a"} (3 times in a row), read {"path":"b"} (3 times in a row)'
+      ),
     });
   });
 
@@ -338,6 +342,8 @@ describe("agent loop", () => {
 
     const log = readFileSync(logPath, "utf-8");
     expect(log).toContain('"event":"tool_repeated_failure"');
+    // The audit tells two failing calls of one tool apart by the arguments.
+    expect(log).toContain('"args":' + JSON.stringify('{"path":"a"}'));
     // The ceiling is optional: unbounded is omitted, not logged as null.
     expect(log).not.toContain("maxIterations");
     expect(log).toContain('"event":"tool_iteration"');
@@ -417,12 +423,12 @@ describe("agent loop", () => {
     // Said at the third failure…
     expect(calls[3]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("read (3 times in a row)"),
+      content: expect.stringContaining('read {"path":"a"} (3 times in a row)'),
     });
     // …and again at the thirteenth, with the fresh count.
     expect(calls[13]!.at(-1)).toEqual({
       role: "user",
-      content: expect.stringContaining("read (13 times in a row)"),
+      content: expect.stringContaining('read {"path":"a"} (13 times in a row)'),
     });
     // Between them the note stood alone.
     expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([
@@ -443,12 +449,82 @@ describe("agent loop", () => {
 
     // a's streak: noticed at three, re-said at thirteen.
     const notesAt = (i: number) => repeatedNotices(calls[i]!).map((message) => String(message.content));
-    expect(notesAt(5)[0]).toContain("read (3 times in a row)");
+    expect(notesAt(5)[0]).toContain('read {"path":"a"} (3 times in a row)');
     const fresh = notesAt(15);
     expect(fresh).toHaveLength(1);
-    expect(fresh[0]).toContain("read (13 times in a row)");
+    expect(fresh[0]).toContain('read {"path":"a"} (13 times in a row)');
     // b failed only twice: below the threshold, it is not named.
-    expect(fresh[0]).not.toContain("read (2 times in a row)");
+    expect(fresh[0]).not.toContain('"path":"b"');
+  });
+
+  it("withdraws the note once the noted call starts working", async () => {
+    const failing: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    const calls: Messages[] = [];
+    scriptModel([failing, failing, failing, failing, { content: "done" }], (messages) =>
+      calls.push(messages.map((m) => ({ ...m })))
+    );
+    let aFails = 3;
+    vi.mocked(dispatchToolCall).mockImplementation(async () =>
+      aFails-- > 0 ? "Error: ENOENT" : "ok"
+    );
+
+    const result = await run();
+
+    expect(result).toMatchObject({ content: "done" });
+    // The note stands while the call still fails…
+    expect(repeatedNotices(calls[3]!)).toHaveLength(1);
+    // …and is withdrawn as soon as the very call works: the prompt no longer names it.
+    expect(repeatedNotices(calls[4]!)).toHaveLength(0);
+  });
+
+  it("refreshes the note when one of its calls starts working", async () => {
+    const readA: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    const readB: Step = { tool: [{ name: "read", args: { path: "b" } }] };
+    const calls: Messages[] = [];
+    scriptModel([readA, readA, readA, readB, readB, readB, readB, { content: "done" }], (messages) =>
+      calls.push(messages.map((m) => ({ ...m })))
+    );
+    let bFails = 3;
+    vi.mocked(dispatchToolCall).mockImplementation(async (_ctx, _state, _name, args) => {
+      const path = (args as { path?: string }).path;
+      if (path === "b" && bFails-- > 0) return "Error: ENOENT";
+      return path === "a" ? "Error: ENOENT" : "ok";
+    });
+
+    await run();
+
+    // Both live streaks are named while both fail…
+    expect(calls[6]!.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining(
+        'read {"path":"a"} (3 times in a row), read {"path":"b"} (3 times in a row)'
+      ),
+    });
+    // …and b's success refreshes the note down to a alone.
+    expect(calls[7]!.at(-1)).toEqual({
+      role: "user",
+      content: expect.stringContaining('read {"path":"a"} (3 times in a row)'),
+    });
+    expect(String((calls[7]!.at(-1) as { content: string }).content)).not.toContain('"path":"b"');
+  });
+
+  it("the telephony context block joins the dialogue as a user message", async () => {
+    scriptModel([{ content: "Calling." }]);
+    await runOrchestrator({
+      config: {
+        llm: { provider: "openai", model: "test-model" },
+        agentsDir,
+        sip: { enabled: true, server: "sip:test.example", user: "u", password: "p" },
+      } as Claw2Config,
+      userMessage: "Позвони на номер +7 999 000-00-00",
+    });
+
+    const seen = vi.mocked(chat).mock.calls[0]![2] as Messages;
+    const block = seen.find((m) => String(m.content).startsWith("[Telephony — live call]"));
+    expect(block).toBeDefined();
+    // Like the loop notes: user, not system — a provider need not accept a
+    // system message mid-dialogue, and phone_call can inject this late.
+    expect(block!.role).toBe("user");
   });
 
   it("never notices a call that succeeds, however often it is repeated", async () => {
