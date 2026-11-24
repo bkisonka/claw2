@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -79,11 +79,11 @@ const lastToolMessage = (messages: Messages) => {
 };
 
 const isNote = (message: Messages[number], opening: string): boolean =>
-  message.role === "system" && String(message.content).startsWith(opening);
+  message.role === "user" && String(message.content).startsWith(opening);
 /** The notes that tell the model that one call keeps failing. */
 const repeatedNotices = (messages: Messages) => messages.filter((m) => isNote(m, "The same call failed again and again"));
 /** The notes that tell it that step after step nothing succeeds. */
-const nothingWorksNotices = (messages: Messages) => messages.filter((m) => isNote(m, "Nothing is working:"));
+const nothingWorksNotices = (messages: Messages) => messages.filter((m) => isNote(m, "Nothing has succeeded for"));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -190,7 +190,7 @@ describe("agent loop", () => {
     // Twice is a retry. The notice follows the third failure, right after its result…
     expect(calls.slice(0, 3).map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0]);
     expect(calls[3]!.at(-1)).toEqual({
-      role: "system",
+      role: "user",
       content: expect.stringContaining("The same call failed again and again: read (3 times in a row)."),
     });
     // …and once per streak, however long the model keeps repeating the call: notes pile up in the prompt.
@@ -218,7 +218,7 @@ describe("agent loop", () => {
     expect(result).toMatchObject({ content: "done", toolIterations: 8 });
     expect(calls.map((messages) => repeatedNotices(messages).length)).toEqual([0, 0, 0, 0, 1, 1, 1, 1, 2]);
     expect(calls[4]!.at(-1)).toEqual({
-      role: "system",
+      role: "user",
       content: expect.stringContaining("read (3 times in a row)"),
     });
   });
@@ -236,7 +236,7 @@ describe("agent loop", () => {
 
     expect(repeatedNotices(calls[2]!)).toHaveLength(0);
     expect(calls[3]!.at(-1)).toEqual({
-      role: "system",
+      role: "user",
       content: expect.stringContaining("read (3 times in a row)"),
     });
   });
@@ -279,12 +279,12 @@ describe("agent loop", () => {
       0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2,
     ]);
     expect(calls[5]!.at(-1)).toEqual({
-      role: "system",
-      content: expect.stringContaining("5 steps in a row and not one tool call succeeded (read ×5)"),
+      role: "user",
+      content: expect.stringContaining("Nothing has succeeded for 5 steps in a row (read ×5)"),
     });
     expect(calls[15]!.at(-1)).toEqual({
-      role: "system",
-      content: expect.stringContaining("15 steps in a row and not one tool call succeeded (read ×15)"),
+      role: "user",
+      content: expect.stringContaining("Nothing has succeeded for 15 steps in a row (read ×15)"),
     });
   });
 
@@ -313,6 +313,43 @@ describe("agent loop", () => {
     expect(calls.map((messages) => nothingWorksNotices(messages).length)).toEqual([
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
     ]);
+  });
+
+  it("the audit logs a repeated failure, and no ceiling that is not set", async () => {
+    const logPath = join(agentsDir, "audit.log");
+    const failing: Step = { tool: [{ name: "read", args: { path: "a" } }] };
+    scriptModel([failing, failing, failing, { content: "The file is not there." }]);
+    vi.mocked(dispatchToolCall).mockResolvedValue("Error: ENOENT");
+
+    await runOrchestrator({
+      config: {
+        llm: { provider: "openai", model: "test-model" },
+        agentsDir,
+        audit: { logPath, logFormat: "json" },
+      } as Claw2Config,
+      userMessage: "question",
+    });
+
+    const log = readFileSync(logPath, "utf-8");
+    expect(log).toContain('"event":"tool_repeated_failure"');
+    // The ceiling is optional: unbounded is omitted, not logged as null.
+    expect(log).not.toContain("maxIterations");
+    expect(log).toContain('"event":"tool_iteration"');
+
+    // With a ceiling set, it is logged.
+    const boundedPath = join(agentsDir, "audit-bounded.log");
+    scriptModel([{ tool: [{ name: "read", args: { path: "a" } }] }, { content: "done" }]);
+    vi.mocked(dispatchToolCall).mockResolvedValue("ok");
+    await runOrchestrator({
+      config: {
+        llm: { provider: "openai", model: "test-model" },
+        agentsDir,
+        orchestrator: { maxToolIterations: 7 },
+        audit: { logPath: boundedPath, logFormat: "json" },
+      } as Claw2Config,
+      userMessage: "question",
+    });
+    expect(readFileSync(boundedPath, "utf-8")).toContain('"maxIterations":7');
   });
 
   it("never notices a call that succeeds, however often it is repeated", async () => {

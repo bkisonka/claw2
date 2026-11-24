@@ -26,6 +26,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The steps fold stays closed.** While a turn runs, its header carries the
+  steps as a ticker line — `run_agent download-file.js ✓924 ms → read … ✕1.2
+  s → …`, the nearest ones scrolling by — and the fold is there to read the
+  whole list on click. The fold used to open on its own while the turn ran
+  and grow with every step.
 - **The model is not limited to 30 tool steps per turn anymore.** Nothing in
   the code counts its steps now: a turn is bounded by `gateway.chatRunMaxMs`
   and its tool results by the context budget. `orchestrator.maxToolIterations`
@@ -40,6 +45,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   repeats, it is told so on the fifth step and again every ten further ones,
   and asked to stop calling tools and answer. The turn goes on;
   `tool_repeated_failure` and `tool_fruitless_steps` go to the audit log.
+  Both notes come as user messages — providers are not required to accept a
+  system message in the middle of a dialogue — and the fruitless-steps note
+  offers a change of approach instead of commanding to stop.
 - **Attach asks again for what the turn is still waiting for.** `GET
   /chat/attach` replays the page-text requests (`readBrowserPage`,
   `headlessPageText`) that no client has answered yet, and a page the turn
@@ -59,6 +67,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A shutdown during the setup of a turn reaches its client.** While a turn
+  was being prepared — above all, while it waited for the turn it superseded
+  to be stored — a stop ended its response as an empty `200`: no frame, no
+  code, and the question vanished from the history. Now the stream client
+  gets a `gateway_restart` terminal, a client without a stream gets `200`
+  with the code, and the question is stored with an empty answer marked as
+  cut short. A Stop during the setup ends the stream with `chat_cancelled`
+  instead of nothing.
+- **A message that supersedes a running turn gets its stream headers at
+  once.** They used to arrive only after the superseded turn was stored —
+  up to `gateway.chatRunSettleWaitMs` (default 15000) with no byte sent.
+- **`POST /api/restart` stops the running turns first.** It used to spawn
+  its replacement and `process.exit(0)` directly, past the graceful stop;
+  now the turns are stopped and stored, and the replacement starts only
+  after the port is free.
+- **The container kills keep their reserve even when the event loop ran
+  late.** The reserve is a floor again: lateness while the turns were
+  stopping used to take it away second for second.
+- **`tool_iteration` in the audit does not log a ceiling that is not set**,
+  and logs the set one. Since the step limit was removed it logged
+  `"maxIterations":null` on every iteration.
 - **A restart does not read as a Stop.** A turn stopped by the gateway going
   down ends with `code: "gateway_restart"` and its stored answer carries
   `interruptedBy: "gateway_restart"`, which `/chat/history` returns; the web

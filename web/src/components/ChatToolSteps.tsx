@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ToolStep } from "../api/chat";
 import { useT } from "../i18n";
-import { formatStepDuration, isStepRunning, toolStepSubject, toolStepTitle, totalStepDuration } from "../lib/toolSteps";
+import { formatStepDuration, isStepRunning, stepsTicker, tickerDuration, toolStepSubject, totalStepDuration } from "../lib/toolSteps";
 
 type Props = {
   steps: ToolStep[];
-  /** The turn is still running: the list stays open and its summary names the current step. */
+  /** The turn is still running: the header carries the steps as a ticker line. */
   running: boolean;
 };
 
@@ -28,30 +28,23 @@ const STATUS_MARK: Record<StepStatus, string> = {
 };
 
 /**
- * The tool steps of an assistant turn. While the turn runs the steps are
- * listed as they happen — what the agent is doing instead of a bare
- * "thinking" label; once it is over they fold into one line.
+ * The tool steps of an assistant turn. The fold stays closed: while the turn
+ * runs, the header carries the steps as a ticker line, and the fold is there
+ * to read the whole list when wanted.
  */
 export function ChatToolSteps({ steps, running }: Props) {
   const t = useT();
-  const [open, setOpen] = useState(running);
-  // Open while the turn runs, folded once it is over (the user can toggle either way).
-  useEffect(() => {
-    setOpen(running);
-  }, [running]);
+  const [open, setOpen] = useState(false);
+  // Fixed for the lifetime of the line: re-timing the marquee on every step
+  // would make it jump.
+  const [duration] = useState(() => tickerDuration(stepsTicker(steps)));
   if (!steps.length) return null;
 
-  const current = steps.find(isStepRunning);
   const total = totalStepDuration(steps);
   const count = t("chat.stepsCount", { count: steps.length });
   const totalLabel = formatStepDuration(total);
-  const summary = running
-    ? current
-      ? t("chat.stepsRunning", { name: toolStepTitle(current) })
-      : count
-    : totalLabel
-      ? `${count} · ${totalLabel}`
-      : count;
+  const summary = totalLabel ? `${count} · ${totalLabel}` : count;
+  const ticker = running ? stepsTicker(steps) : "";
 
   return (
     <div className="chat-tool-steps" data-running={running ? "true" : undefined}>
@@ -66,6 +59,13 @@ export function ChatToolSteps({ steps, running }: Props) {
           {open ? "▾" : "▸"}
         </span>
         <span className="chat-tool-steps-summary">{summary}</span>
+        {ticker ? (
+          <span className="chat-tool-steps-ticker" aria-hidden>
+            <span className="chat-tool-steps-ticker-line" style={{ animationDuration: duration }}>
+              {ticker}
+            </span>
+          </span>
+        ) : null}
       </button>
       {open ? (
         <ol className="chat-tool-steps-list">

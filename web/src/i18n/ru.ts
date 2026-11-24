@@ -403,7 +403,6 @@ export const ru: Record<MessageKey, string> = {
   "chat.workingPreparing": "Готовлю ответ…",
   "chat.workingStill": "Ещё думаю…",
   "chat.stepsCount": "Шаги: {count}",
-  "chat.stepsRunning": "Выполняю {name}…",
   "chat.stepsToggleTitle": "Показать или скрыть шаги инструментов",
   "chat.stepsInterrupted": "прервано",
   "chat.stepsFailed": "ошибка",

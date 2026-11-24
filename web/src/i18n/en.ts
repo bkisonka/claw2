@@ -401,7 +401,6 @@ export const en = {
   "chat.workingPreparing": "Preparing a reply…",
   "chat.workingStill": "Still thinking…",
   "chat.stepsCount": "Steps: {count}",
-  "chat.stepsRunning": "Running {name}…",
   "chat.stepsToggleTitle": "Show or hide the tool steps",
   "chat.stepsInterrupted": "interrupted",
   "chat.stepsFailed": "failed",

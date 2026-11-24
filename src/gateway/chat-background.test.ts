@@ -677,11 +677,129 @@ describe("background chat turns", () => {
     const elapsed = Date.now() - started;
     stubborn.giveUp();
 
-    // The turns had 400 ms and used all of them: the kills still get their 400.
+    // The turns had 400 ms and used all of them: the kills get their 400, exactly.
     expect(waitForKills).toHaveBeenCalledTimes(1);
-    expect(waitForKills.mock.calls[0]![0]).toBeGreaterThanOrEqual(390);
+    expect(waitForKills.mock.calls[0]![0]).toBe(400);
     // …and the whole stop did not outgrow the grace period.
     expect(elapsed).toBeLessThan(800);
+  });
+
+  it("a shutdown keeps the kills' reserve even when the event loop ran late", async () => {
+    const sessionId = newSession();
+    const giveUpRef: { current?: () => void } = {};
+    mockOrchestrator.mockImplementation(
+      (options) =>
+        new Promise((_resolve, reject) => {
+          giveUpRef.current = () => reject(new DOMException("Aborted", "AbortError"));
+          options.signal?.addEventListener(
+            "abort",
+            () => {
+              // Tearing a skill down can block the loop for a moment: timers fire late.
+              const until = Date.now() + 60;
+              while (Date.now() < until) {}
+              // …and the turn still hangs: it will not settle within its time.
+            },
+            { once: true }
+          );
+        })
+    );
+    await postChat(true, sessionId);
+    const waitForKills = vi.fn<(ms: number) => Promise<void>>(async () => {});
+
+    await shutdownGateway("SIGTERM", { graceMs: 800, exit: () => {}, waitForKills });
+
+    // The turns used their whole 400 ms — plus 60 ms of lateness — so only 340
+    // was left, and the floor still gave the kills their 400.
+    expect(waitForKills.mock.calls[0]![0]).toBe(400);
+    giveUpRef.current?.();
+  });
+
+  it("a shutdown during the setup of a turn reaches its client and keeps the question", async () => {
+    configRef.current = {
+      ...configRef.current,
+      gateway: { chatRunSettleWaitMs: 3000 },
+      audit: { logPath: join(dir, "audit-setup.log"), logFormat: "json" },
+    };
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    mockOrchestrator.mockResolvedValue({ content: "new answer" });
+    // This message supersedes a running turn: its headers must not wait for the setup to finish.
+    const started = Date.now();
+    const second = tap(await postChat(true, sessionId));
+    expect(Date.now() - started).toBeLessThan(1_000);
+    await stubborn.superseded;
+
+    await shutdownGateway("SIGTERM", { graceMs: 3000, exit: () => {} });
+
+    expect(await second.waitFor((frame) => frame.done === true)).toEqual({
+      done: true,
+      sessionId,
+      error: "Gateway is restarting",
+      code: "gateway_restart",
+    });
+    // The question of the turn that never ran is stored, with its marked empty answer.
+    const stored = repo.getChatHistory(sessionId, "default");
+    expect(stored).toEqual(
+      expect.arrayContaining([
+        { role: "user", content: `Question ${sessionId}` },
+        { role: "assistant", content: "", meta: '{"interruptedBy":"gateway_restart"}' },
+      ])
+    );
+    // The audit tells this stop apart by the event, in the setup path too.
+    const events = readFileSync(join(dir, "audit-setup.log"), "utf-8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { event: string });
+    expect(events.filter((event) => event.event === "chat_gateway_restart")).toHaveLength(1);
+    stubborn.giveUp();
+  });
+
+  it("a Stop during the setup ends the stream and stores nothing", async () => {
+    configRef.current = { ...configRef.current, gateway: { chatRunSettleWaitMs: 3000 } };
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    mockOrchestrator.mockResolvedValue({ content: "new answer" });
+    const second = tap(await postChat(true, sessionId));
+    await stubborn.superseded;
+
+    await cancelChat(sessionId);
+    stubborn.giveUp();
+
+    expect(await second.waitFor((frame) => frame.done === true)).toMatchObject({
+      done: true,
+      code: "chat_cancelled",
+    });
+    // The user stopped it with nothing to show: only the superseded turn is stored.
+    expect(repo.getChatHistory(sessionId, "default")).toEqual([
+      { role: "user", content: `Question ${sessionId}` },
+      { role: "assistant", content: "old " },
+    ]);
+  });
+
+  it("a shutdown during the setup answers a client without a stream", async () => {
+    configRef.current = { ...configRef.current, gateway: { chatRunSettleWaitMs: 3000 } };
+    const sessionId = newSession();
+    const stubborn = stubbornTurn();
+    await postChat(true, sessionId);
+    await stubborn.entered;
+    mockOrchestrator.mockResolvedValue({ content: "new answer" });
+    const pending = postChat(false, sessionId);
+    await stubborn.superseded;
+
+    await shutdownGateway("SIGTERM", { graceMs: 3000, exit: () => {} });
+
+    const response = await pending;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      sessionId,
+      error: "Gateway is restarting",
+      code: "gateway_restart",
+    });
+    stubborn.giveUp();
   });
 
   it("a turn the restart cut short before its first word keeps its question", async () => {

@@ -66,6 +66,37 @@ export function toolStepTitle(step: ToolStep): string {
   return subject ? `${step.name} ${subject}` : step.name;
 }
 
+/** The status mark of a step: running, done, failed, or cut short. */
+export function stepMark(step: ToolStep): string {
+  if (isStepRunning(step)) return "…";
+  if (step.ok == null) return "–";
+  return step.ok ? "✓" : "✕";
+}
+
+/**
+ * The running header's ticker line: the nearest steps as
+ * "run_agent download-file.js ✓924 ms", newest last, joined with arrows —
+ * what the agent is doing, without opening the fold.
+ */
+export function stepsTicker(steps: readonly ToolStep[], howMany = 8): string {
+  return steps
+    .slice(-howMany)
+    .map((step) => {
+      const mark = stepMark(step);
+      const duration = formatStepDuration(step.durationMs);
+      // A finished step carries its duration — succeeded or failed; a running
+      // or cut-short one has none to show.
+      const note = mark === "…" || mark === "–" || duration == null ? mark : `${mark}${duration}`;
+      return [toolStepTitle(step), note].filter(Boolean).join(" ");
+    })
+    .join(" → ");
+}
+
+/** Marquee duration for a ticker text: the longer the line, the more time it gets. */
+export function tickerDuration(text: string): string {
+  return `${Math.min(45, Math.max(8, Math.round(text.length / 30)))}s`;
+}
+
 /** "12 ms" / "2.3 s"; null when the step has no duration (still running or interrupted). */
 export function formatStepDuration(ms: number | null | undefined): string | null {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return null;

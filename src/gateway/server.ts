@@ -95,9 +95,9 @@ import {
   type ChatRun,
   type ChatRunEvent,
 } from "./chat-runs.js";
-import { installGracefulShutdown } from "./shutdown.js";
+import { installGracefulShutdown, shutdownGateway } from "./shutdown.js";
 import { applyPromptContext, limitHistoryForPrompt, nextPromptCoveredCount } from "./prompt-history.js";
-import { initDb, getChatRepository } from "./db/index.js";
+import { initDb, getChatRepository, type ChatRepository } from "./db/index.js";
 import { createTranscriptSessionAccess, isTranscriptToolsEnabled } from "../transcript/index.js";
 import {
   getAuthPool,
@@ -1417,8 +1417,15 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       let activeSessionId = "";
       let streamSessionId: string | undefined;
       let auditConfig = config;
+      /** The catch needs these when the setup itself is cut short before the executor ran. */
+      let requestChatRepo: ChatRepository | null | undefined;
+      let requestUserMessage = "";
+      let requestAttachments: ReturnType<typeof saveUploadedDocuments> = [];
+      /** The stream's keepalive; started when the headers are opened, stopped at the terminal. */
+      let stopKeepalive: (() => void) | undefined;
       const requestStartMs = Date.now();
       const openChatStream = (sessionId: string) => {
+        if (streamSessionId !== undefined) return;
         res.writeHead(200, {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
@@ -1612,6 +1619,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           return;
         }
         const run = begun.run;
+        requestUserMessage = storedUserMessage;
         activeRun = run;
         const signal = run.controller.signal;
         // A background turn outlives this request: a dropped connection only
@@ -1627,6 +1635,20 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         req.once("aborted", onRequestAborted);
         res.once("close", onResponseClose);
         throwIfAborted(signal);
+        // A message that supersedes a running turn waits for that turn to be
+        // stored; the client must not sit without headers for that time.
+        if (useStream) {
+          openChatStream(sessionId);
+          stopKeepalive = startSseKeepalive(res, keepaliveMs);
+          res.once("close", () => stopKeepalive?.());
+        }
+        // The chats database is needed by the catch as well: a turn cut short
+        // during this setup stores its question there.
+        let chatRepo = getChatRepository();
+        if (!chatRepo && config.gateway?.chatsDbPath) {
+          chatRepo = initDb(resolve(process.cwd(), config.gateway.chatsDbPath));
+        }
+        requestChatRepo = chatRepo;
         // The turn this one superseded is stored first, so the new turn's history has it.
         if (begun.previous) {
           const settleWaitMs = config.gateway?.chatRunSettleWaitMs ?? DEFAULT_CHAT_RUN_SETTLE_WAIT_MS;
@@ -1638,10 +1660,6 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           throwIfAborted(signal);
         }
         const messageForTitle = message || pageContext?.text?.slice(0, 80) || "browser";
-        let chatRepo = getChatRepository();
-        if (!chatRepo && config.gateway?.chatsDbPath) {
-          chatRepo = initDb(resolve(process.cwd(), config.gateway.chatsDbPath));
-        }
         const projectIdFromBody =
           typeof data.project_id === "string"
             ? data.project_id.trim() || null
@@ -1766,6 +1784,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           Array.isArray(raw) && raw.length > 0
             ? saveUploadedDocuments(raw as IncomingDocument[], sessionId, effectiveConfig)
             : [];
+        requestAttachments = attachedDocuments;
         const tenantEndpointError = await assertTenantLlmEndpointPublic(config, userId, effectiveConfig);
         if (tenantEndpointError) {
           if (useStream) {
@@ -2082,11 +2101,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           }
         };
         if (useStream) {
-          openChatStream(sessionId);
-          const stopKeepalive = startSseKeepalive(res, keepaliveMs);
+          // The stream was opened before the setup; only the subscription is added here.
           const unsubscribe = subscribeChatRun(run, (event) => {
             if ("terminal" in event) {
-              stopKeepalive();
+              stopKeepalive?.();
               finishChatStream({ ...event.terminal });
               return;
             }
@@ -2096,7 +2114,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           // The response now belongs to the run; it unsubscribes when the client goes away.
           res.once("close", () => {
             unsubscribe();
-            stopKeepalive();
+            stopKeepalive?.();
           });
         }
 
@@ -2130,18 +2148,53 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         // Setup failed before the turn got an executor of its own.
         const cancelled = activeRun?.controller.signal.aborted === true || isAbortError(err);
         if (cancelled) {
+          const reason = activeRun?.controller.signal.reason ? String(activeRun.controller.signal.reason) : "";
+          const restart = reason === SHUTDOWN_ABORT_REASON;
+          const error = restart ? "Gateway is restarting" : "Chat cancelled";
           auditLog(auditConfig, {
-            type: "chat_cancelled",
+            type: restart ? "chat_gateway_restart" : "chat_cancelled",
             sessionId: activeSessionId || undefined,
             details: {
-              reason: activeRun?.controller.signal.reason
-                ? String(activeRun.controller.signal.reason)
-                : String(err),
+              reason: reason || String(err),
               durationMs: Date.now() - requestStartMs,
             },
           });
+          // The turn never reached its executor, so nothing stored its
+          // question. A restart keeps it — with an empty answer marked as cut
+          // short — or the question would vanish as if it had never been asked.
+          if (restart && activeRun && !activeRun.stored && requestUserMessage) {
+            try {
+              const userCells = imageCellsFromUploads(requestAttachments);
+              if (requestChatRepo) {                requestChatRepo.appendTurn(
+                  activeSessionId,
+                  userId,
+                  { content: requestUserMessage, meta: cellsToMeta(userCells) },
+                  { content: "", meta: cellsToMeta([], "gateway_restart") }
+                );
+              } else {
+                appendToSession(activeSessionId, "user", requestUserMessage, undefined);
+                appendToSession(activeSessionId, "assistant", "[no answer: the gateway was restarting]", undefined);
+              }
+              markChatRunStored(activeRun);
+            } catch (storeErr) {
+              console.error(
+                `[gateway] the question of chat ${activeSessionId} was not stored during the stop:`,
+                storeErr instanceof Error ? storeErr.message : storeErr
+              );
+            }
+          }
           if (streamSessionId !== undefined) {
-            finishChatStream({ error: "Chat cancelled", code: "chat_cancelled" });
+            finishChatStream({ error, code: restart ? "gateway_restart" : "chat_cancelled" });
+          } else if (!res.headersSent) {
+            // A restart is not a failed request.
+            res.writeHead(200, {
+              "Content-Type": JSON_TYPE,
+              "Access-Control-Allow-Origin": corsOrigin,
+              "X-Session-Id": activeSessionId,
+            });
+            res.end(
+              JSON.stringify({ sessionId: activeSessionId, error, code: restart ? "gateway_restart" : "chat_cancelled" })
+            );
           } else if (!res.writableEnded && !res.destroyed) {
             res.end();
           }
@@ -3969,14 +4022,23 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
       res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
       res.end(JSON.stringify({ ok: true }));
       setTimeout(() => {
-        const child = spawn(process.argv[0], process.argv.slice(1), {
-          cwd: process.cwd(),
-          env: process.env,
-          detached: true,
-          stdio: "inherit",
+        // The replacement starts only after the port is free: the running
+        // turns are stopped and stored first, as on any other stop.
+        void shutdownGateway("restart", {
+          exit: () => {
+            const child = spawn(process.argv[0], process.argv.slice(1), {
+              cwd: process.cwd(),
+              env: process.env,
+              detached: true,
+              stdio: "inherit",
+            });
+            child.unref();
+            process.exit(0);
+          },
+        }).catch((err) => {
+          console.error("[gateway] restart failed:", err);
+          process.exit(1);
         });
-        child.unref();
-        process.exit(0);
       }, 300);
       return;
     }

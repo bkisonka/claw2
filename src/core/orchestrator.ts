@@ -204,7 +204,7 @@ function repeatedFailureMessage(failures: Array<{ name: string; count: number }>
 /** Appended when step after step not one tool call succeeds. The calls need not be the same. */
 function nothingSucceedsMessage(steps: number, failed: ReadonlyMap<string, number>): string {
   const calls = [...failed].map(([name, count]) => `${name} ×${count}`).join(", ");
-  return `Nothing is working: ${steps} steps in a row and not one tool call succeeded (${calls}). Another attempt of this kind will fail the same way. Stop calling tools and answer the user: what you tried, what failed, and what could be done next.`;
+  return `Nothing has succeeded for ${steps} steps in a row (${calls}). These attempts are not making progress: either change the approach, or stop calling tools and answer the user with what you have — what you tried, what failed, and what could be done next.`;
 }
 
 async function logHssResponseAnalysis(
@@ -1245,7 +1245,12 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       });
       auditLog(config, {
         type: "tool_iteration",
-        details: { iteration: iterations + 1, maxIterations, tools: toolDetails },
+        details: {
+          iteration: iterations + 1,
+          // The ceiling is optional; unbounded is omitted, not null.
+          ...(Number.isFinite(maxIterations) && { maxIterations }),
+          tools: toolDetails,
+        },
       });
       const toolResults: { id: string; content: string }[] = [];
       const repeatedFailures: Array<{ name: string; count: number }> = [];
@@ -1352,7 +1357,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
           tool_call_id: r.id,
           content: r.content,
         })),
-        ...notes.map((content) => ({ role: "system" as const, content }))
+        // As user messages: providers are not required to accept a system
+        // message in the middle of a dialogue (the image and code reminders
+        // do the same).
+        ...notes.map((content) => ({ role: "user" as const, content }))
       );
       iterations++;
       throwIfAborted(signal);

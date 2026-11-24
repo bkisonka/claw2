@@ -50,10 +50,10 @@ export async function shutdownGateway(signal: string, options: GracefulShutdownO
   const startedAt = Date.now();
   const stuck = await stopChatRunsForShutdown(SHUTDOWN_ABORT_REASON, turnsMs);
   // The skills of the stopped turns were told to die: let the kills reach the
-  // daemon, or their containers outlive the gateway. Their reserve is left
-  // over even when the turns used all of their time; what the turns did not
-  // need is theirs too.
-  await waitForKills(Math.max(0, graceMs - (Date.now() - startedAt)));
+  // daemon, or their containers outlive the gateway. What the turns did not
+  // need is the kills' as well, and the reserve holds even when the event
+  // loop ran late while the turns were stopping.
+  await waitForKills(Math.max(0, graceMs - (Date.now() - startedAt), killsMs));
   if (stuck.length > 0) {
     console.error(
       `[gateway] ${stuck.length} turn(s) did not stop in the ${turnsMs} ms given to them (of ${graceMs} ms) and are lost: ${stuck
