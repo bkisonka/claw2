@@ -20,6 +20,8 @@ export type AssistantAvatar =
 export type AssistantIdentityPayload = {
   name?: string;
   avatar: { kind: "preset"; value: string } | { kind: "image"; mimeType: string; dataUrl: string };
+  /** Avatar diameter in px; emoji scales proportionally on the client. */
+  avatarSize: number;
   isDefault: boolean;
 };
 
@@ -35,6 +37,7 @@ export async function getAssistantIdentity(): Promise<AssistantIdentityPayload> 
 export async function putAssistantIdentity(body: {
   name?: string;
   avatar?: AssistantAvatar | null;
+  avatarSize?: number;
 }): Promise<AssistantIdentityPayload> {
   const res = await fetch(`${apiBase}/api/assistant-identity`, {
     method: "PUT",

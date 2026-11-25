@@ -55,6 +55,7 @@ export const en = {
   "persona.nameLabel": "Assistant name",
   "persona.namePlaceholder": "Agent",
   "persona.avatarLabel": "Avatar",
+  "persona.sizeLabel": "Avatar size",
   "persona.avatarUpload": "Upload image…",
   "persona.avatarReset": "Reset",
   "persona.avatarBadFile": "This file could not be read as an image. PNG, JPEG, WebP or GIF, please.",

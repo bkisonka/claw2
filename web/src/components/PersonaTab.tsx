@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getAssistantPersona, putAssistantPersona } from "../api/assistantPersona";
 import {
@@ -67,6 +67,7 @@ export function PersonaTab() {
   const [compact, setCompact] = useState("");
   const [identityName, setIdentityName] = useState("");
   const [avatar, setAvatar] = useState<AssistantAvatar | null>(null);
+  const [avatarSize, setAvatarSize] = useState(52);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +82,7 @@ export function PersonaTab() {
       setFull(personaData.full ?? "");
       setCompact(personaData.compact ?? "");
       setIdentityName(identityData.name ?? "");
+      setAvatarSize(identityData.avatarSize ?? 52);
       const loadedAvatar = identityData.avatar;
       // The gateway serves the image as a data URL; saving needs the base64 back.
       setAvatar(
@@ -112,6 +114,7 @@ export function PersonaTab() {
       const identityPayload = await putAssistantIdentity({
         name: identityName.trim() || undefined,
         avatar: avatar ?? { kind: "preset", value: "🤖" },
+        avatarSize,
       });
       setIdentity(identityPayload);
       await putAssistantPersona({ full, compact });
@@ -177,7 +180,8 @@ export function PersonaTab() {
           <span>{t("persona.avatarLabel")}</span>
           <div className="persona-avatar-row">
             <span
-              className="assistant-avatar assistant-avatar--welcome assistant-avatar--idle persona-avatar-preview"
+              className="assistant-avatar assistant-avatar--idle persona-avatar-preview"
+              style={{ "--avatar-size": `${avatarSize}px` } as CSSProperties}
               aria-hidden
             >
               <span className="assistant-avatar-disc">
@@ -215,6 +219,21 @@ export function PersonaTab() {
               />
             </div>
           </div>
+          <label className="persona-avatar-size">
+            <span>{t("persona.sizeLabel")}</span>
+            <input
+              type="range"
+              min={24}
+              max={96}
+              step={2}
+              value={avatarSize}
+              onChange={(e) => {
+                setAvatarSize(Number(e.target.value));
+                setSaved(false);
+              }}
+            />
+            <span className="persona-avatar-size-value">{avatarSize}px</span>
+          </label>
           <div className="persona-avatar-presets" role="listbox" aria-label={t("persona.avatarLabel")}>
             {AVATAR_PRESETS.map((emoji) => (
               <button

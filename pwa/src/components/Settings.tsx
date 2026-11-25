@@ -114,7 +114,11 @@ export function Settings() {
       <SettingsFold title="Персона">
         <div className="persona-avatar-block">
           <div className="persona-avatar-row">
-            <span className="assistant-avatar assistant-avatar--welcome assistant-avatar--idle persona-avatar-preview" aria-hidden>
+            <span
+              className="assistant-avatar assistant-avatar--idle persona-avatar-preview"
+              style={{ "--avatar-size": `${s.assistantAvatarSize || 52}px` } as React.CSSProperties}
+              aria-hidden
+            >
               <span className="assistant-avatar-disc">
                 {s.assistantAvatar.startsWith("data:") ? (
                   <img className="assistant-avatar-img" src={s.assistantAvatar} alt="" />
@@ -142,6 +146,18 @@ export function Settings() {
               />
             </div>
           </div>
+          <label className="persona-avatar-size">
+            <span>Размер аватара</span>
+            <input
+              type="range"
+              min={24}
+              max={96}
+              step={2}
+              value={s.assistantAvatarSize || 52}
+              onChange={(e) => patch({ assistantAvatarSize: Number(e.target.value) })}
+            />
+            <span className="persona-avatar-size-value">{s.assistantAvatarSize || 52}px</span>
+          </label>
           <div className="persona-avatar-presets" role="listbox" aria-label="Аватар ассистента">
             {AVATAR_PRESETS.map((emoji) => (
               <button

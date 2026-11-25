@@ -21,6 +21,20 @@ export function useAssistantAvatar(): string {
   return avatar;
 }
 
+/** The user-set avatar diameter; every surface scales from this CSS variable. */
+export function useAssistantAvatarSize(): number {
+  const [size, setSize] = useState(() => getSettings().assistantAvatarSize || 52);
+  useEffect(() => {
+    document.documentElement.style.setProperty("--avatar-size", `${size}px`);
+    return onSettingsChange((s) => {
+      const next = s.assistantAvatarSize || 52;
+      setSize(next);
+      document.documentElement.style.setProperty("--avatar-size", `${next}px`);
+    });
+  }, [size]);
+  return size;
+}
+
 export function useAssistantName(): string {
   const [name, setName] = useState(() => getSettings().assistantName || "Claw2");
   useEffect(() => onSettingsChange((s) => setName(s.assistantName || "Claw2")), []);
@@ -39,6 +53,7 @@ export function AssistantAvatar({
   emotion?: string | null;
 }) {
   const avatar = useAssistantAvatar();
+  useAssistantAvatarSize();
   const isImage = avatar.startsWith("data:");
   const emotionKey = emotion ? normalizeEmotion(emotion) : null;
   const badge = emotionKey ? EMOTION_EMOJI[emotionKey] : "";

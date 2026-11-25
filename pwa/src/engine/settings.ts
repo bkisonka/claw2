@@ -88,6 +88,8 @@ export type AppSettings = {
   assistantName: string;
   /** The assistant's face in the chat: a preset emoji or a downscaled data URL. */
   assistantAvatar: string;
+  /** Avatar diameter in px (24–96); the emoji scales with it. */
+  assistantAvatarSize: number;
   memory: MemorySettings;
   search: SearchSettings;
   images: ImagesSettings;
@@ -134,6 +136,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   assistantName: "Claw2",
   assistantAvatar: "🤖",
+  assistantAvatarSize: 52,
   memory: {
     enabled: false,
     embeddingBaseURL: "",

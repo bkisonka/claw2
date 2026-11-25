@@ -75,6 +75,8 @@ export interface Claw2Config {
     identity?: {
       name?: string;
       avatar?: { kind: "preset"; value: string } | { kind: "image"; mimeType: string; dataBase64: string };
+      /** Avatar diameter in px (24–96); emoji scales proportionally. */
+      avatarSize?: number;
     };
   };
   agentsDir?: string;

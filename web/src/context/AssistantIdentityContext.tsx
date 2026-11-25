@@ -36,6 +36,17 @@ export function AssistantIdentityProvider({ children }: { children: React.ReactN
     void refreshIdentity();
   }, [refreshIdentity]);
 
+  // The avatar diameter is a CSS variable: every surface (messages, header,
+  // composer, welcome) scales from it, emoji included.
+  useEffect(() => {
+    const size = identity?.avatarSize;
+    if (size && Number.isFinite(size)) {
+      document.documentElement.style.setProperty("--avatar-size", `${size}px`);
+    } else {
+      document.documentElement.style.removeProperty("--avatar-size");
+    }
+  }, [identity]);
+
   return (
     <AssistantIdentityContext.Provider value={{ identity, setIdentity, refreshIdentity }}>
       {children}

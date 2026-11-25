@@ -3668,6 +3668,8 @@ body.layout-sidebar-resizing-body {
    crawls slowly along the rim, a tool pings in short double pulses (the hue is
    the tool kind), the answer breathes evenly. Idle is a plain static circle. */
 
+/* The diameter is the user's setting (--avatar-size in px, default 52);
+   the emoji, the badge and the welcome face all scale from it. */
 .assistant-avatar {
   --phase-color: var(--accent, #8b7cff);
   position: relative;
@@ -3675,21 +3677,16 @@ body.layout-sidebar-resizing-body {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--avatar-size, 52px);
+  height: var(--avatar-size, 52px);
   vertical-align: middle;
   border-radius: 50%;
   transition: box-shadow 0.4s ease;
 }
 
-.assistant-avatar--bar {
-  width: 28px;
-  height: 28px;
-}
-
 .assistant-avatar--welcome {
-  width: 96px;
-  height: 96px;
+  width: calc(var(--avatar-size, 52px) * 2.5);
+  height: calc(var(--avatar-size, 52px) * 2.5);
 }
 
 /* The spectrum layer: a conic gradient the disc covers, leaving a rim. */
@@ -3714,13 +3711,13 @@ body.layout-sidebar-resizing-body {
   border-radius: 50%;
   background: var(--bg-elevated, var(--surface, #fff));
   border: 1px solid var(--border-soft, var(--border, #ddd));
-  font-size: 15px;
+  font-size: calc(var(--avatar-size, 52px) * 0.58);
   line-height: 1;
   overflow: hidden;
 }
 
 .assistant-avatar--welcome .assistant-avatar-disc {
-  font-size: 52px;
+  font-size: calc(var(--avatar-size, 52px) * 1.3);
 }
 
 .assistant-avatar-img {
@@ -3878,8 +3875,8 @@ body.layout-sidebar-resizing-body {
 .assistant-avatar-badge {
   position: absolute;
   z-index: 2;
-  right: -3px;
-  bottom: -3px;
+  right: -4px;
+  bottom: -4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3888,20 +3885,25 @@ body.layout-sidebar-resizing-body {
   border-radius: 50%;
   background: var(--bg-elevated, var(--surface, #fff));
   border: 1px solid var(--border-soft, var(--border, #ddd));
-  font-size: 10px;
+  font-size: calc(var(--avatar-size, 52px) * 0.3);
   line-height: 1;
 }
 
 .assistant-avatar--welcome .assistant-avatar-badge {
-  font-size: 30px;
-  right: -2px;
-  bottom: -2px;
+  font-size: calc(var(--avatar-size, 52px) * 0.72);
+  right: -3px;
+  bottom: -3px;
 }
 
 /* The face sits on the label line of the message. */
 .chat-msg--assistant .assistant-avatar {
-  margin-right: 0.45rem;
+  margin-right: 0.6rem;
   margin-bottom: 3px;
+}
+
+/* A label next to a face this size reads better centered on it. */
+.chat-msg--assistant .chat-msg-label {
+  line-height: var(--avatar-size, 52px);
 }
 
 /* Identity bar over the chat log: the assistant is present, not only in messages. */
@@ -4018,8 +4020,21 @@ body.layout-sidebar-resizing-body {
   }
 }
 
-.persona-avatar-preview {
-  width: 64px;
-  height: 64px;
-  font-size: 34px;
+/* Avatar size setting: the slider row and its live value. */
+.persona-avatar-size {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.persona-avatar-size input[type="range"] {
+  flex: 1;
+  max-width: 280px;
+}
+
+.persona-avatar-size-value {
+  min-width: 44px;
+  color: var(--text-3, #8b8b93);
+  font-variant-numeric: tabular-nums;
 }

@@ -79,6 +79,7 @@ describe("gateway /api/assistant-identity", () => {
     expect(await response.json()).toEqual({
       name: undefined,
       avatar: { kind: "preset", value: "🤖" },
+      avatarSize: 52,
       isDefault: true,
     });
   });
@@ -89,11 +90,13 @@ describe("gateway /api/assistant-identity", () => {
     expect(await putResponse.json()).toEqual({
       name: "Барсик",
       avatar: { kind: "preset", value: "🐱" },
+      avatarSize: 52,
       isDefault: false,
     });
     expect(await (await getIdentity()).json()).toEqual({
       name: "Барсик",
       avatar: { kind: "preset", value: "🐱" },
+      avatarSize: 52,
       isDefault: false,
     });
     // Single-user mode persists into the state dir.
@@ -124,6 +127,7 @@ describe("gateway /api/assistant-identity", () => {
     expect(await putResponse.json()).toEqual({
       name: "X",
       avatar: { kind: "preset", value: "🤖" },
+      avatarSize: 52,
       isDefault: false,
     });
   });
@@ -145,6 +149,20 @@ describe("gateway /api/assistant-identity", () => {
     expect(payload.name).toHaveLength(64);
   });
 
+  it("stores a chosen avatar size and clamps it into the 24–96 range", async () => {
+    const saved = await putIdentity({ avatarSize: 80 });
+    expect((await saved.json()).avatarSize).toBe(80);
+    const tooBig = await putIdentity({ avatarSize: 150 });
+    expect((await tooBig.json()).avatarSize).toBe(96);
+    const tooSmall = await putIdentity({ avatarSize: 10 });
+    expect((await tooSmall.json()).avatarSize).toBe(24);
+    const stored = JSON.parse(readFileSync(join(dir, "assistant-identity.json"), "utf-8"));
+    expect(stored.avatarSize).toBe(24);
+    // A non-number folds to the default rather than breaking the payload.
+    const garbage = await putIdentity({ avatarSize: "big" as unknown as number });
+    expect((await garbage.json()).avatarSize).toBe(52);
+  });
+
   it("resets to the default when the avatar is cleared", async () => {
     await putIdentity({ name: "Барсик", avatar: { kind: "preset", value: "🐱" } });
     const reset = await putIdentity({ name: "", avatar: null });
@@ -152,6 +170,7 @@ describe("gateway /api/assistant-identity", () => {
     expect(resetPayload).toEqual({
       name: undefined,
       avatar: { kind: "preset", value: "🤖" },
+      avatarSize: 52,
       isDefault: true,
     });
     expect(await (await getIdentity()).json()).toEqual(resetPayload);

@@ -4077,6 +4077,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const identity = sanitizeAssistantIdentity({
           name: typeof data.name === "string" ? data.name : undefined,
           avatar: (data.avatar === null ? undefined : data.avatar) as unknown,
+          avatarSize: typeof data.avatarSize === "number" ? data.avatarSize : undefined,
         });
         const repo = isRegistrationMode(config) && userId !== "default" ? getAuthRepo(config) : null;
         if (repo) {

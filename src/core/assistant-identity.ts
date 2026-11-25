@@ -22,10 +22,14 @@ export const ASSISTANT_AVATAR_PRESETS = [
 export type AssistantAvatarPreset = { kind: "preset"; value: string };
 export type AssistantAvatarImage = { kind: "image"; mimeType: string; dataBase64: string };
 export type AssistantAvatar = AssistantAvatarPreset | AssistantAvatarImage;
-export type AssistantIdentity = { name?: string; avatar?: AssistantAvatar };
+export type AssistantIdentity = { name?: string; avatar?: AssistantAvatar; avatarSize?: number };
 
 export const DEFAULT_ASSISTANT_AVATAR: AssistantAvatarPreset = { kind: "preset", value: "🤖" };
 export const ASSISTANT_NAME_MAX = 64;
+/** Avatar diameter: the user sets it in the Persona tab; emoji scales with it. */
+export const AVATAR_SIZE_DEFAULT = 52;
+export const AVATAR_SIZE_MIN = 24;
+export const AVATAR_SIZE_MAX = 96;
 /** Avatar images are downscaled client-side; 1 MB of raw bytes is a generous ceiling. */
 export const ASSISTANT_AVATAR_IMAGE_MAX_BYTES = 1 * 1024 * 1024;
 
@@ -38,7 +42,7 @@ function isPresetValue(value: unknown): value is string {
 /** Drops invalid parts instead of throwing: a bad field must not blind the whole identity. */
 export function sanitizeAssistantIdentity(raw: unknown): AssistantIdentity {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const source = raw as { name?: unknown; avatar?: unknown };
+  const source = raw as { name?: unknown; avatar?: unknown; avatarSize?: unknown };
   const identity: AssistantIdentity = {};
   if (typeof source.name === "string") {
     const name = source.name.trim().slice(0, ASSISTANT_NAME_MAX);
@@ -63,6 +67,11 @@ export function sanitizeAssistantIdentity(raw: unknown): AssistantIdentity {
         identity.avatar = { kind: "image", mimeType, dataBase64 };
       }
     }
+  }
+  if (typeof source.avatarSize === "number" && Number.isFinite(source.avatarSize)) {
+    identity.avatarSize = Math.round(
+      Math.min(AVATAR_SIZE_MAX, Math.max(AVATAR_SIZE_MIN, source.avatarSize))
+    );
   }
   return identity;
 }
@@ -101,6 +110,8 @@ export function writeAssistantIdentity(
 export type AssistantIdentityPayload = {
   name?: string;
   avatar: { kind: "preset"; value: string } | { kind: "image"; mimeType: string; dataUrl: string };
+  /** Avatar diameter in px; emoji scales proportionally on the client. */
+  avatarSize: number;
   isDefault: boolean;
 };
 
@@ -108,9 +119,18 @@ export type AssistantIdentityPayload = {
 export function toAssistantIdentityPayload(identity: AssistantIdentity): AssistantIdentityPayload {
   const name = identity.name?.trim() || undefined;
   const avatar = identity.avatar;
+  const avatarSize =
+    typeof identity.avatarSize === "number" && Number.isFinite(identity.avatarSize)
+      ? Math.round(Math.min(AVATAR_SIZE_MAX, Math.max(AVATAR_SIZE_MIN, identity.avatarSize)))
+      : AVATAR_SIZE_DEFAULT;
   if (!avatar || avatar.kind === "preset") {
     const value = avatar && isPresetValue(avatar.value) ? avatar.value : DEFAULT_ASSISTANT_AVATAR.value;
-    return { name, avatar: { kind: "preset", value }, isDefault: !name && value === DEFAULT_ASSISTANT_AVATAR.value };
+    return {
+      name,
+      avatar: { kind: "preset", value },
+      avatarSize,
+      isDefault: !name && value === DEFAULT_ASSISTANT_AVATAR.value,
+    };
   }
   return {
     name,
@@ -119,6 +139,7 @@ export function toAssistantIdentityPayload(identity: AssistantIdentity): Assista
       mimeType: avatar.mimeType,
       dataUrl: `data:${avatar.mimeType};base64,${avatar.dataBase64}`,
     },
+    avatarSize,
     isDefault: false,
   };
 }

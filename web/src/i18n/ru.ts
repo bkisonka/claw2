@@ -57,6 +57,7 @@ export const ru: Record<MessageKey, string> = {
   "persona.nameLabel": "Имя ассистента",
   "persona.namePlaceholder": "Агент",
   "persona.avatarLabel": "Аватар",
+  "persona.sizeLabel": "Размер аватара",
   "persona.avatarUpload": "Загрузить картинку…",
   "persona.avatarReset": "Сбросить",
   "persona.avatarBadFile": "Файл не получилось прочитать как картинку. Нужен PNG, JPEG, WebP или GIF.",
