@@ -23,6 +23,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   may run at once. It was a constant of the code.
 - **`gateway.chatRunSettleWaitMs`** (default 15000): how long a new turn
   waits for the turn it superseded to be stored.
+- **The assistant gets a face.** A circular avatar (one of sixteen preset
+  emoji or an uploaded image, downscaled to 256×256 on the client) and a
+  display name are set in the Persona tab and stored on the gateway
+  (`GET/PUT /api/assistant-identity`; a state-dir JSON in single-user mode,
+  the user's config in registration mode). The name replaces the bare
+  "Agent" label above its messages and is taught to the model in the
+  system prompt. The offline PWA keeps its own copy of both in local
+  settings.
+- **The assistant shows its mood.** Every answer opens with an
+  `<emotion>…</emotion>` tag — one of ten moods plus neutral — which rides
+  the same channel as the `<comment>` status lines: a stream filter strips
+  it from the text, the gateway publishes it as an SSE frame, stores it in
+  the message meta and serves it back from the history, so the emotion
+  survives a reload. The clients show it as an emoji badge on the avatar
+  with a soft aura of its own color.
+- **The avatar animation is bound to the work phase, not to a timer.**
+  Thinking crawls slowly along the rim; working with a tool pings in short
+  double pulses tinted by the kind of the tool (files, web, media,
+  knowledge, agents); writing the answer breathes evenly; idle is a plain
+  static circle. The phase is derived on the client from the events it
+  already sees — no new gateway traffic. With reduced motion requested the
+  movement stops but the information stays: a static colored rim and the
+  status text.
+- **The assistant is present beyond its messages.** An identity bar over
+  the chat log carries the avatar, the name and a live status
+  (thinking / the model's own narration of the current step / writing); a
+  small avatar sits by the composer; the welcome screen greets with the
+  big face and the name. The web chat, the browser answer overlay and the
+  PWA feed all show the avatar on assistant messages.
 
 ### Changed
 
