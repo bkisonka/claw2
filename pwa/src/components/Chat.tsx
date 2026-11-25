@@ -988,7 +988,7 @@ export function Chat({
         )}
         {messages.length === 0 && (
           <div className="chat-welcome">
-            <AssistantAvatar size="welcome" phase={loading ? livePhase.phase : "idle"} toolKind={livePhase.toolKind} />
+            <AssistantAvatar size="welcome" />
             <p className="chat-welcome-name">{assistantName}</p>
             <p className="chat-welcome-text">Готов. Напишите сообщение или прикрепите документ.</p>
           </div>
@@ -1064,7 +1064,7 @@ export function Chat({
         </div>
       )}
       <div className="chat-identity-bar" role="status">
-        <AssistantAvatar size="bar" phase={loading ? livePhase.phase : "idle"} toolKind={livePhase.toolKind} />
+        <AssistantAvatar size="bar" />
         <span className="chat-identity-name">{assistantName}</span>
         {loading && (
           <span className="chat-identity-status">

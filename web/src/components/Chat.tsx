@@ -1761,7 +1761,7 @@ export function Chat({
       )}
       {!isWebSurface && (
         <div className="chat-identity-bar" role="status">
-          <AssistantAvatar size="bar" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+          <AssistantAvatar size="bar" />
           <span className="chat-identity-name">{assistantName}</span>
           {busy && (
             <span className="chat-identity-status">
@@ -1783,7 +1783,7 @@ export function Chat({
         )}
         {messages.length === 0 && !historyLoading && (
           <div className="chat-welcome">
-            <AssistantAvatar size="welcome" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+            <AssistantAvatar size="welcome" />
             <p className="chat-welcome-name">{assistantName}</p>
             <p className="chat-welcome-text">
               {(() => {
@@ -2264,7 +2264,7 @@ export function Chat({
         )}
         <div className="chat-composer-input-row">
           {!isWebSurface && (
-            <AssistantAvatar size="bar" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+            <AssistantAvatar size="bar" />
           )}
           <ChatComposerInput
             ref={composerRef}
