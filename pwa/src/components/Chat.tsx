@@ -1064,7 +1064,6 @@ export function Chat({
         </div>
       )}
       <div className="chat-identity-bar" role="status">
-        <AssistantAvatar size="bar" />
         <span className="chat-identity-name">{assistantName}</span>
         {loading && (
           <span className="chat-identity-status">

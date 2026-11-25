@@ -1761,7 +1761,6 @@ export function Chat({
       )}
       {!isWebSurface && (
         <div className="chat-identity-bar" role="status">
-          <AssistantAvatar size="bar" />
           <span className="chat-identity-name">{assistantName}</span>
           {busy && (
             <span className="chat-identity-status">
