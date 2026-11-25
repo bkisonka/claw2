@@ -45,18 +45,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   double pulses tinted by the kind of the tool (files, web, media,
   knowledge, agents); writing the answer breathes evenly; idle is a plain
   static circle. The animation runs on the avatar of the message being
-  written only — the identity bar, the composer and the welcome faces stay
-  static. The phase is derived on the client from the events it already
-  sees — no new gateway traffic. With reduced motion requested the
-  movement stops but the information stays: a static colored rim and the
-  status text.
-- **The assistant is present beyond its messages.** An identity bar over
-  the chat log carries the name and a live status (thinking / the model's
-  own narration of the current step / writing) — without an avatar, which
-  at a large chosen diameter would crowd the chat; a small avatar sits by
+  written only — the composer and the welcome faces stay static. The phase
+  is derived on the client from the events it already sees — no new
+  gateway traffic. With reduced motion requested the movement stops but
+  the information stays: a static colored rim.
+- **The assistant is present beyond its messages.** A small avatar sits by
   the composer; the welcome screen greets with the big face and the name.
   The web chat, the browser answer overlay and the PWA feed all show the
-  avatar on assistant messages.
+  avatar on assistant messages. The chat itself stays chrome-free: the
+  dialog carries the identity and the state — labels and the working
+  indicator — without an extra header above the log.
 
 ### Changed
 

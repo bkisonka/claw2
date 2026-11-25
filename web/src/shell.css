@@ -3906,25 +3906,6 @@ body.layout-sidebar-resizing-body {
   line-height: var(--avatar-size, 52px);
 }
 
-/* Identity bar over the chat log: the assistant is present, not only in messages. */
-.chat-identity-bar {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 4px 0;
-}
-
-.chat-identity-name {
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--text, #1c1c1e);
-}
-
-.chat-identity-status {
-  font-size: 0.8rem;
-  color: var(--text-3, #8b8b93);
-}
-
 .chat-welcome {
   display: flex;
   flex-direction: column;

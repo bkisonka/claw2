@@ -2868,25 +2868,6 @@ body {
   margin-bottom: 2px;
 }
 
-/* Ассистент у поля ввода: имя и текущий этап. */
-.chat-identity-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 4px 2px;
-}
-
-.chat-identity-name {
-  font-weight: 600;
-  font-size: 0.85rem;
-  color: var(--text);
-}
-
-.chat-identity-status {
-  font-size: 0.78rem;
-  color: var(--text-dim, #9a9aa0);
-}
-
 /* Пикер аватара в настройках. */
 .persona-avatar-row {
   display: flex;

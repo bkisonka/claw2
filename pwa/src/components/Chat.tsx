@@ -1063,18 +1063,6 @@ export function Chat({
           </button>
         </div>
       )}
-      <div className="chat-identity-bar" role="status">
-        <span className="chat-identity-name">{assistantName}</span>
-        {loading && (
-          <span className="chat-identity-status">
-            {lastMessage?.role === "assistant" && lastMessage.toolActive
-              ? `Вызов: ${lastMessage.toolActive}…`
-              : livePhase.phase === "answer"
-                ? "Пишет…"
-                : "Думает…"}
-          </span>
-        )}
-      </div>
       <form ref={formRef} className="chat-form" onSubmit={handleSubmit}>
         {queued.length > 0 && (
           <div className="chat-queue" role="list" aria-label="Сообщения в очереди">

@@ -550,8 +550,6 @@ export function Chat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [busy, lastMessage?.role, lastMessage?.content, lastMessage?.tools]
   );
-  /** The model's own narration of the current step, when it has spoken. */
-  const lastAssistantComment = lastMessage?.role === "assistant" ? (lastMessage.comment ?? "") : "";
   const chatModelRef = useRef(chatModel);
   chatModelRef.current = chatModel;
   const mountedRef = useRef(true);
@@ -1757,20 +1755,6 @@ export function Chat({
           >
             {t("chat.forkedFromBanner", { title: forkedFromTitle })}
           </button>
-        </div>
-      )}
-      {!isWebSurface && (
-        <div className="chat-identity-bar" role="status">
-          <span className="chat-identity-name">{assistantName}</span>
-          {busy && (
-            <span className="chat-identity-status">
-              {livePhase.phase === "tool"
-                ? lastAssistantComment || t("chat.phase.tool")
-                : livePhase.phase === "answer"
-                  ? t("chat.phase.answer")
-                  : t("chat.phase.thinking")}
-            </span>
-          )}
         </div>
       )}
       {!isWebSurface ? (
