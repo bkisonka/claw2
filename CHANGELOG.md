@@ -30,7 +30,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the user's config in registration mode). The name replaces the bare
   "Agent" label above its messages and is taught to the model in the
   system prompt. The offline PWA keeps its own copy of both in local
-  settings.
+  settings. The avatar diameter is the user's choice too: a slider in the
+  Persona tab (24–96 px, default 52) drives the circle on every surface,
+  and the emoji, the emotion badge and the welcome face scale from it.
 - **The assistant shows its mood.** Every answer opens with an
   `<emotion>…</emotion>` tag — one of ten moods plus neutral — which rides
   the same channel as the `<comment>` status lines: a stream filter strips
@@ -42,8 +44,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   Thinking crawls slowly along the rim; working with a tool pings in short
   double pulses tinted by the kind of the tool (files, web, media,
   knowledge, agents); writing the answer breathes evenly; idle is a plain
-  static circle. The phase is derived on the client from the events it
-  already sees — no new gateway traffic. With reduced motion requested the
+  static circle. The animation runs on the avatar of the message being
+  written only — the identity bar, the composer and the welcome faces stay
+  static. The phase is derived on the client from the events it already
+  sees — no new gateway traffic. With reduced motion requested the
   movement stops but the information stays: a static colored rim and the
   status text.
 - **The assistant is present beyond its messages.** An identity bar over
