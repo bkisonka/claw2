@@ -3922,22 +3922,6 @@ body.layout-sidebar-resizing-body {
   margin-bottom: 2px;
 }
 
-/* The assistant listens by the input field. */
-.chat-composer-input-row {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-}
-
-.chat-composer-input-row > .chat-composer-input-shell {
-  flex: 1;
-  min-width: 0;
-}
-
-.chat-composer-input-row > .assistant-avatar {
-  margin-bottom: 12px;
-}
-
 /* Persona tab avatar picker */
 .persona-avatar-row {
   display: flex;

@@ -2245,30 +2245,25 @@ export function Chat({
             {t("chat.queueAttachmentsHint")}
           </p>
         )}
-        <div className="chat-composer-input-row">
-          {!isWebSurface && (
-            <AssistantAvatar size="bar" />
-          )}
-          <ChatComposerInput
-            ref={composerRef}
-            resetKey={sessionIdProp}
-            variant={isWebSurface ? "web" : "default"}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                formRef.current?.requestSubmit();
-              }
-            }}
-            placeholder={
-              busy
-                ? t("chat.queuePlaceholder")
-                : isWebSurface
-                  ? t("browser.askPlaceholder")
-                  : t("chat.placeholder")
+        <ChatComposerInput
+          ref={composerRef}
+          resetKey={sessionIdProp}
+          variant={isWebSurface ? "web" : "default"}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              formRef.current?.requestSubmit();
             }
-            aria-label={t("chat.messageAria")}
-          />
-        </div>
+          }}
+          placeholder={
+            busy
+              ? t("chat.queuePlaceholder")
+              : isWebSurface
+                ? t("browser.askPlaceholder")
+                : t("chat.placeholder")
+          }
+          aria-label={t("chat.messageAria")}
+        />
         {isWebSurface ? (
           <div className="chat-composer-web-actions">
             <button

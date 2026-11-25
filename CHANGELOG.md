@@ -49,12 +49,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is derived on the client from the events it already sees — no new
   gateway traffic. With reduced motion requested the movement stops but
   the information stays: a static colored rim.
-- **The assistant is present beyond its messages.** A small avatar sits by
-  the composer; the welcome screen greets with the big face and the name.
-  The web chat, the browser answer overlay and the PWA feed all show the
-  avatar on assistant messages. The chat itself stays chrome-free: the
-  dialog carries the identity and the state — labels and the working
-  indicator — without an extra header above the log.
+- **The assistant is present beyond its messages.** The welcome screen
+  greets with the big face and the name. The web chat, the browser answer
+  overlay and the PWA feed all show the avatar on assistant messages. The
+  chat itself stays chrome-free: the dialog carries the identity and the
+  state — labels and the working indicator — without an extra header
+  above the log or an avatar by the composer.
 
 ### Changed
 
