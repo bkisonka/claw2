@@ -19,6 +19,7 @@ import { formatVisitMarkerLabel } from "../browser/visitMarkers";
 import { useT } from "../i18n";
 import { markdownComponents } from "./markdownComponents";
 import { ChartCell } from "./ChartCell";
+import { AssistantAvatar, useAssistantDisplayName } from "./AssistantAvatar";
 import { resolveAssistantDisplay, type DisplayCell } from "../lib/messageCells";
 import { renderCellSegments, useMediaSrc } from "../lib/cellRender";
 import { sanitizeCellHtml } from "../lib/cellSanitize";
@@ -276,6 +277,8 @@ export type BrowserOverlayMessage = {
   at?: string;
   /** Inline cells for [CELL_N] placeholders (images, charts, html). */
   cells?: DisplayCell[];
+  /** The model's mood tag of the answer (avatar overlay). */
+  emotion?: string;
 };
 
 export type BrowserAnswerOverlay = {
@@ -318,6 +321,7 @@ export function BrowserSurface({
   onTabNavigated,
 }: Props) {
   const t = useT();
+  const assistantName = useAssistantDisplayName(t("common.agent"));
   const hostRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const [urlDraft, setUrlDraft] = useState("");
@@ -1507,7 +1511,8 @@ export function BrowserSurface({
                           );
                         }}
                       >
-                        <span className="chat-msg-label">{t("common.agent")}: </span>
+                        <AssistantAvatar size="msg" emotion={msg.emotion} />
+                        <span className="chat-msg-label">{assistantName}: </span>
                         <div className="chat-msg-body">
                           <div
                             className={`chat-msg-content${

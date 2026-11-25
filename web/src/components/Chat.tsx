@@ -27,6 +27,8 @@ import {
 import { markdownToPlainText } from "../utils/markdown-to-plain";
 import { normalizeAssistantMarkdown } from "../utils/normalize-assistant-markdown";
 import { resolveAssistantDisplay } from "../lib/messageCells";
+import { resolveAssistantPhase } from "../lib/assistantPhase";
+import { AssistantAvatar, useAssistantDisplayName } from "./AssistantAvatar";
 import { renderCellSegments, resolveMediaSrc, useMediaSrc } from "../lib/cellRender";
 import { sanitizeCellHtml } from "../lib/cellSanitize";
 import {
@@ -425,6 +427,8 @@ export interface Message {
   interruptedBy?: "gateway_restart";
   /** The model's <comment> line that has not grown into a step yet. */
   comment?: string;
+  /** The model's mood tag (<emotion>) shown as a badge on the avatar. */
+  emotion?: string;
 }
 
 export interface ChatProps {
@@ -460,6 +464,7 @@ export interface ChatProps {
         content: string;
         at?: string;
         cells?: ChatCell[];
+        emotion?: string;
       }[];
       streaming: boolean;
     } | null
@@ -529,9 +534,24 @@ export function Chat({
 }: ChatProps) {
   const isWebSurface = surfaceMode === "web";
   const t = useT();
+  const assistantName = useAssistantDisplayName(t("common.agent"));
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [loading, setLoading] = useState(false);
   const busy = loading || isSessionStreaming;
+  /** What the assistant is doing right now — the avatar animation reads it. */
+  const lastMessage = messages[messages.length - 1];
+  const livePhase = useMemo(
+    () =>
+      resolveAssistantPhase({
+        busy,
+        streamingContent: lastMessage?.role === "assistant" ? lastMessage.content : undefined,
+        tools: lastMessage?.role === "assistant" ? lastMessage.tools : undefined,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busy, lastMessage?.role, lastMessage?.content, lastMessage?.tools]
+  );
+  /** The model's own narration of the current step, when it has spoken. */
+  const lastAssistantComment = lastMessage?.role === "assistant" ? (lastMessage.comment ?? "") : "";
   const chatModelRef = useRef(chatModel);
   chatModelRef.current = chatModel;
   const mountedRef = useRef(true);
@@ -1199,6 +1219,7 @@ export function Chat({
                 role: m.role,
                 content: m.content,
                 ...(m.cells?.length ? { cells: m.cells } : {}),
+                ...(m.role === "assistant" && m.emotion ? { emotion: m.emotion } : {}),
               }
         );
     const pushWebOverlay = (list: Message[], streaming: boolean) => {
@@ -1347,6 +1368,16 @@ export function Chat({
         applyStreamUi(next, true);
         pushProgress(next);
       };
+      /** The model's mood tag: shown live on the avatar, stored with the answer. */
+      const applyEmotion = (value: string) => {
+        const next = [...streamTranscript];
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return;
+        next[next.length - 1] = { ...last, emotion: value };
+        streamTranscript = next;
+        applyStreamUi(next, true);
+        pushProgress(next);
+      };
       const res = await sendMessageStream(
         text || t("chat.seeAttached"),
         streamSessionId || undefined,
@@ -1389,7 +1420,8 @@ export function Chat({
         answerHeadlessPageText,
         chatModelRef.current,
         applyToolEvent,
-        applyStepComment
+        applyStepComment,
+        applyEmotion
       );
       if (replyWithVoice && !ttsAbortedRef.current && mountedRef.current && stillOnStreamSession()) {
         flushTtsBuffer();
@@ -1428,6 +1460,7 @@ export function Chat({
             content: resolved.content,
             cells: resolved.cells.length > 0 ? resolved.cells : res.cells,
             ...(res.toolLimitReached && { toolLimitReached: true }),
+            ...(res.emotion && { emotion: res.emotion }),
             ...(res.code === "gateway_restart" && { interruptedBy: "gateway_restart" as const }),
           };
         }
@@ -1726,6 +1759,21 @@ export function Chat({
           </button>
         </div>
       )}
+      {!isWebSurface && (
+        <div className="chat-identity-bar" role="status">
+          <AssistantAvatar size="bar" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+          <span className="chat-identity-name">{assistantName}</span>
+          {busy && (
+            <span className="chat-identity-status">
+              {livePhase.phase === "tool"
+                ? lastAssistantComment || t("chat.phase.tool")
+                : livePhase.phase === "answer"
+                  ? t("chat.phase.answer")
+                  : t("chat.phase.thinking")}
+            </span>
+          )}
+        </div>
+      )}
       {!isWebSurface ? (
       <div className="chat-log" ref={logRef}>
         {messages.length === 0 && historyLoading && (
@@ -1735,6 +1783,8 @@ export function Chat({
         )}
         {messages.length === 0 && !historyLoading && (
           <div className="chat-welcome">
+            <AssistantAvatar size="welcome" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+            <p className="chat-welcome-name">{assistantName}</p>
             <p className="chat-welcome-text">
               {(() => {
                 const h = new Date().getHours();
@@ -1848,7 +1898,15 @@ export function Chat({
               setChatCtxMenu({ x: e.clientX, y: e.clientY, items });
             }}
           >
-            <span className="chat-msg-label">{msg.role === "user" ? t("common.you") : t("common.agent")}: </span>
+            {msg.role === "assistant" && (
+              <AssistantAvatar
+                size="msg"
+                phase={busy && i === messages.length - 1 ? livePhase.phase : "idle"}
+                toolKind={busy && i === messages.length - 1 ? livePhase.toolKind : undefined}
+                emotion={msg.emotion}
+              />
+            )}
+            <span className="chat-msg-label">{msg.role === "user" ? t("common.you") : assistantName}: </span>
             <div className="chat-msg-body">
               {(() => {
                 const isStreamingAssistant =
@@ -2204,25 +2262,30 @@ export function Chat({
             {t("chat.queueAttachmentsHint")}
           </p>
         )}
-        <ChatComposerInput
-          ref={composerRef}
-          resetKey={sessionIdProp}
-          variant={isWebSurface ? "web" : "default"}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              formRef.current?.requestSubmit();
+        <div className="chat-composer-input-row">
+          {!isWebSurface && (
+            <AssistantAvatar size="bar" phase={livePhase.phase} toolKind={livePhase.toolKind} />
+          )}
+          <ChatComposerInput
+            ref={composerRef}
+            resetKey={sessionIdProp}
+            variant={isWebSurface ? "web" : "default"}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                formRef.current?.requestSubmit();
+              }
+            }}
+            placeholder={
+              busy
+                ? t("chat.queuePlaceholder")
+                : isWebSurface
+                  ? t("browser.askPlaceholder")
+                  : t("chat.placeholder")
             }
-          }}
-          placeholder={
-            busy
-              ? t("chat.queuePlaceholder")
-              : isWebSurface
-                ? t("browser.askPlaceholder")
-                : t("chat.placeholder")
-          }
-          aria-label={t("chat.messageAria")}
-        />
+            aria-label={t("chat.messageAria")}
+          />
+        </div>
         {isWebSurface ? (
           <div className="chat-composer-web-actions">
             <button

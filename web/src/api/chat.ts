@@ -56,6 +56,8 @@ export interface HistoryMessageApi {
   tools?: ToolStep[];
   /** The gateway was restarting while the answer was written: the answer is cut short. */
   interruptedBy?: "gateway_restart";
+  /** The model's mood tag of the answer (avatar overlay). */
+  emotion?: string;
 }
 
 export interface ChatCell {
@@ -82,6 +84,8 @@ export interface ChatResponse {
   insightOffer?: InsightOfferApi | null;
   /** The tool step limit was spent; the answer covers what was done so far. */
   toolLimitReached?: boolean;
+  /** The model's mood tag for this answer (avatar overlay). */
+  emotion?: string;
   /** attach: nothing was running for this chat — the stored history is the truth. */
   noRun?: boolean;
 }
@@ -305,7 +309,9 @@ export async function sendMessageStream(
   /** Live tool steps of the turn (no result text). */
   onToolEvent?: (step: ToolStep) => void,
   /** The model's own <comment> status line, shown as the current activity. */
-  onStepComment?: (text: string) => void
+  onStepComment?: (text: string) => void,
+  /** The model's mood tag (<emotion>) for the answer, shown on the avatar. */
+  onEmotion?: (value: string) => void
 ): Promise<ChatResponse> {
   const url = `${apiBase}/chat`;
   const headers: Record<string, string> = {
@@ -390,6 +396,7 @@ export async function sendMessageStream(
       sidebarUpdated: data.sidebarUpdated,
       insightOffer: data.insightOffer ?? null,
       toolLimitReached: data.toolLimitReached,
+      emotion: data.emotion,
     };
   }
   return readChatStream(res, (data) => {
@@ -406,6 +413,8 @@ export async function sendMessageStream(
     if (data.toolEvent) onToolEvent?.(data.toolEvent);
     const stepComment = trimmedString(data.stepComment);
     if (stepComment) onStepComment?.(stepComment);
+    const emotion = trimmedString(data.emotion);
+    if (emotion) onEmotion?.(emotion);
     return undefined;
   });
 }
@@ -420,7 +429,8 @@ type ChatStreamEvent = Partial<ChatResponse> & {
   headlessPageText?: { requestId?: string; url?: string };
   toolEvent?: ToolStep;
   stepComment?: string;
-  snapshot?: { userMessage?: string; content?: string; steps?: ToolStep[]; comment?: string };
+  emotion?: string;
+  snapshot?: { userMessage?: string; content?: string; steps?: ToolStep[]; comment?: string; emotion?: string };
 };
 
 function terminalResponse(data: ChatStreamEvent, fallbackSessionId: string): ChatResponse {
@@ -436,6 +446,7 @@ function terminalResponse(data: ChatStreamEvent, fallbackSessionId: string): Cha
     sidebarUpdated: data.sidebarUpdated,
     insightOffer: data.insightOffer ?? null,
     toolLimitReached: data.toolLimitReached,
+    emotion: trimmedString(data.emotion) || undefined,
     noRun: data.noRun === true || undefined,
   };
 }
@@ -498,11 +509,19 @@ function readChatStream(
 
 export interface AttachChatHandlers {
   /** What happened before this client connected: the question, the text and the steps so far. */
-  onSnapshot?: (snapshot: { userMessage: string; content: string; steps: ToolStep[]; comment?: string }) => void;
+  onSnapshot?: (snapshot: {
+    userMessage: string;
+    content: string;
+    steps: ToolStep[];
+    comment?: string;
+    emotion?: string;
+  }) => void;
   onChunk: (text: string) => void;
   onToolEvent: (step: ToolStep) => void;
   /** The model's own <comment> status line, shown as the current activity. */
   onStepComment?: (text: string) => void;
+  /** The model's mood tag (<emotion>) seen so far. */
+  onEmotion?: (value: string) => void;
   onSidebarUpdated?: () => void;
   /** A page the turn opened while no client was listening. */
   onOpenBrowserUrl?: (url: string) => void;
@@ -537,12 +556,15 @@ export async function attachChatStream(
         content: data.snapshot.content ?? "",
         steps: data.snapshot.steps ?? [],
         comment: data.snapshot.comment,
+        emotion: data.snapshot.emotion,
       });
     }
     if (typeof data.content === "string") handlers.onChunk(data.content);
     if (data.toolEvent) handlers.onToolEvent(data.toolEvent);
     const stepComment = trimmedString(data.stepComment);
     if (stepComment) handlers.onStepComment?.(stepComment);
+    const emotionValue = trimmedString(data.emotion);
+    if (emotionValue) handlers.onEmotion?.(emotionValue);
     if (data.sidebarUpdated === true) handlers.onSidebarUpdated?.();
     const openUrl = trimmedString(data.openBrowserUrl);
     if (openUrl) handlers.onOpenBrowserUrl?.(openUrl);

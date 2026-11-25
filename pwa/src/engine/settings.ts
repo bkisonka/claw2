@@ -86,6 +86,8 @@ export type AppSettings = {
   llm: LlmSettings;
   persona: { full: string; compact: string };
   assistantName: string;
+  /** The assistant's face in the chat: a preset emoji or a downscaled data URL. */
+  assistantAvatar: string;
   memory: MemorySettings;
   search: SearchSettings;
   images: ImagesSettings;
@@ -131,6 +133,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     compact: "",
   },
   assistantName: "Claw2",
+  assistantAvatar: "🤖",
   memory: {
     enabled: false,
     embeddingBaseURL: "",

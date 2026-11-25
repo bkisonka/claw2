@@ -49,6 +49,7 @@ import { toolSearch, formatSearchHitsMarkdown } from "../tools/search.js";
 import {
   cellsToMeta,
   contentForLlmHistory,
+  emotionFromMeta,
   interruptedByFromMeta,
   resolveAssistantCells,
   type InterruptedBy,
@@ -162,6 +163,12 @@ import {
   parseAssistantMd,
   resetAssistantPersonaCache,
 } from "../core/assistant-persona.js";
+import {
+  readAssistantIdentity,
+  writeAssistantIdentity,
+  sanitizeAssistantIdentity,
+  toAssistantIdentityPayload,
+} from "../core/assistant-identity.js";
 import {
   resolveAgentsDir,
   resolveAgentsOutputDir,
@@ -1913,7 +1920,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         const persistTurn = (
           result: Pick<
             Awaited<ReturnType<typeof runOrchestrator>>,
-            "content" | "cells" | "summaryForHistory" | "summaryDropCount"
+            "content" | "cells" | "summaryForHistory" | "summaryDropCount" | "emotion"
           >,
           tools?: ToolTraceEntry[],
           interruptedBy?: InterruptedBy
@@ -1929,7 +1936,10 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               sessionId,
               userId,
               { content: storedUserMessage, meta: cellsToMeta(userCells) },
-              { content: result.content, meta: cellsToMeta(result.cells ?? [], interruptedBy) },
+              {
+                content: result.content,
+                meta: cellsToMeta(result.cells ?? [], interruptedBy, result.emotion),
+              },
               promptContext,
               tools
             );
@@ -1986,7 +1996,11 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             return;
           }
           try {
-            persistTurn({ content: run.partialContent, cells: [] }, tools, interruptedBy);
+            persistTurn(
+              { content: run.partialContent, cells: [], emotion: run.lastEmotion },
+              tools,
+              interruptedBy
+            );
           } catch (err) {
             // The chat may already be gone (deleted while the turn was stopping).
             console.error(
@@ -2025,6 +2039,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
                 publish({ toolEvent: toStepEvent(event) });
               },
               onStepComment: (text: string) => publish({ stepComment: text }),
+              onEmotion: (value: string) => publish({ emotion: value }),
               onSidebarUpdated: () => publish({ sidebarUpdated: true }),
               onOpenBrowserUrl: (url: string) => {
                 openedBrowserUrls.push(url);
@@ -2064,6 +2079,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               contextCompressed: result.contextCompressed,
               sidebarUpdated: result.sidebarUpdated,
               toolLimitReached: result.toolLimitReached,
+              emotion: result.emotion ?? run.lastEmotion,
               insightOffer: insightOffer ?? undefined,
             });
           } catch (err) {
@@ -2534,6 +2550,7 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
               content: run.partialContent,
               steps: run.steps,
               comment: run.lastComment,
+              emotion: run.lastEmotion,
             },
           })
         );
@@ -2610,6 +2627,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
             tools?: Array<{ name: string; args: string; ok: boolean | null; durationMs: number | null }>;
             /** What cut the answer short: `gateway_restart` when the gateway stopped while it was being written. */
             interruptedBy?: InterruptedBy;
+            /** The model's mood tag of the answer (avatar overlay). */
+            emotion?: string;
           } = {
             role: m.role,
             content: resolved.content,
@@ -2621,6 +2640,8 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
           if (resolved.cells.length > 0) payload.cells = resolved.cells;
           const interruptedBy = m.role === "assistant" ? interruptedByFromMeta(m.meta) : undefined;
           if (interruptedBy) payload.interruptedBy = interruptedBy;
+          const emotion = m.role === "assistant" ? emotionFromMeta(m.meta) : undefined;
+          if (emotion) payload.emotion = emotion;
           if (m.role === "user" && resolved.cells.length > 0) {
             const attached = resolved.cells
               .filter((c) => c.type === "image" || c.type === "image_deleted")
@@ -4015,6 +4036,85 @@ export function createGatewayServer(configRef: { current: Claw2Config }) {
         );
       } catch (err) {
         console.error("[gateway] assistant-persona save failed:", err);
+        res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (req.method === "GET" && p === "/api/assistant-identity") {
+      try {
+        if (isRegistrationMode(config) && userId === "default") {
+          res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Unauthorized", code: "auth_required" }));
+          return;
+        }
+        let effectiveConfig: Claw2Config = config;
+        if (isRegistrationMode(config) && userId !== "default") {
+          const repo = getAuthRepo(config);
+          const userConfig = await getCachedUserConfig(repo, userId);
+          effectiveConfig = getEffectiveConfig(config, userConfig);
+        }
+        const payload = toAssistantIdentityPayload(readAssistantIdentity(effectiveConfig));
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify(payload));
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify({ error: String(err) }));
+      }
+      return;
+    }
+
+    if (req.method === "PUT" && p === "/api/assistant-identity") {
+      try {
+        if (isRegistrationMode(config) && userId === "default") {
+          res.writeHead(401, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+          res.end(JSON.stringify({ error: "Unauthorized", code: "auth_required" }));
+          return;
+        }
+        const body = await parseBody(req);
+        const data = body ? (JSON.parse(body) as Record<string, unknown>) : {};
+        const identity = sanitizeAssistantIdentity({
+          name: typeof data.name === "string" ? data.name : undefined,
+          avatar: (data.avatar === null ? undefined : data.avatar) as unknown,
+        });
+        const repo = isRegistrationMode(config) && userId !== "default" ? getAuthRepo(config) : null;
+        if (repo) {
+          const existing = await repo.getUserConfig(userId);
+          const base =
+            existing != null && typeof existing === "object" && Object.keys(existing).length > 0
+              ? (existing as Record<string, unknown>)
+              : (config as unknown as Record<string, unknown>);
+          const prevAssistant =
+            base.assistant && typeof base.assistant === "object" && !Array.isArray(base.assistant)
+              ? (base.assistant as Record<string, unknown>)
+              : {};
+          const merged = {
+            ...base,
+            assistant: {
+              ...prevAssistant,
+              identity: identity.name || identity.avatar ? identity : undefined,
+            },
+          };
+          if (!merged.assistant.identity) delete (merged.assistant as Record<string, unknown>).identity;
+          await repo.setUserConfig(userId, merged);
+          invalidateUserConfigCache(userId);
+          auditLog(config, {
+            type: "config_saved",
+            details: { source: "db", userId, kind: "assistant_identity" },
+          });
+        } else {
+          const written = writeAssistantIdentity(identity, config);
+          auditLog(config, {
+            type: "config_saved",
+            details: { path: written.path, kind: "assistant_identity" },
+          });
+        }
+        const payload = toAssistantIdentityPayload(identity);
+        res.writeHead(200, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
+        res.end(JSON.stringify(payload));
+      } catch (err) {
+        console.error("[gateway] assistant-identity save failed:", err);
         res.writeHead(500, { "Content-Type": JSON_TYPE, "Access-Control-Allow-Origin": corsOrigin });
         res.end(JSON.stringify({ error: String(err) }));
       }

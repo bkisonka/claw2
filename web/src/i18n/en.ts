@@ -49,6 +49,16 @@ export const en = {
   "onboarding.stillMissing": "Still missing credentials. Check Base URL and API key.",
   "onboarding.unreachable": "Saved, but the LLM endpoint is unreachable. Check URL and key.",
 
+  "persona.identityTitle": "Avatar and name",
+  "persona.identityHint":
+    "How the assistant looks in the chat: the name above its messages and the face it wears. While it works, the face animates: thinking crawls along the rim, a tool pings, the answer breathes.",
+  "persona.nameLabel": "Assistant name",
+  "persona.namePlaceholder": "Agent",
+  "persona.avatarLabel": "Avatar",
+  "persona.avatarUpload": "Upload image…",
+  "persona.avatarReset": "Reset",
+  "persona.avatarBadFile": "This file could not be read as an image. PNG, JPEG, WebP or GIF, please.",
+
   "persona.title": "Assistant personality",
   "persona.hint":
     "Describe who the assistant should be: tone, character, how to address the user. If empty, a friendly default helper is used.",
@@ -400,6 +410,9 @@ export const en = {
   "chat.workingThinking": "Thinking…",
   "chat.workingPreparing": "Preparing a reply…",
   "chat.workingStill": "Still thinking…",
+  "chat.phase.thinking": "Thinking…",
+  "chat.phase.tool": "Working…",
+  "chat.phase.answer": "Writing…",
   "chat.stepsCount": "Steps: {count}",
   "chat.stepsToggleTitle": "Show or hide the tool steps",
   "chat.stepsInterrupted": "interrupted",

@@ -22,6 +22,8 @@ export type StoredMessage = {
   role: "user" | "assistant";
   content: string;
   cells?: { type: string; content: string }[];
+  /** The model's mood tag (<emotion>) shown as a badge on the avatar. */
+  emotion?: string;
   /**
    * Attachment metadata. The binary lives in the files store (fileId) — since
    * schema v4 messages never carry inline base64 (a chat open used to

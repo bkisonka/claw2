@@ -3,6 +3,8 @@
 
 import { CONTENT_BOUNDARY_WARNING } from "../security/content-boundary.js";
 import { loadAssistantPersona } from "./assistant-persona.js";
+import { readAssistantIdentity } from "./assistant-identity.js";
+import { EMOTION_PROMPT_LIST } from "./assistant-emotions.js";
 import type { Claw2Config } from "../config/types.js";
 
 function getDateTimeContext(): string {
@@ -110,6 +112,8 @@ const READING_FILES_HINT = `Reading files to find something (a local directory, 
 
 Status commentary (important for long tasks): while you work — searching, reading files, checking code, thinking — before each tool call output one short status line inside <comment>…</comment>: what you are doing and why, 5–12 words, in the user's language, no secrets or file dumps. Example: <comment>Читаю recheck-orchestrator.ts — сверяю остановку турнов</comment>. These lines are service text for the progress UI: they are stripped from the answer, and the reply must not repeat or reference them.`;
 
+const EMOTION_TAG_HINT = `Mood tag (important): start every answer with one line <emotion>…</emotion> naming the mood you actually have about this reply: ${EMOTION_PROMPT_LIST} (or neutral when none fits). Pick what you feel, not a default: joy at a done task (happy), anticipation of a result (excited), interest before digging into data (curious), weighing options (thinking), alarm at an error (concerned), regret about a mistake (grateful/sad). The tag is service text: it is stripped from the answer and shown as an expression on your avatar — do not mention it in the reply.`;
+
 const TASKS_DESCRIPTION = `List of user tasks (SQLite, .claw2/tasks.db). Tasks have importance and urgency (low, medium, high). Use when asking to remember a task, remind you of something important/urgent, cancel it, or mark it as completed.
 - tasks_add(text, importance?, urgency?) — add a task. By default, importance and urgency = medium.
 - tasks_list(status?, importance?, urgency?) — list of tasks. status: open (not completed, default), done (completed), all. You can filter by importance and/or urgency.
@@ -197,8 +201,12 @@ export function getSystemPrompt(
   config?: Claw2Config
 ): string {
   const persona = loadAssistantPersona(config);
-  const roleFull = `${persona.full}\n\n${ROLE_OPS}`;
-  const roleCompact = `${persona.compact} ${ROLE_OPS_COMPACT}`;
+  const identityName = readAssistantIdentity(config).name?.trim();
+  const nameLine = identityName
+    ? `Your name: ${identityName}. The user sees it above your messages and on your avatar — use it when you introduce yourself.`
+    : "";
+  const roleFull = `${persona.full}${nameLine ? `\n\n${nameLine}` : ""}\n\n${ROLE_OPS}`;
+  const roleCompact = `${persona.compact}${nameLine ? ` ${nameLine}` : ""} ${ROLE_OPS_COMPACT}`;
 
   const agentsBlock = SKILLS_HINT;
   const dateTimeContext = getDateTimeContext();
@@ -236,6 +244,9 @@ export function getSystemPrompt(
     parts.push(
       "While working, before each tool call output a short status line in <comment>…</comment> (5–12 words, what and why, user's language) — service text for the progress UI, stripped from the answer."
     );
+    parts.push(
+      `Start every answer with one line <emotion>…</emotion> — the mood you actually have about the reply (${EMOTION_PROMPT_LIST}, or neutral). Service tag: stripped from the answer and shown as an expression on your avatar; do not mention it.`
+    );
     return parts.join("\n\n");
   }
 
@@ -264,5 +275,6 @@ export function getSystemPrompt(
     CODE_IN_CHAT_FINAL,
   ];
   parts.push(AGENT_DEPS_DOCS, WRITE_AGENT_CONTRACT, INLINE_CELLS_DESCRIPTION);
+  parts.push(EMOTION_TAG_HINT);
   return parts.join("\n\n");
 }

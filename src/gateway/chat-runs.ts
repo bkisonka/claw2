@@ -68,6 +68,7 @@ export interface ToolStepEvent {
 export type ChatRunEvent =
   | { content: string }
   | { stepComment: string }
+  | { emotion: string }
   | { sidebarUpdated: true }
   | { openBrowserUrl: string }
   | { readBrowserPage: { requestId: string } }
@@ -90,6 +91,8 @@ export interface ChatRunTerminal {
   contextCompressed?: number;
   sidebarUpdated?: boolean;
   toolLimitReached?: boolean;
+  /** The model's mood tag for the stored answer (avatar overlay). */
+  emotion?: string;
   insightOffer?: unknown;
   /** Nothing was running: the client reloads the stored history instead. */
   noRun?: boolean;
@@ -115,6 +118,8 @@ export interface ChatRun {
   readonly userMessage: string;
   /** The model's latest <comment> status line: a client that attaches later sees the current activity. */
   lastComment?: string;
+  /** The model's latest <emotion> mood tag: a client that attaches later sees the current mood. */
+  lastEmotion?: string;
   sidebarUpdated: boolean;
   /** Tool steps in order; a step whose latest event is `start` is still running. */
   readonly steps: ToolStepEvent[];
@@ -194,6 +199,8 @@ export function publishChatRun(run: ChatRun, event: ChatRunEvent): void {
     run.partialContent += event.content;
   } else if ("stepComment" in event) {
     run.lastComment = event.stepComment;
+  } else if ("emotion" in event) {
+    run.lastEmotion = event.emotion;
   } else if ("sidebarUpdated" in event) {
     run.sidebarUpdated = true;
   } else if ("toolEvent" in event) {

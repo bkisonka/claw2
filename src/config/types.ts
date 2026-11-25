@@ -71,6 +71,11 @@ export interface Claw2Config {
     mdPath?: string;
     /** Full assistant.md contents stored in user config (registration mode). */
     personaMarkdown?: string;
+    /** Display identity (registration mode): name above the messages and the avatar. */
+    identity?: {
+      name?: string;
+      avatar?: { kind: "preset"; value: string } | { kind: "image"; mimeType: string; dataBase64: string };
+    };
   };
   agentsDir?: string;
   /** Script names agents/*.js, hidden from the prompt and prohibited for run_agent (deactivation without deletion).*/

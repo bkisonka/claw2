@@ -696,6 +696,8 @@ export function AuthenticatedArea() {
       let steps: ToolStep[] = [];
       /** The model's <comment> line that has not been attached to a step yet. */
       let pendingComment = "";
+      /** The model's mood tag seen so far (avatar overlay). */
+      let emotion = "";
       let flushTimer: number | null = null;
       let lastFlush = 0;
       const push = () => {
@@ -703,7 +705,7 @@ export function AuthenticatedArea() {
         lastFlush = Date.now();
         const live: Message[] = [];
         if (question) live.push({ role: "user", content: question });
-        live.push({ role: "assistant", content: answer, tools: steps });
+        live.push({ role: "assistant", content: answer, tools: steps, ...(emotion ? { emotion } : {}) });
         const messages = [...base, ...live];
         const title = chatsRef.current.find((c) => c.id === sessionId)?.title ?? "";
         handleStreamProgress(sessionId, title, messages);
@@ -724,6 +726,7 @@ export function AuthenticatedArea() {
                 question = snapshot.userMessage;
                 answer = snapshot.content;
                 steps = snapshot.steps;
+                emotion = snapshot.emotion ?? "";
                 push();
               },
               onChunk: (text) => {
@@ -742,6 +745,10 @@ export function AuthenticatedArea() {
                 pendingComment = text;
                 // Show the fresh comment as the newest step's commentary right away.
                 if (steps.length > 0) steps[steps.length - 1] = { ...steps[steps.length - 1]!, comment: text };
+                push();
+              },
+              onEmotion: (value) => {
+                emotion = value;
                 push();
               },
               onSidebarUpdated: () => setSidebarRefreshKey((k) => k + 1),

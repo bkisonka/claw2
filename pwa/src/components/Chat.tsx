@@ -23,7 +23,9 @@ import { setChatPinnedProvider } from "../engine/db";
 import { isStoredFileUrl, resolveStoredFileUrl } from "../engine/files";
 import { sanitizeCellHtml } from "../engine/cells";
 import { useNearViewport } from "../lib/useNearViewport";
+import { resolveAssistantPhase } from "../lib/assistantPhase";
 import { ChartCell } from "./ChartCell";
+import { AssistantAvatar, useAssistantName } from "./AssistantAvatar";
 import { IconAttach, IconCamera, IconEdit, IconMic, IconSend, IconTrash, IconVideo } from "./icons";
 
 /**
@@ -183,6 +185,8 @@ interface Message {
   cells?: ChatCell[];
   /** Tool currently executing for this reply (feed status line). */
   toolActive?: string;
+  /** The model's mood tag (<emotion>) shown as a badge on the avatar. */
+  emotion?: string;
   /** Router info: who served this reply (tap → pin/unpin this chat). */
   routed?: { id: string; name: string; model: string; pinned: boolean; why: string } | null;
 }
@@ -211,6 +215,7 @@ function historyToMessages(history: HistoryMessageApi[] | undefined): Message[] 
     role: m.role,
     content: m.content ?? "",
     cells: m.cells,
+    ...(m.role === "assistant" && m.emotion ? { emotion: m.emotion } : {}),
     attachedFiles: m.attachedFiles
       ?.filter((f) => !f.deleted)
       .map((f) => ({ name: f.name })),
@@ -233,6 +238,14 @@ export function Chat({
   const [input, setInput] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const assistantName = useAssistantName();
+  /** Что ассистент делает прямо сейчас — по этому состоянию живёт анимация аватара. */
+  const lastMessage = messages[messages.length - 1];
+  const livePhase = resolveAssistantPhase({
+    busy: loading,
+    streamingContent: lastMessage?.role === "assistant" ? lastMessage.content : undefined,
+    toolActive: lastMessage?.role === "assistant" ? lastMessage.toolActive : undefined,
+  });
   /** Сообщения, отправленные во время генерации: очередь (FIFO), «форсаж» прыгает вперёд. */
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
   const forcedQueuedRef = useRef<string | null>(null);
@@ -413,7 +426,7 @@ export function Chat({
       // with the parsed snapshot — closed [CELL] blocks render live.
       // setTimeout, NOT requestAnimationFrame: rAF is frozen in hidden tabs and
       // backgrounded WebViews, which made every reply appear only at stream end.
-      let pendingSnap: { text: string; cells: ChatCell[]; tool?: string } | null = null;
+      let pendingSnap: { text: string; cells: ChatCell[]; tool?: string; emotion?: string } | null = null;
       let timer = 0;
       let lastPaint = 0;
       const flushSnap = () => {
@@ -430,6 +443,7 @@ export function Chat({
               content: snap.tool ? last.content : snap.text,
               cells: snap.cells.length ? snap.cells : undefined,
               toolActive: snap.tool,
+              ...(snap.emotion ? { emotion: snap.emotion } : {}),
             };
           }
           return next;
@@ -464,6 +478,7 @@ export function Chat({
               content: res.content || last.content,
               cells: res.cells,
               toolActive: undefined,
+              ...(res.emotion ? { emotion: res.emotion } : {}),
               routed: res.routed ?? null,
             };
           }
@@ -973,6 +988,8 @@ export function Chat({
         )}
         {messages.length === 0 && (
           <div className="chat-welcome">
+            <AssistantAvatar size="welcome" phase={loading ? livePhase.phase : "idle"} toolKind={livePhase.toolKind} />
+            <p className="chat-welcome-name">{assistantName}</p>
             <p className="chat-welcome-text">Готов. Напишите сообщение или прикрепите документ.</p>
           </div>
         )}
@@ -989,6 +1006,14 @@ export function Chat({
             }}
           >
             {copiedMsgIndex === i && <span className="chat-msg-copied">Скопировано</span>}
+            {msg.role === "assistant" && (
+              <AssistantAvatar
+                size="msg"
+                phase={loading && i === messages.length - 1 ? livePhase.phase : "idle"}
+                toolKind={loading && i === messages.length - 1 ? livePhase.toolKind : undefined}
+                emotion={msg.emotion}
+              />
+            )}
             <div className="chat-msg-body" data-msg-body={i}>
               {msg.toolActive && (
                 <div className="chat-tool-status">🔧 Вызов инструмента: {msg.toolActive}…</div>
@@ -1038,6 +1063,19 @@ export function Chat({
           </button>
         </div>
       )}
+      <div className="chat-identity-bar" role="status">
+        <AssistantAvatar size="bar" phase={loading ? livePhase.phase : "idle"} toolKind={livePhase.toolKind} />
+        <span className="chat-identity-name">{assistantName}</span>
+        {loading && (
+          <span className="chat-identity-status">
+            {lastMessage?.role === "assistant" && lastMessage.toolActive
+              ? `Вызов: ${lastMessage.toolActive}…`
+              : livePhase.phase === "answer"
+                ? "Пишет…"
+                : "Думает…"}
+          </span>
+        )}
+      </div>
       <form ref={formRef} className="chat-form" onSubmit={handleSubmit}>
         {queued.length > 0 && (
           <div className="chat-queue" role="list" aria-label="Сообщения в очереди">

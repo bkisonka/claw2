@@ -13,7 +13,9 @@ import { assessLlmConfigured, resolveLlmApiKeyForClient } from "../config/llm-re
 import { isSearchToolEnabled, resolveBrowserSearchEngines } from "../tools/search.js";
 import {
   createCommentStreamFilter,
+  createEmotionStreamFilter,
   createReasoningStreamFilter,
+  extractEmotionTag,
   shouldDisableModelThinking,
   stripReasoningTags,
 } from "./strip-reasoning.js";
@@ -985,6 +987,8 @@ export interface ChatOptions {
   onChunk?: (delta: string) => void;
   /** Called for each finished <comment>…</comment> the model emits: service commentary for the progress UI, never part of the content. */
   onComment?: (text: string) => void;
+  /** Called for the <emotion>…</emotion> mood tag the model emits at the start of an answer: shown on the avatar, never part of the content. */
+  onEmotion?: (value: string) => void;
   /** Override tool_choice (for example force generate_image). Default is auto.*/
   toolChoice?: ChatToolChoice;
   signal?: AbortSignal;
@@ -1002,6 +1006,7 @@ export async function chat(
   const maxTokens = config.llm?.maxTokens;
   const onChunk = options?.onChunk;
   const onComment = options?.onComment;
+  const onEmotion = options?.onEmotion;
   const toolChoice = options?.toolChoice ?? "auto";
   const signal = options?.signal;
   throwIfAborted(signal);
@@ -1084,6 +1089,7 @@ export async function chat(
       let unmaskedEmitted = "";
       const reasoningFilter = createReasoningStreamFilter();
       const commentFilter = createCommentStreamFilter(onComment);
+      const emotionFilter = createEmotionStreamFilter(onEmotion);
       const toolCallsAccum: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }> = [];
 
       const emitVisible = (visible: string) => {
@@ -1108,8 +1114,10 @@ export async function chat(
         if (delta.content) {
           // The comment filter runs after the reasoning one: <comment> inside
           // <think> cannot happen, and narration outside <think> is routed to
-          // the progress UI instead of the visible content.
-          const visible = commentFilter.push(reasoningFilter.push(delta.content));
+          // the progress UI instead of the visible content. The emotion filter
+          // sits in the same chain: the mood tag rides to the avatar, not into
+          // the text.
+          const visible = emotionFilter.push(commentFilter.push(reasoningFilter.push(delta.content)));
           emitVisible(visible);
         }
         if (delta.tool_calls?.length) {
@@ -1132,8 +1140,9 @@ export async function chat(
       }
 
       throwIfAborted(signal);
-      emitVisible(commentFilter.push(reasoningFilter.flush()));
+      emitVisible(emotionFilter.push(commentFilter.push(reasoningFilter.flush())));
       emitVisible(commentFilter.flush());
+      emitVisible(emotionFilter.flush());
 
       const toolCalls = toolCallsAccum.length > 0
         ? toolCallsAccum.map((tc) => ({ id: tc.id, type: "function" as const, function: tc.function }))
@@ -1173,7 +1182,12 @@ export async function chat(
     if (!choice) return finish(null);
 
     const msg = choice.message;
-    const cleaned = stripReasoningTags(msg.content ?? "") || null;
+    let cleaned = stripReasoningTags(msg.content ?? "") || null;
+    if (cleaned && onEmotion) {
+      const { content: noEmotion, emotion } = extractEmotionTag(cleaned);
+      if (emotion) onEmotion(emotion);
+      cleaned = noEmotion || null;
+    }
     if (msg.tool_calls?.length) {
       const normalized = normalizeToolCalls(msg.tool_calls);
       return finish(cleaned, normalized.length ? normalized : undefined);

@@ -114,6 +114,8 @@ export interface OrchestratorOptions {
   onToolEvent?: (event: ToolEvent) => void;
   /** The model's own <comment>…</comment> status lines, routed to the progress UI and kept out of the answer. */
   onStepComment?: (text: string) => void;
+  /** The model's <emotion>…</emotion> mood tag: routed to the avatar overlay, kept out of the answer. */
+  onEmotion?: (value: string) => void;
   /** Fired when open_browser tool asks the desktop UI to navigate. */
   onOpenBrowserUrl?: (url: string) => void;
   /**
@@ -161,9 +163,16 @@ export interface OrchestratorResult {
   contextCompressed?: number;
   /** The model has updated the contextual sidebar (sidebar_* tools).*/
   sidebarUpdated?: boolean;
+  /** The model's mood tag for this turn's answer (avatar overlay), normalized. */
+  emotion?: string;
 }
 
-import { extractCommentBlocks, stripReasoningTags } from "./strip-reasoning.js";
+import {
+  extractCommentBlocks,
+  extractEmotionTag,
+  stripReasoningTags,
+} from "./strip-reasoning.js";
+import { normalizeEmotion } from "./assistant-emotions.js";
 
 function stripReasoning(text: string | null): string {
   return stripReasoningTags(text);
@@ -575,6 +584,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     onSidebarUpdated,
     onToolEvent,
     onStepComment,
+    onEmotion,
     onOpenBrowserUrl,
     requestBrowserPageText,
     requestHeadlessPageText,
@@ -1200,6 +1210,17 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       // ignore UI callback errors
     }
   };
+  /** The model's <emotion> mood tag — routed to the avatar overlay, never part of the answer. */
+  let lastEmotion: string | undefined;
+  const emitEmotion = (value: string) => {
+    if (!value) return;
+    lastEmotion = normalizeEmotion(value);
+    try {
+      onEmotion?.(lastEmotion);
+    } catch {
+      // ignore UI callback errors
+    }
+  };
   const finishTurn = async (): Promise<OrchestratorResult> => {
     let finalContent = fullAssistantContent || (lastContent ?? "");
     finalContent = await finalizeHssAssistantContent(
@@ -1228,6 +1249,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
       ...(summaryForHistory != null && summaryDropCount != null && { summaryForHistory, summaryDropCount }),
       ...(summaryDropCount != null && { contextCompressed: summaryDropCount }),
       sidebarUpdated: dispatchState.sidebarUpdated || undefined,
+      ...(lastEmotion && lastEmotion !== "neutral" && { emotion: lastEmotion }),
     };
   };
 
@@ -1250,6 +1272,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     const response = await chat(client, config, messages, {
       signal,
       onComment: emitStepComment,
+      onEmotion: emitEmotion,
       ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),
       ...(shouldForceImageTool
         ? { toolChoice: { type: "function" as const, function: { name: "generate_image" } } }
@@ -1260,11 +1283,14 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
     throwIfAborted(signal);
     lastContent = stripIfDisabled(response.content);
     {
-      // The model's <comment> status lines go to the progress UI and are
-      // stripped from the content that becomes the answer.
+      // The model's <comment> status lines go to the progress UI and the
+      // <emotion> tag to the avatar overlay; both are stripped from the
+      // content that becomes the answer.
       const { content: cleanContent, comments: stepComments } = extractCommentBlocks(lastContent ?? "");
+      const { content: noEmotionContent, emotion } = extractEmotionTag(cleanContent);
       for (const comment of stepComments) emitStepComment(comment);
-      lastContent = cleanContent;
+      if (emotion) emitEmotion(emotion);
+      lastContent = noEmotionContent;
     }
     const part = lastContent ?? "";
     if (part) fullAssistantContent += (fullAssistantContent ? "\n" : "") + part;
@@ -1508,6 +1534,7 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   const finalCallOptions = {
     signal,
     onComment: emitStepComment,
+    onEmotion: emitEmotion,
     ...(wrappedChunk ? { onChunk: wrappedChunk } : {}),
   };
   let finalResponse: Awaited<ReturnType<typeof chat>>;
@@ -1526,8 +1553,10 @@ export async function runOrchestrator(options: OrchestratorOptions): Promise<Orc
   lastContent = stripIfDisabled(finalResponse.content);
   {
     const { content: cleanContent, comments: stepComments } = extractCommentBlocks(lastContent ?? "");
+    const { content: noEmotionContent, emotion } = extractEmotionTag(cleanContent);
     for (const comment of stepComments) emitStepComment(comment);
-    lastContent = cleanContent;
+    if (emotion) emitEmotion(emotion);
+    lastContent = noEmotionContent;
   }
   if (lastContent) fullAssistantContent += (fullAssistantContent ? "\n" : "") + lastContent;
   return finishTurn();

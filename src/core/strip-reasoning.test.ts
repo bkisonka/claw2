@@ -7,12 +7,16 @@
 import assert from "node:assert/strict";
 import {
   createCommentStreamFilter,
+  createEmotionStreamFilter,
   createReasoningStreamFilter,
   extractCommentBlocks,
+  extractEmotionTag,
   shouldDisableModelThinking,
   stripCommentTags,
+  stripEmotionTags,
   stripReasoningTags,
 } from "./strip-reasoning.js";
+import { EMOTION_EMOJI, normalizeEmotion } from "./assistant-emotions.js";
 
 {
   const raw =
@@ -44,6 +48,56 @@ import {
   out += f.push("ёшь Node-only");
   out += f.flush();
   assert.equal(out, "Возьмёшь Node-only");
+}
+
+{
+  // Batch: the emotion tag is pulled out and stripped wherever it stands.
+  const { content, emotion } = extractEmotionTag("<emotion>happy</emotion>\n\nГотово, файл на месте.");
+  assert.equal(emotion, "happy");
+  assert.equal(content, "Готово, файл на месте.");
+  const partial = extractEmotionTag("Ответ без тега");
+  assert.equal(partial.emotion, undefined);
+  assert.equal(partial.content, "Ответ без тега");
+  assert.equal(stripEmotionTags("<emotion>curious</emotion> Смотрю…"), "Смотрю…");
+  // Unterminated trailing tag: still an emotion, never visible text.
+  const unterminated = extractEmotionTag("<emotion>thinking");
+  assert.equal(unterminated.emotion, "thinking");
+  assert.equal(unterminated.content, "");
+}
+
+{
+  // Streaming: split across arbitrary chunk boundaries, first value wins.
+  const values: string[] = [];
+  const f = createEmotionStreamFilter((value) => values.push(value));
+  let out = "";
+  out += f.push("<emo");
+  out += f.push("tion>exc");
+  out += f.push("ited</emotion> Секунду,\n");
+  out += f.push("проверяю…");
+  out += f.push("<emotion>happy</emotion>");
+  out += f.flush();
+  assert.deepEqual(values, ["excited"]);
+  assert.equal(out, "Секунду,\nпроверяю…");
+}
+
+{
+  // Streaming flush: an unterminated tag at the end is still a mood, not text.
+  const values: string[] = [];
+  const f = createEmotionStreamFilter((value) => values.push(value));
+  let out = f.push("Думаю, <emotion>concerned");
+  out += f.flush();
+  assert.deepEqual(values, ["concerned"]);
+  assert.equal(out, "Думаю, ");
+}
+
+{
+  // Emotion vocabulary: unknown values fold to neutral, emoji map covers all.
+  assert.equal(normalizeEmotion("HAPPY"), "happy");
+  assert.equal(normalizeEmotion("радость"), "neutral");
+  assert.equal(normalizeEmotion(undefined), "neutral");
+  assert.equal(normalizeEmotion(""), "neutral");
+  assert.equal(EMOTION_EMOJI.neutral, "");
+  assert.ok(Object.keys(EMOTION_EMOJI).every((k) => typeof EMOTION_EMOJI[k as keyof typeof EMOTION_EMOJI] === "string"));
 }
 
 console.log("strip-reasoning.test.ts: ok");

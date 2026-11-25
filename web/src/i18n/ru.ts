@@ -51,6 +51,16 @@ export const ru: Record<MessageKey, string> = {
   "onboarding.stillMissing": "Не хватает данных. Проверьте Base URL и API-ключ.",
   "onboarding.unreachable": "Сохранено, но LLM недоступен. Проверьте URL и ключ.",
 
+  "persona.identityTitle": "Аватар и имя",
+  "persona.identityHint":
+    "Как ассистент выглядит в чате: имя над его сообщениями и лицо, которое он носит. Пока он работает, лицо анимируется: думает — обводит контур, инструмент — короткие импульсы, пишет ответ — ровно дышит.",
+  "persona.nameLabel": "Имя ассистента",
+  "persona.namePlaceholder": "Агент",
+  "persona.avatarLabel": "Аватар",
+  "persona.avatarUpload": "Загрузить картинку…",
+  "persona.avatarReset": "Сбросить",
+  "persona.avatarBadFile": "Файл не получилось прочитать как картинку. Нужен PNG, JPEG, WebP или GIF.",
+
   "persona.title": "Личность ассистента",
   "persona.hint":
     "Опишите, кем должен быть помощник: тон, характер, как обращаться к пользователю. Без этого работает стандартный доброжелательный помощник.",
@@ -402,6 +412,9 @@ export const ru: Record<MessageKey, string> = {
   "chat.workingThinking": "Думаю…",
   "chat.workingPreparing": "Готовлю ответ…",
   "chat.workingStill": "Ещё думаю…",
+  "chat.phase.thinking": "Думает…",
+  "chat.phase.tool": "Работает…",
+  "chat.phase.answer": "Пишет…",
   "chat.stepsCount": "Шаги: {count}",
   "chat.stepsToggleTitle": "Показать или скрыть шаги инструментов",
   "chat.stepsInterrupted": "прервано",

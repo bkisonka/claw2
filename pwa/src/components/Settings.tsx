@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 Vitaliy Bondar
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSettings, saveSettings, type AppSettings } from "../engine/settings";
 import { clearMemory, memoryCount } from "../engine/db";
 import { ProvidersSettings } from "./settings/ProvidersFold";
@@ -17,6 +17,49 @@ import {
   ActionBtn,
 } from "./settings/common";
 
+const AVATAR_PRESETS = [
+  "🐱", "🤖", "🦉", "🦊", "🐼", "🐰", "🐲", "👽", "🎩", "🧠", "⭐", "🚀", "🌸", "☕", "🎧", "📚",
+];
+
+/** Avatars are tiny: downscale any upload to a 256×256 cover crop before storing. */
+const AVATAR_SIDE = 256;
+
+async function fileToAvatarDataUrl(file: File): Promise<string | null> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const side = Math.min(bitmap.width, bitmap.height);
+    const canvas = document.createElement("canvas");
+    canvas.width = AVATAR_SIDE;
+    canvas.height = AVATAR_SIDE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(
+      bitmap,
+      (bitmap.width - side) / 2,
+      (bitmap.height - side) / 2,
+      side,
+      side,
+      0,
+      0,
+      AVATAR_SIDE,
+      AVATAR_SIDE
+    );
+    bitmap.close();
+    const blob =
+      (await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.85))) ??
+      (await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85)));
+    if (!blob) return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? "") || null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Local app settings — everything is stored on-device and used by the
  * in-app engine (no gateway, no remote config).
@@ -25,6 +68,7 @@ export function Settings() {
   const [s, setS] = useState<AppSettings>(() => getSettings());
   const [memCount, setMemCount] = useState(0);
   const [toast, setToast] = useState<string | null>(null);
+  const avatarFileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     void memoryCount().then(setMemCount);
@@ -35,6 +79,18 @@ export function Settings() {
     setToast("Сохранено");
     window.setTimeout(() => setToast(null), 1500);
   }, []);
+
+  const onAvatarUpload = async (file: File | undefined) => {
+    if (!file) return;
+    const dataUrl = await fileToAvatarDataUrl(file);
+    if (!dataUrl) {
+      setToast("Не удалось прочитать картинку");
+      window.setTimeout(() => setToast(null), 1500);
+      return;
+    }
+    patch({ assistantAvatar: dataUrl });
+    if (avatarFileRef.current) avatarFileRef.current.value = "";
+  };
 
   return (
     <div className="settings-root">
@@ -56,6 +112,52 @@ export function Settings() {
       </SettingsFold>
 
       <SettingsFold title="Персона">
+        <div className="persona-avatar-block">
+          <div className="persona-avatar-row">
+            <span className="assistant-avatar assistant-avatar--welcome assistant-avatar--idle persona-avatar-preview" aria-hidden>
+              <span className="assistant-avatar-disc">
+                {s.assistantAvatar.startsWith("data:") ? (
+                  <img className="assistant-avatar-img" src={s.assistantAvatar} alt="" />
+                ) : (
+                  s.assistantAvatar
+                )}
+              </span>
+            </span>
+            <div className="persona-avatar-actions">
+              <ActionBtn onClick={() => avatarFileRef.current?.click()}>Загрузить…</ActionBtn>
+              <ActionBtn
+                onClick={() => {
+                  patch({ assistantAvatar: "🤖" });
+                  if (avatarFileRef.current) avatarFileRef.current.value = "";
+                }}
+              >
+                Сбросить
+              </ActionBtn>
+              <input
+                ref={avatarFileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                hidden
+                onChange={(e) => void onAvatarUpload(e.target.files?.[0])}
+              />
+            </div>
+          </div>
+          <div className="persona-avatar-presets" role="listbox" aria-label="Аватар ассистента">
+            {AVATAR_PRESETS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                role="option"
+                aria-selected={s.assistantAvatar === emoji}
+                className={`persona-avatar-preset${s.assistantAvatar === emoji ? " persona-avatar-preset--active" : ""}`}
+                onClick={() => patch({ assistantAvatar: emoji })}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <Hint>Аватар — это лицо ассистента в чате. Загруженная картинка сжимается до 256×256 и хранится на устройстве.</Hint>
+        </div>
         <TextArea
           label="Full (полная — основной промпт)"
           value={s.persona.full}

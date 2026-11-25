@@ -191,12 +191,17 @@ export interface ParseCellBlocksResult {
 /** What cut an assistant answer short before it was done. */
 export type InterruptedBy = "gateway_restart";
 
-/** The stored metadata of an assistant message: its cells and, for an answer cut short, what cut it. */
-export function cellsToMeta(cells: ParsedCell[], interruptedBy?: InterruptedBy): string | undefined {
-  if (!cells.length && !interruptedBy) return undefined;
+/** The stored metadata of an assistant message: its cells, what cut it short, and the model's mood tag. */
+export function cellsToMeta(
+  cells: ParsedCell[],
+  interruptedBy?: InterruptedBy,
+  emotion?: string
+): string | undefined {
+  if (!cells.length && !interruptedBy && !emotion) return undefined;
   return JSON.stringify({
     ...(cells.length ? { cells } : {}),
     ...(interruptedBy ? { interruptedBy } : {}),
+    ...(emotion ? { emotion } : {}),
   });
 }
 
@@ -217,6 +222,18 @@ export function interruptedByFromMeta(meta: string | undefined): InterruptedBy |
   try {
     const value = (JSON.parse(meta) as { interruptedBy?: unknown }).interruptedBy;
     return value === "gateway_restart" ? value : undefined;
+  } catch {
+    // ignore invalid meta
+    return undefined;
+  }
+}
+
+/** The model's mood tag of an answer, when it has one (see cellsToMeta). */
+export function emotionFromMeta(meta: string | undefined): string | undefined {
+  if (!meta) return undefined;
+  try {
+    const value = (JSON.parse(meta) as { emotion?: unknown }).emotion;
+    return typeof value === "string" && value ? value : undefined;
   } catch {
     // ignore invalid meta
     return undefined;

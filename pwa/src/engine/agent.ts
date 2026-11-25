@@ -24,6 +24,7 @@ import {
   type ToolOutcome,
 } from "./tools";
 import { parseCellBlocks, splitClosedCells, stripCellPlaceholders } from "./cells";
+import { extractEmotionTag, normalizeEmotion, stripEmotionTags } from "./emotions";
 import {
   applyPromptContext,
   limitHistoryForPrompt,
@@ -54,6 +55,9 @@ function buildSystemPrompt(): string {
     formatNowContext(),
     "Отвечай на языке пользователя. Пиши компактно, по делу.",
   ];
+  parts.push(
+    "Настройение: первой строкой каждого ответа выдай <emotion>…</emotion> — что ты реально ощущаешь по этому ответу: happy, excited, curious, thinking, surprised, concerned, sad, playful, proud, grateful или neutral. Служебный тег: он вычищается из текста и показывается как эмоция на твоём аватаре — не упоминай его в ответе."
+  );
   if (s.honesty.promptPolicy) {
     parts.push("", honestyPolicyBlock());
   }
@@ -170,11 +174,15 @@ export type AgentEvent =
   /** Streaming view of the assistant text: closed cells already parsed into blocks. */
   | { type: "stream"; text: string; cells: { type: string; content: string }[] }
   | { type: "tool"; name: string }
-  | { type: "cells"; cells: { type: string; content: string }[] };
+  | { type: "cells"; cells: { type: string; content: string }[] }
+  /** The model's <emotion> mood tag, seen live as the answer streams. */
+  | { type: "emotion"; value: string };
 
 export type AgentResult = {
   content: string;
   cells: { type: string; content: string }[];
+  /** The model's mood tag for this answer (avatar overlay), normalized. */
+  emotion?: string;
   /** Plan for the caller to run summarizeWithLlm in the background (non-blocking). */
   backgroundSummarize?: { text: string; coveredCount: number } | null;
   /** Who served this turn (router mode) — the feed shows it; null when routing is off. */
@@ -276,6 +284,10 @@ export async function runAgentTurn(opts: {
   const evidence: HonestyEvidence[] = [];
   let finalContent = "";
   let rawStream = "";
+  /** The model's mood tag of this turn (the last call's value wins, as on the gateway). */
+  let lastEmotion: string | undefined;
+  /** The emotion seen in the current streaming pass, so it fires once per value. */
+  let streamedEmotion: string | undefined;
 
   // Router mode: one dispatcher call per turn picks the provider/model for
   // the whole turn (fallback chain still applies per request). A chat-level
@@ -299,13 +311,29 @@ export async function runAgentTurn(opts: {
       prov: routedProvider?.provider ?? undefined,
       onDelta: (t) => {
         rawStream += t;
-        const view = splitClosedCells(rawStream);
+        // The <emotion> tag rides ahead of the answer: catch it live, keep it
+        // out of the visible text (a partial tail is held back like on the gateway).
+        const seen = extractEmotionTag(rawStream);
+        if (seen.emotion && seen.emotion !== streamedEmotion) {
+          streamedEmotion = seen.emotion;
+          lastEmotion = normalizeEmotion(seen.emotion);
+          opts.onEvent({ type: "emotion", value: lastEmotion });
+        }
+        const view = splitClosedCells(stripEmotionTags(rawStream));
         opts.onEvent({ type: "stream", text: view.visible + view.tail, cells: view.cells });
       },
     });
     finalContent = res.content || finalContent;
+    // Batch safety net: a tag the stream view missed is still an emotion.
+    const clean = extractEmotionTag(finalContent);
+    if (clean.emotion) {
+      lastEmotion = normalizeEmotion(clean.emotion);
+      opts.onEvent({ type: "emotion", value: lastEmotion });
+    }
+    finalContent = clean.content;
     servedBy = res.servedBy;
     rawStream = "";
+    streamedEmotion = undefined;
     if (res.toolCalls.length === 0) break;
 
     messages.push({ role: "assistant", content: res.content || null, tool_calls: res.toolCalls });
@@ -354,6 +382,7 @@ export async function runAgentTurn(opts: {
   return {
     content,
     cells: allCells,
+    ...(lastEmotion && lastEmotion !== "neutral" && { emotion: lastEmotion }),
     backgroundSummarize,
     routed:
       servedBy && (routedProvider || pinnedProviderId)

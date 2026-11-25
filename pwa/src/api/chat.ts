@@ -57,6 +57,8 @@ export interface HistoryMessageApi {
   role: "user" | "assistant";
   content: string;
   cells?: ChatCell[];
+  /** The model's mood tag of the answer (avatar overlay). */
+  emotion?: string;
   /** Metadata only — binaries resolve lazily through /files/raw/<id>. */
   attachedFiles?: { name: string; deleted?: boolean }[];
 }
@@ -74,6 +76,8 @@ export interface ChatResponse {
   cells?: ChatCell[];
   userCells?: ChatCell[];
   contextCompressed?: number;
+  /** The model's mood tag for this answer (avatar overlay). */
+  emotion?: string;
   /** Router info for the feed meta line; null when routing is off. */
   routed?: { id: string; name: string; model: string; pinned: boolean; why: string } | null;
 }
@@ -308,6 +312,8 @@ export interface StreamSnapshot {
   cells: ChatCell[];
   /** Set while a tool is executing — the feed shows the activity. */
   tool?: string;
+  /** The model's mood tag seen while streaming (avatar overlay). */
+  emotion?: string;
 }
 
 /**
@@ -367,6 +373,7 @@ export async function sendMessageStream(
   });
 
   let streamed = "";
+  let streamedEmotion: string | undefined;
   const res = await runAgentTurn({
     chatId,
     history,
@@ -377,11 +384,14 @@ export async function sendMessageStream(
     onEvent: (e) => {
       if (e.type === "stream") {
         streamed = e.text;
-        onChunk({ text: e.text, cells: e.cells });
+        onChunk({ text: e.text, cells: e.cells, ...(streamedEmotion ? { emotion: streamedEmotion } : {}) });
       } else if (e.type === "tool") {
         // Tool activity surfaces in the feed — a model that only *claims* it
         // saved something must be distinguishable from one that did.
-        onChunk({ text: streamed, cells: [], tool: e.name });
+        onChunk({ text: streamed, cells: [], tool: e.name, ...(streamedEmotion ? { emotion: streamedEmotion } : {}) });
+      } else if (e.type === "emotion") {
+        streamedEmotion = e.value;
+        onChunk({ text: streamed, cells: [], emotion: e.value });
       }
     },
   });
@@ -421,6 +431,7 @@ export async function sendMessageStream(
     role: "assistant",
     content: res.content,
     cells: res.cells.length ? res.cells : undefined,
+    ...(res.emotion ? { emotion: res.emotion } : {}),
     createdAt: Date.now(),
   });
 
@@ -430,6 +441,7 @@ export async function sendMessageStream(
     // Cells keep their /files/raw refs — Chat renders media lazily.
     cells: res.cells.length ? res.cells : undefined,
     userCells: userCells.length ? userCells : undefined,
+    ...(res.emotion ? { emotion: res.emotion } : {}),
     routed: res.routed,
   };
 }

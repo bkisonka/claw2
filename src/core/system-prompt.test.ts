@@ -54,6 +54,7 @@ const FULL_BLOCKS = [
   "Libraries for processing files are already installed",
   "Agent code: one .js in agents/.",
   "Inline cells in chat",
+  "Mood tag (important):",
 ];
 
 /** Every block of the default compact prompt, the phone aside. */
@@ -67,6 +68,7 @@ const COMPACT_BLOCKS = [
   "Online chat: only full block [CELL",
   "Files: after creating in output,",
   "Looking for files: get the listing first",
+  "Start every answer with one line <emotion>",
 ];
 
 /** The same block in both modes. */
@@ -199,5 +201,26 @@ describe("system prompt assembly", () => {
     // The persona is the user's text; the budget is for what the assembly adds.
     expect(compact.length - PERSONA_COMPACT.length).toBeLessThanOrEqual(BUDGET_CHARS);
     expect(compact.length).toBeLessThan(prompt("full", everythingOn).length);
+  });
+
+  describe("assistant identity in the prompt", () => {
+    it("teaches the emotion tag in both modes", () => {
+      for (const mode of MODES) {
+        const text = prompt(mode);
+        expect(text.includes("<emotion>"), `${mode}: tag`).toBe(true);
+        expect(text.includes("grateful"), `${mode}: vocabulary`).toBe(true);
+      }
+    });
+
+    it("injects the configured assistant name after the persona", () => {
+      const named = getSystemPrompt("full", undefined, undefined, undefined, undefined, {
+        ...config,
+        assistant: { ...config.assistant, identity: { name: "Барсик" } },
+      });
+      expect(named).toContain("Your name: Барсик.");
+      expect(named.startsWith(`${PERSONA_FULL}\n\nYour name: Барсик.`)).toBe(true);
+      const unnamed = prompt("full");
+      expect(unnamed).not.toContain("Your name:");
+    });
   });
 });

@@ -137,6 +137,110 @@ export function createCommentStreamFilter(onComment?: (text: string) => void): {
   return { push, flush };
 }
 
+const EMOTION_OPEN_TAG = "<emotion>";
+
+/**
+ * Strip <emotion>…</emotion> markers from assistant content (batch version).
+ * Mirrors stripCommentTags; the value is a short mood word, never rendered.
+ */
+export function stripEmotionTags(text: string | null | undefined): string {
+  if (!text) return "";
+  return text
+    .replace(/\s*<emotion>[^<]*<\/emotion\s*>/gi, "")
+    .replace(/\s*<emotion>[^<]*$/i, "")
+    .trim();
+}
+
+/** Pull the first <emotion>…</emotion> (and a trailing unterminated one) out of the text. */
+export function extractEmotionTag(text: string | null | undefined): {
+  content: string;
+  emotion?: string;
+} {
+  if (!text) return { content: text ?? "" };
+  let emotion: string | undefined;
+  const stripped = text.replace(/\s*<emotion>([^<]*)<\/emotion\s*>/gi, (_block, inner: string) => {
+    const value = inner.trim();
+    if (value && emotion === undefined) emotion = value;
+    return "";
+  });
+  let content = stripped;
+  const open = content.search(/<emotion>/i);
+  if (open >= 0) {
+    const tail = content.slice(open + EMOTION_OPEN_TAG.length).trim();
+    if (tail && emotion === undefined) emotion = tail;
+    content = content.slice(0, open).replace(/\s+$/, "");
+  }
+  // The tag stands at the head of the answer: what follows it is the reply.
+  return { content: content.replace(/^\s+/, ""), emotion };
+}
+
+/**
+ * Streaming filter for the emotion overlay: the <emotion>…</emotion> tag is
+ * captured, handed to onEmotion (first value wins) and never emitted as
+ * visible content — the same contract as createCommentStreamFilter.
+ */
+export function createEmotionStreamFilter(onEmotion?: (value: string) => void): {
+  push: (delta: string) => string;
+  flush: () => string;
+} {
+  let buf = "";
+  let seen = false;
+  /** The tag stands at the head of the answer: the visible reply must not start with its leftover whitespace. */
+  let started = false;
+  const trimHead = (text: string): string => {
+    if (started) return text;
+    const trimmed = text.replace(/^\s+/, "");
+    if (trimmed) started = true;
+    return trimmed;
+  };
+  const push = (delta: string): string => {
+    if (!delta) return "";
+    buf += delta;
+    let out = "";
+    for (;;) {
+      const closed = buf.match(/<emotion>([^<]*)<\/emotion\s*>/i);
+      if (closed?.index != null) {
+        out += buf.slice(0, closed.index);
+        const value = closed[1].trim();
+        if (value && !seen) {
+          onEmotion?.(value);
+          seen = true;
+        }
+        buf = buf.slice(closed.index + closed[0].length);
+        continue;
+      }
+      const open = buf.search(/<emotion>/i);
+      if (open >= 0) {
+        out += buf.slice(0, open);
+        buf = buf.slice(open);
+        return trimHead(out);
+      }
+      const hold = partialTagLength(buf, EMOTION_OPEN_TAG);
+      if (hold > 0) {
+        out += buf.slice(0, -hold);
+        buf = buf.slice(-hold);
+        return trimHead(out);
+      }
+      out += buf;
+      buf = "";
+      return trimHead(out);
+    }
+  };
+  const flush = (): string => {
+    // An unterminated tag at the end of the stream is still an emotion.
+    const open = buf.search(/<emotion>/i);
+    if (open >= 0) {
+      const value = buf.slice(open + EMOTION_OPEN_TAG.length).trim();
+      if (value && !seen) onEmotion?.(value);
+      buf = buf.slice(0, open);
+    }
+    const rest = trimHead(buf);
+    buf = "";
+    return rest;
+  };
+  return { push, flush };
+}
+
 export function stripReasoningTags(text: string | null | undefined): string {
   if (!text || typeof text !== "string") return "";
   let s = stripClosedThinkBlocks(text);
